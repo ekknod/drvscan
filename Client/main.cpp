@@ -273,7 +273,7 @@ int main(void)
 		{
 			QWORD target_base = vm_dump_module_ex(driver.base, 1);
 
-			if (*(WORD*)target_base != IMAGE_DOS_SIGNATURE)
+			if (target_base == 0 || *(WORD*)target_base != IMAGE_DOS_SIGNATURE)
 			{
 				FreeLibrary(dll);
 				vm_free_module(target_base);
