@@ -4,6 +4,7 @@
 typedef ULONG_PTR QWORD;
 
 #define IOCTL_READMEMORY 0xECAC00
+#define IOCTL_READMEMORY_PROCESS 0xECAC02
 
 PDRIVER_OBJECT gDriverObject;
 PDEVICE_OBJECT gDeviceObject;
@@ -17,6 +18,26 @@ typedef struct {
 	ULONG_PTR length;
 	ULONG virtual_memory;
 } DRIVER_READMEMORY;
+
+#pragma pack(1)
+typedef struct {
+	PVOID src;
+	PVOID dst;
+	ULONG_PTR length;
+	ULONG pid;
+} DRIVER_READMEMORY_PROCESS;
+
+NTSTATUS NTAPI MmCopyVirtualMemory
+(
+	PEPROCESS SourceProcess,
+	PVOID SourceAddress,
+	PEPROCESS TargetProcess,
+	PVOID TargetAddress,
+	SIZE_T BufferSize,
+	KPROCESSOR_MODE PreviousMode,
+	PSIZE_T ReturnSize
+);
+
 
 #pragma warning (disable: 4996)
 
@@ -68,6 +89,28 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 		irp->IoStatus.Information = sizeof(DRIVER_READMEMORY);
 
 
+	}
+
+	else if (ioctl_code == IOCTL_READMEMORY_PROCESS)
+	{
+		DRIVER_READMEMORY_PROCESS *mem = (DRIVER_READMEMORY_PROCESS*)buffer;
+
+		__try {
+			PEPROCESS eprocess;
+			irp->IoStatus.Status = PsLookupProcessByProcessId((HANDLE)mem->pid, &eprocess);
+			if (irp->IoStatus.Status == 0)
+			{
+				irp->IoStatus.Status = MmCopyVirtualMemory( eprocess, mem->src, PsGetCurrentProcess(), mem->dst, mem->length, KernelMode, &mem->length);
+			}
+		} __except (1)
+		{
+			//
+			// do nothing
+			//
+			irp->IoStatus.Status = STATUS_INVALID_ADDRESS;
+		}
+
+		irp->IoStatus.Information = sizeof(DRIVER_READMEMORY_PROCESS);
 	}
 E0:
 	IoCompleteRequest(irp, IO_NO_INCREMENT);

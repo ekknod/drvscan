@@ -12,6 +12,7 @@
 
 #define MIN_DIFFERENCE 9
 #define IOCTL_READMEMORY 0xECAC00
+#define IOCTL_READMEMORY_PROCESS 0xECAC02
 
 typedef ULONG_PTR QWORD;
 
@@ -19,9 +20,10 @@ typedef struct {
 	std::string path;
 	QWORD       base;
 	QWORD       size;
-} DRIVER_INFO ;
+} FILE_INFO ;
 
-std::vector<DRIVER_INFO> get_system_drivers(void);
+std::vector<FILE_INFO> get_system_drivers(void);
+std::vector<FILE_INFO> get_process_modules(PCSTR process_name, DWORD *process_id);
 
 #pragma pack(1)
 typedef struct {
@@ -30,6 +32,15 @@ typedef struct {
 	SIZE_T length;
 	ULONG virtual_memory;
 } DRIVER_READMEMORY;
+
+
+#pragma pack(1)
+typedef struct {
+	PVOID src;
+	PVOID dst;
+	ULONG_PTR length;
+	ULONG pid;
+} DRIVER_READMEMORY_PROCESS;
 
 class Driver
 {
@@ -63,6 +74,20 @@ public:
 		return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
 	}
 
+	BOOL memcpy(DWORD pid, PVOID dst, PVOID src, SIZE_T length)
+	{
+		if (!Attach())
+		{
+			return 0;
+		}
+		DRIVER_READMEMORY_PROCESS io;
+		io.src = src;
+		io.dst = dst;
+		io.length = length;
+		io.pid = pid;
+		return DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
+	}
+
 	BOOL memcpy_physical(PVOID dst, PVOID src, SIZE_T length)
 	{
 		if (!Attach())
@@ -77,51 +102,53 @@ public:
 		return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
 	}
 
-	BOOL read(ULONG_PTR address, PVOID buffer, QWORD length)
+	BOOL read(DWORD pid, ULONG_PTR address, PVOID buffer, QWORD length)
 	{
-		return this->memcpy(buffer, (PVOID)address, length);
+		if (pid == 4)
+			return this->memcpy(buffer, (PVOID)address, length);
+		else
+			return this->memcpy(pid, buffer, (PVOID)address, length);
 	}
 
-	BYTE read_i8(ULONG_PTR address)
+	BYTE read_i8(DWORD pid, ULONG_PTR address)
 	{
 		BYTE b;
-		if (!this->memcpy(&b, (PVOID)address, sizeof(b)))
+		if (!this->read(pid, address, &b, sizeof(b)))
 		{
 			b = 0;
 		}
 		return b;
 	}
 
-	WORD read_i16(ULONG_PTR address)
+	WORD read_i16(DWORD pid, ULONG_PTR address)
 	{
 		WORD b;
-		if (!this->memcpy(&b, (PVOID)address, sizeof(b)))
+		if (!this->read(pid, address, &b, sizeof(b)))
 		{
 			b = 0;
 		}
 		return b;
 	}
 
-	DWORD read_i32(ULONG_PTR address)
+	DWORD read_i32(DWORD pid, ULONG_PTR address)
 	{
 		DWORD b;
-		if (!this->memcpy(&b, (PVOID)address, sizeof(b)))
+		if (!this->read(pid, address, &b, sizeof(b)))
 		{
 			b = 0;
 		}
 		return b;
 	}
 
-	QWORD read_i64(ULONG_PTR address)
+	QWORD read_i64(DWORD pid, ULONG_PTR address)
 	{
 		QWORD b;
-		if (!this->memcpy(&b, (PVOID)address, sizeof(b)))
+		if (!this->read(pid, address, &b, sizeof(b)))
 		{
 			b = 0;
 		}
 		return b;
 	}
-
 private:
 	bool Attach(void)
 	{
@@ -130,7 +157,7 @@ private:
 			return 1;
 		}
 
-		hDriver = CreateFileA("\\\\.\\anticheat", GENERIC_READ, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+		hDriver = CreateFileA("\\\\.\\memdriver", GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 
 		if (hDriver == INVALID_HANDLE_VALUE)
 		{
@@ -194,7 +221,7 @@ void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QW
 	}
 }
 
-QWORD vm_dump_module_ex(QWORD base, BOOL code_only)
+QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 {
 	QWORD a0, a1, a2, a3 = 0;
 	char *a4;
@@ -203,13 +230,13 @@ QWORD vm_dump_module_ex(QWORD base, BOOL code_only)
 	if (a0 == 0)
 		return 0;
 
-	a1 = drv.read_i32(a0 + 0x03C) + a0;
+	a1 = drv.read_i32(pid, a0 + 0x03C) + a0;
 	if (a1 == a0)
 	{
 		return 0;
 	}
 
-	a2 = drv.read_i32(a1 + 0x050);
+	a2 = drv.read_i32(pid, a1 + 0x050);
 	if (a2 < 8)
 		return 0;
 
@@ -223,34 +250,34 @@ QWORD vm_dump_module_ex(QWORD base, BOOL code_only)
 	a4 += 24;
 
 	QWORD image_dos_header = base;
-	QWORD image_nt_header = drv.read_i32(image_dos_header + 0x03C) + image_dos_header;
+	QWORD image_nt_header = drv.read_i32(pid, image_dos_header + 0x03C) + image_dos_header;
 
-	DWORD headers_size = drv.read_i32(image_nt_header + 0x54);
-	drv.read(image_dos_header, a4, headers_size);
+	DWORD headers_size = drv.read_i32(pid, image_nt_header + 0x54);
+	drv.read(pid, image_dos_header, a4, headers_size);
 
-	unsigned short machine = drv.read_i16(image_nt_header + 0x4);
+	unsigned short machine = drv.read_i16(pid, image_nt_header + 0x4);
 
 	QWORD section_header = machine == 0x8664 ?
 		image_nt_header + 0x0108 :
 		image_nt_header + 0x00F8;
 
 	
-	for (WORD i = 0; i < drv.read_i16(image_nt_header + 0x06); i++) {
+	for (WORD i = 0; i < drv.read_i16(pid, image_nt_header + 0x06); i++) {
 
 		QWORD section = section_header + (i * 40);
 
 		if (code_only)
 		{
-			DWORD section_characteristics = drv.read_i32(section + 0x24);
+			DWORD section_characteristics = drv.read_i32(pid, section + 0x24);
 			if (!(section_characteristics & 0x00000020))
 				continue;
 
 		}
 
-		QWORD local_virtual_address = base + drv.read_i32(section + 0x0c);
-		DWORD local_virtual_size = drv.read_i32(section + 0x8);
-		QWORD target_virtual_address = (QWORD)a4 + drv.read_i32(section + 0xc);
-		drv.read( local_virtual_address, (PVOID)target_virtual_address, local_virtual_size );
+		QWORD local_virtual_address = base + drv.read_i32(pid, section + 0x0c);
+		DWORD local_virtual_size = drv.read_i32(pid, section + 0x8);
+		QWORD target_virtual_address = (QWORD)a4 + drv.read_i32(pid, section + 0xc);
+		drv.read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size );
 	}
 	return (QWORD)a4;
 }
@@ -261,52 +288,142 @@ void vm_free_module(QWORD dumped_module)
 	free((void *)dumped_module);
 }
 
+//
+// implemented for x86 image load
+//
+HMODULE IMP_LoadLibraryEx(PCSTR path, DWORD a1, DWORD a2)
+{
+	(a1);
+	(a2);
+
+	VOID *ret = 0;
+
+	FILE *f = fopen(path, "rb");
+	if (f)
+	{
+		fseek(f, 0, SEEK_END);
+		long len = ftell(f);
+		fseek(f, 0, SEEK_SET);
+
+		ret = malloc(len);
+
+		if (fread(ret, len, 1, f) != 1)
+		{
+			free(ret);
+			ret = 0;
+		}
+
+		fclose(f);
+	}
+
+	return (HMODULE)ret;
+}
+
+void IMP_FreeLibrary(HMODULE hMod)
+{
+	free(hMod);
+}
+
+void scan_image(DWORD pid, FILE_INFO file)
+{
+	HMODULE dll = (HMODULE)IMP_LoadLibraryEx(file.path.c_str(), 0, DONT_RESOLVE_DLL_REFERENCES);
+
+	if (dll)
+	{
+		QWORD target_base = vm_dump_module_ex(pid, file.base, 1);
+
+		if (target_base == 0 || *(WORD*)target_base != IMAGE_DOS_SIGNATURE)
+		{
+			FreeLibrary(dll);
+			vm_free_module(target_base);
+			return;
+		}
+	
+		printf("scanning image: %s\n", file.path.c_str());
+
+		QWORD image_dos_header = (QWORD)dll;
+		QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
+		unsigned short machine = *(WORD*)(image_nt_header + 0x4);
+
+		QWORD section_header_off = machine == 0x8664 ?
+			image_nt_header + 0x0108 :
+			image_nt_header + 0x00F8;
+
+		for (WORD i = 0; i < *(WORD*)(image_nt_header + 0x06); i++) {
+			QWORD section = section_header_off + (i * 40);
+			ULONG section_characteristics = *(ULONG*)(section + 0x24);
+
+			UCHAR *section_name = (UCHAR*)(section + 0x00);
+			ULONG section_va = *(ULONG*)(section + 0x0C);
+			ULONG section_pr = *(ULONG*)(section + 0x14);
+			ULONG section_size = *(ULONG*)(section + 0x08);
+
+			if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
+			{
+				//
+				// skip Warbird page
+				//
+				if (!strcmp((const char*)section_name, "PAGEwx3"))
+				{
+					continue;
+				}
+		
+				scan_section(
+					(CHAR*)section_name,
+					(QWORD)((BYTE*)dll + section_pr),
+					(QWORD)(target_base + section_va),
+					section_size,
+					section_va
+				);
+			}
+		}
+
+		vm_free_module(target_base);
+		IMP_FreeLibrary(dll);
+	} else {
+		printf("failed to open %s\n", file.path.c_str());
+	}
+}
+
 int main(void)
 {
+	std::vector<FILE_INFO> drivers = get_system_drivers();
 
-	std::vector<DRIVER_INFO> drivers = get_system_drivers();
-
+	//
+	// scan drivers
+	// 
 	for (auto driver : drivers)
 	{
-		HMODULE dll = (HMODULE)LoadLibraryExA(driver.path.c_str(), 0, DONT_RESOLVE_DLL_REFERENCES);
-		if (dll)
-		{
-			QWORD target_base = vm_dump_module_ex(driver.base, 1);
-
-			if (target_base == 0 || *(WORD*)target_base != IMAGE_DOS_SIGNATURE)
-			{
-				FreeLibrary(dll);
-				vm_free_module(target_base);
-				continue;
-			}
-	
-			printf("scanning image: %s\n", driver.path.c_str());
-
-			IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER*)dll;
-			IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS*)((char*)dll + dos->e_lfanew);
-
-			IMAGE_SECTION_HEADER* section_header = IMAGE_FIRST_SECTION(nt);
-			for (QWORD i = 0; i != nt->FileHeader.NumberOfSections; ++i, ++section_header) {
-				if (section_header->Characteristics & 0x00000020 && !(section_header->Characteristics & 0x02000000))
-				{
-					//
-					// skip Warbird page
-					//
-					if (!strcmp((const char*)section_header->Name, "PAGEwx3"))
-					{
-						continue;
-					}
-		
-					scan_section( (CHAR*)section_header->Name, (QWORD)((BYTE*)dll + section_header->VirtualAddress), (QWORD)(target_base + section_header->VirtualAddress), section_header->Misc.VirtualSize, section_header->VirtualAddress  );			
-				}
-			}
-
-			vm_free_module(target_base);
-			FreeLibrary(dll);
-		} else {
-			printf("failed to open %s\n",driver.path.c_str());
-		}
+		//
+		// system process id (4)
+		//
+		DWORD system_pid = 4;
+		scan_image(system_pid, driver);
 	}
+
+
+	
+	
+	/*
+
+	// 
+	// you can uncomment this if you want to use it for process patch scanning (works both x86 and x64)
+	// 
+
+	DWORD pid=0;
+	std::vector<FILE_INFO> modules = get_process_modules("explorer.exe", &pid);
+
+	//
+	// scan process modules
+	//
+	for (auto module : modules)
+	{
+		scan_image(pid, module);
+	}
+
+	*/
+	
+	
 
 	getchar();
 
@@ -342,9 +459,9 @@ ULONG                    SystemInformationLength,
 PULONG                   ReturnLength
 );
 
-std::vector<DRIVER_INFO> get_system_drivers(void)
+std::vector<FILE_INFO> get_system_drivers(void)
 {
-	std::vector<DRIVER_INFO> driver_information;
+	std::vector<FILE_INFO> driver_information;
 
 
 	ULONG req = 0;
@@ -385,7 +502,7 @@ std::vector<DRIVER_INFO> get_system_drivers(void)
 			std::string a2 = a0 + a1;
 
 
-			DRIVER_INFO temp_information;
+			FILE_INFO temp_information;
 			temp_information.path = a2;
 			temp_information.base = (QWORD)entry.ImageBase;
 			temp_information.size = (QWORD)entry.ImageSize;
@@ -398,5 +515,59 @@ std::vector<DRIVER_INFO> get_system_drivers(void)
 	VirtualFree(system_modules, 0, MEM_RELEASE);
 
 	return driver_information;
+}
+
+#include <TlHelp32.h>
+
+
+std::vector<FILE_INFO> get_process_modules(PCSTR process_name, DWORD *process_id)
+{
+	std::vector<FILE_INFO> info;
+
+	DWORD pid = 0;
+
+	HANDLE snp = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+
+	PROCESSENTRY32 entry{};
+	entry.dwSize = sizeof(entry);
+
+	while (Process32Next(snp, &entry))
+	{
+		if (!_strcmpi(entry.szExeFile, process_name))
+		{
+			pid = (DWORD)entry.th32ProcessID;
+			break;
+		}
+	}
+
+	CloseHandle(snp);
+
+
+	if (pid == 0)
+	{
+		return info;
+	}
+
+	snp = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
+
+	MODULEENTRY32 module_entry{};
+	module_entry.dwSize = sizeof(module_entry);
+
+	while (Module32Next(snp, &module_entry))
+	{
+		FILE_INFO temp;
+
+		temp.base = (QWORD)module_entry.modBaseAddr;
+		temp.size = module_entry.modBaseSize;
+		temp.path = std::string(module_entry.szExePath);
+
+		info.push_back(temp);
+	}
+
+	CloseHandle(snp);
+
+	*process_id = pid;
+
+	return info;
 }
 
