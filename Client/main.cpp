@@ -42,115 +42,11 @@ typedef struct {
 	ULONG pid;
 } DRIVER_READMEMORY_PROCESS;
 
-class Driver
+namespace drv
 {
-	HANDLE hDriver;
-public:
-	Driver(void)
-	{
-		hDriver = CreateFileA("\\\\.\\memdriver", GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+	HANDLE hDriver = 0;
 
-
-		if (hDriver == INVALID_HANDLE_VALUE)
-		{
-			hDriver = 0;
-		}
-	}
-	~Driver(void)
-	{
-	}
-
-	BOOL memcpy(PVOID dst, PVOID src, SIZE_T length)
-	{
-		if (!Attach())
-		{
-			return 0;
-		}
-		DRIVER_READMEMORY io;
-		io.src = src;
-		io.dst = dst;
-		io.length = length;
-		io.virtual_memory = 1;
-		return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
-	}
-
-	BOOL memcpy(DWORD pid, PVOID dst, PVOID src, SIZE_T length)
-	{
-		if (!Attach())
-		{
-			return 0;
-		}
-		DRIVER_READMEMORY_PROCESS io;
-		io.src = src;
-		io.dst = dst;
-		io.length = length;
-		io.pid = pid;
-		return DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
-	}
-
-	BOOL memcpy_physical(PVOID dst, PVOID src, SIZE_T length)
-	{
-		if (!Attach())
-		{
-			return 0;
-		}
-		DRIVER_READMEMORY io;
-		io.src = src;
-		io.dst = dst;
-		io.length = length;
-		io.virtual_memory = 0;
-		return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
-	}
-
-	BOOL read(DWORD pid, ULONG_PTR address, PVOID buffer, QWORD length)
-	{
-		if (pid == 4)
-			return this->memcpy(buffer, (PVOID)address, length);
-		else
-			return this->memcpy(pid, buffer, (PVOID)address, length);
-	}
-
-	BYTE read_i8(DWORD pid, ULONG_PTR address)
-	{
-		BYTE b;
-		if (!this->read(pid, address, &b, sizeof(b)))
-		{
-			b = 0;
-		}
-		return b;
-	}
-
-	WORD read_i16(DWORD pid, ULONG_PTR address)
-	{
-		WORD b;
-		if (!this->read(pid, address, &b, sizeof(b)))
-		{
-			b = 0;
-		}
-		return b;
-	}
-
-	DWORD read_i32(DWORD pid, ULONG_PTR address)
-	{
-		DWORD b;
-		if (!this->read(pid, address, &b, sizeof(b)))
-		{
-			b = 0;
-		}
-		return b;
-	}
-
-	QWORD read_i64(DWORD pid, ULONG_PTR address)
-	{
-		QWORD b;
-		if (!this->read(pid, address, &b, sizeof(b)))
-		{
-			b = 0;
-		}
-		return b;
-	}
-private:
-	bool Attach(void)
+	bool attach(void)
 	{
 		if (hDriver != 0)
 		{
@@ -167,9 +63,96 @@ private:
 		return hDriver != 0;
 	}
 
-};
+	BOOL memcpy(PVOID dst, PVOID src, SIZE_T length)
+	{
+		if (!drv::attach())
+		{
+			return 0;
+		}
+		DRIVER_READMEMORY io;
+		io.src = src;
+		io.dst = dst;
+		io.length = length;
+		io.virtual_memory = 1;
+		return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
+	}
 
-Driver drv = Driver();
+	BOOL memcpy(DWORD pid, PVOID dst, PVOID src, SIZE_T length)
+	{
+		if (!drv::attach())
+		{
+			return 0;
+		}
+		DRIVER_READMEMORY_PROCESS io;
+		io.src = src;
+		io.dst = dst;
+		io.length = length;
+		io.pid = pid;
+		return DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
+	}
+
+	BOOL memcpy_physical(PVOID dst, PVOID src, SIZE_T length)
+	{
+		if (!drv::attach())
+		{
+			return 0;
+		}
+		DRIVER_READMEMORY io;
+		io.src = src;
+		io.dst = dst;
+		io.length = length;
+		io.virtual_memory = 0;
+		return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
+	}
+
+	BOOL read(DWORD pid, ULONG_PTR address, PVOID buffer, QWORD length)
+	{
+		if (pid == 4)
+			return drv::memcpy(buffer, (PVOID)address, length);
+		else
+			return drv::memcpy(pid, buffer, (PVOID)address, length);
+	}
+
+	BYTE read_i8(DWORD pid, ULONG_PTR address)
+	{
+		BYTE b;
+		if (!drv::read(pid, address, &b, sizeof(b)))
+		{
+			b = 0;
+		}
+		return b;
+	}
+
+	WORD read_i16(DWORD pid, ULONG_PTR address)
+	{
+		WORD b;
+		if (!drv::read(pid, address, &b, sizeof(b)))
+		{
+			b = 0;
+		}
+		return b;
+	}
+
+	DWORD read_i32(DWORD pid, ULONG_PTR address)
+	{
+		DWORD b;
+		if (!drv::read(pid, address, &b, sizeof(b)))
+		{
+			b = 0;
+		}
+		return b;
+	}
+
+	QWORD read_i64(DWORD pid, ULONG_PTR address)
+	{
+		QWORD b;
+		if (!drv::read(pid, address, &b, sizeof(b)))
+		{
+			b = 0;
+		}
+		return b;
+	}
+}
 
 void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address)
 {
@@ -230,13 +213,13 @@ QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 	if (a0 == 0)
 		return 0;
 
-	a1 = drv.read_i32(pid, a0 + 0x03C) + a0;
+	a1 = drv::read_i32(pid, a0 + 0x03C) + a0;
 	if (a1 == a0)
 	{
 		return 0;
 	}
 
-	a2 = drv.read_i32(pid, a1 + 0x050);
+	a2 = drv::read_i32(pid, a1 + 0x050);
 	if (a2 < 8)
 		return 0;
 
@@ -250,34 +233,34 @@ QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 	a4 += 24;
 
 	QWORD image_dos_header = base;
-	QWORD image_nt_header = drv.read_i32(pid, image_dos_header + 0x03C) + image_dos_header;
+	QWORD image_nt_header = drv::read_i32(pid, image_dos_header + 0x03C) + image_dos_header;
 
-	DWORD headers_size = drv.read_i32(pid, image_nt_header + 0x54);
-	drv.read(pid, image_dos_header, a4, headers_size);
+	DWORD headers_size = drv::read_i32(pid, image_nt_header + 0x54);
+	drv::read(pid, image_dos_header, a4, headers_size);
 
-	unsigned short machine = drv.read_i16(pid, image_nt_header + 0x4);
+	unsigned short machine = drv::read_i16(pid, image_nt_header + 0x4);
 
 	QWORD section_header = machine == 0x8664 ?
 		image_nt_header + 0x0108 :
 		image_nt_header + 0x00F8;
 
 	
-	for (WORD i = 0; i < drv.read_i16(pid, image_nt_header + 0x06); i++) {
+	for (WORD i = 0; i < drv::read_i16(pid, image_nt_header + 0x06); i++) {
 
 		QWORD section = section_header + (i * 40);
 
 		if (code_only)
 		{
-			DWORD section_characteristics = drv.read_i32(pid, section + 0x24);
+			DWORD section_characteristics = drv::read_i32(pid, section + 0x24);
 			if (!(section_characteristics & 0x00000020))
 				continue;
 
 		}
 
-		QWORD local_virtual_address = base + drv.read_i32(pid, section + 0x0c);
-		DWORD local_virtual_size = drv.read_i32(pid, section + 0x8);
-		QWORD target_virtual_address = (QWORD)a4 + drv.read_i32(pid, section + 0xc);
-		drv.read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size );
+		QWORD local_virtual_address = base + drv::read_i32(pid, section + 0x0c);
+		DWORD local_virtual_size = drv::read_i32(pid, section + 0x8);
+		QWORD target_virtual_address = (QWORD)a4 + drv::read_i32(pid, section + 0xc);
+		drv::read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size );
 	}
 	return (QWORD)a4;
 }
