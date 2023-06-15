@@ -1,7 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 /*
- * handy tool for scanning kernel driver patches
+ * handy tool for testing
  */
 
 #include <windows.h>
@@ -13,17 +13,8 @@
 #define MIN_DIFFERENCE 9
 #define IOCTL_READMEMORY 0xECAC00
 #define IOCTL_READMEMORY_PROCESS 0xECAC02
-
-typedef ULONG_PTR QWORD;
-
-typedef struct {
-	std::string path;
-	QWORD       base;
-	QWORD       size;
-} FILE_INFO ;
-
-std::vector<FILE_INFO> get_system_drivers(void);
-std::vector<FILE_INFO> get_process_modules(PCSTR process_name, DWORD *process_id);
+#define IOCTL_READ_PORT 0xECAC04
+#define IOCTL_WRITE_PORT 0xECAC06
 
 #pragma pack(1)
 typedef struct {
@@ -33,7 +24,6 @@ typedef struct {
 	ULONG virtual_memory;
 } DRIVER_READMEMORY;
 
-
 #pragma pack(1)
 typedef struct {
 	PVOID src;
@@ -42,11 +32,35 @@ typedef struct {
 	ULONG pid;
 } DRIVER_READMEMORY_PROCESS;
 
-namespace drv
+#pragma pack(1)
+typedef struct {
+	unsigned short address;
+	ULONG_PTR      length;
+	PVOID          buffer;
+} DRIVER_READWRITEPORT;
+
+typedef ULONG_PTR QWORD;
+
+typedef struct {
+	std::string path;
+	QWORD       base;
+	QWORD       size;
+} FILE_INFO ;
+
+typedef struct {
+	DWORD                  process_id;
+	std::vector<FILE_INFO> process_modules;
+} PROCESS_INFO;
+
+std::vector<FILE_INFO>    get_kernel_modules(void);
+std::vector<FILE_INFO>    get_user_modules(PCSTR process_name, DWORD *process_id);
+std::vector<PROCESS_INFO> get_user_processes();
+
+namespace km
 {
 	HANDLE hDriver = 0;
 
-	bool attach(void)
+	bool initialize(void)
 	{
 		if (hDriver != 0)
 		{
@@ -63,94 +77,156 @@ namespace drv
 		return hDriver != 0;
 	}
 
-	BOOL memcpy(PVOID dst, PVOID src, SIZE_T length)
+
+	namespace vm
 	{
-		if (!drv::attach())
+		BOOL read(DWORD pid, ULONG_PTR address, PVOID buffer, QWORD length)
 		{
-			return 0;
+			if (pid == 4)
+			{
+				if (!km::initialize())
+				{
+					return 0;
+				}
+				DRIVER_READMEMORY io;
+				io.src = (PVOID)address;
+				io.dst = buffer;
+				io.length = length;
+				io.virtual_memory = 1;
+				return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
+			} else {
+				if (!km::initialize())
+				{
+					return 0;
+				}
+				DRIVER_READMEMORY_PROCESS io;
+				io.src = (PVOID)address;
+				io.dst = buffer;
+				io.length = length;
+				io.pid = pid;
+				return DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
+			}
 		}
-		DRIVER_READMEMORY io;
-		io.src = src;
-		io.dst = dst;
-		io.length = length;
-		io.virtual_memory = 1;
-		return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
+
+		template <typename t>
+		t read(DWORD pid, ULONG_PTR address)
+		{
+			t b;
+			if (!read(pid, address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
 	}
 
-	BOOL memcpy(DWORD pid, PVOID dst, PVOID src, SIZE_T length)
+	namespace pm
 	{
-		if (!drv::attach())
+		BOOL read(DWORD pid, ULONG_PTR address, PVOID buffer, QWORD length)
 		{
-			return 0;
+			if (!km::initialize())
+			{
+				return 0;
+			}
+			DRIVER_READMEMORY io;
+			io.src = (PVOID)address;
+			io.dst = buffer;
+			io.length = length;
+			io.virtual_memory = 0;
+			return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
 		}
-		DRIVER_READMEMORY_PROCESS io;
-		io.src = src;
-		io.dst = dst;
-		io.length = length;
-		io.pid = pid;
-		return DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
+
+		template <typename t>
+		t read(DWORD pid, ULONG_PTR address)
+		{
+			t b;
+			if (!read(pid, address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
 	}
 
-	BOOL memcpy_physical(PVOID dst, PVOID src, SIZE_T length)
+	namespace port
 	{
-		if (!drv::attach())
+		BOOL read(WORD address, PVOID buffer, QWORD length)
 		{
-			return 0;
+			if (!km::initialize())
+			{
+				return 0;
+			}
+			DRIVER_READWRITEPORT io;
+			io.address = address;
+			io.buffer = buffer;
+			io.length = length;
+			return DeviceIoControl(hDriver, IOCTL_READ_PORT, &io, sizeof(io), &io, sizeof(io), 0, 0);
 		}
-		DRIVER_READMEMORY io;
-		io.src = src;
-		io.dst = dst;
-		io.length = length;
-		io.virtual_memory = 0;
-		return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
+
+		BOOL write(WORD address, PVOID buffer, QWORD length)
+		{
+			if (!km::initialize())
+			{
+				return 0;
+			}
+			DRIVER_READWRITEPORT io;
+			io.address = address;
+			io.buffer = buffer;
+			io.length = length;
+			return DeviceIoControl(hDriver, IOCTL_WRITE_PORT, &io, sizeof(io), &io, sizeof(io), 0, 0);
+		}
+
+		template <typename t>
+		t read(WORD address)
+		{
+			t b;
+			if (!km::port::read(address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
+
+		template <typename t>
+		BOOL write(WORD address, t value)
+		{
+			return km::port::write(address, &value, sizeof(t));
+		}
 	}
 
-	BOOL read(DWORD pid, ULONG_PTR address, PVOID buffer, QWORD length)
+	namespace pci
 	{
-		if (pid == 4)
-			return drv::memcpy(buffer, (PVOID)address, length);
-		else
-			return drv::memcpy(pid, buffer, (PVOID)address, length);
-	}
-
-	BYTE read_i8(DWORD pid, ULONG_PTR address)
-	{
-		BYTE b;
-		if (!drv::read(pid, address, &b, sizeof(b)))
+		WORD read_i16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
 		{
-			b = 0;
-		}
-		return b;
-	}
+			DWORD address;
+			DWORD lbus  = (DWORD)bus;
+			DWORD lslot = (DWORD)slot;
+			DWORD lfunc = (DWORD)func;
+			WORD tmp = 0;
+ 
+			address = (DWORD)((lbus << 16) | (lslot << 11) |
+				(lfunc << 8) | (offset & 0xFC) | ((DWORD)0x80000000));
 
-	WORD read_i16(DWORD pid, ULONG_PTR address)
-	{
-		WORD b;
-		if (!drv::read(pid, address, &b, sizeof(b)))
-		{
-			b = 0;
-		}
-		return b;
-	}
+			km::port::write<DWORD>(0xCF8, address);
 
-	DWORD read_i32(DWORD pid, ULONG_PTR address)
-	{
-		DWORD b;
-		if (!drv::read(pid, address, &b, sizeof(b)))
-		{
-			b = 0;
+			tmp = (WORD)((km::port::read<DWORD>(0xCFC) >> ((offset & 2) * 8)) & 0xFFFF);
+			return tmp;
 		}
-		return b;
-	}
 
-	QWORD read_i64(DWORD pid, ULONG_PTR address)
-	{
-		QWORD b;
-		if (!drv::read(pid, address, &b, sizeof(b)))
+		void write_i16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, WORD value)
 		{
-			b = 0;
+			DWORD address;
+			DWORD lbus  = (DWORD)bus;
+			DWORD lslot = (DWORD)slot;
+			DWORD lfunc = (DWORD)func;
+			WORD tmp = 0;
+ 
+			address = (DWORD)((lbus << 16) | (lslot << 11) |
+				(lfunc << 8) | (offset & 0xFC) | ((DWORD)0x80000000));
+
+			km::port::write<DWORD>(0xCF8, address);
+			km::port::write<WORD>(0xCFC, value);
 		}
-		return b;
 	}
 }
 
@@ -213,13 +289,13 @@ QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 	if (a0 == 0)
 		return 0;
 
-	a1 = drv::read_i32(pid, a0 + 0x03C) + a0;
+	a1 = km::vm::read<DWORD>(pid, a0 + 0x03C) + a0;
 	if (a1 == a0)
 	{
 		return 0;
 	}
 
-	a2 = drv::read_i32(pid, a1 + 0x050);
+	a2 = km::vm::read<DWORD>(pid, a1 + 0x050);
 	if (a2 < 8)
 		return 0;
 
@@ -233,34 +309,34 @@ QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 	a4 += 24;
 
 	QWORD image_dos_header = base;
-	QWORD image_nt_header = drv::read_i32(pid, image_dos_header + 0x03C) + image_dos_header;
+	QWORD image_nt_header = km::vm::read<DWORD>(pid, image_dos_header + 0x03C) + image_dos_header;
 
-	DWORD headers_size = drv::read_i32(pid, image_nt_header + 0x54);
-	drv::read(pid, image_dos_header, a4, headers_size);
+	DWORD headers_size = km::vm::read<DWORD>(pid, image_nt_header + 0x54);
+	km::vm::read(pid, image_dos_header, a4, headers_size);
 
-	unsigned short machine = drv::read_i16(pid, image_nt_header + 0x4);
+	unsigned short machine = km::vm::read<WORD>(pid, image_nt_header + 0x4);
 
 	QWORD section_header = machine == 0x8664 ?
 		image_nt_header + 0x0108 :
 		image_nt_header + 0x00F8;
 
 	
-	for (WORD i = 0; i < drv::read_i16(pid, image_nt_header + 0x06); i++) {
+	for (WORD i = 0; i < km::vm::read<WORD>(pid, image_nt_header + 0x06); i++) {
 
 		QWORD section = section_header + (i * 40);
 
 		if (code_only)
 		{
-			DWORD section_characteristics = drv::read_i32(pid, section + 0x24);
+			DWORD section_characteristics = km::vm::read<DWORD>(pid, section + 0x24);
 			if (!(section_characteristics & 0x00000020))
 				continue;
 
 		}
 
-		QWORD local_virtual_address = base + drv::read_i32(pid, section + 0x0c);
-		DWORD local_virtual_size = drv::read_i32(pid, section + 0x8);
-		QWORD target_virtual_address = (QWORD)a4 + drv::read_i32(pid, section + 0xc);
-		drv::read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size );
+		QWORD local_virtual_address = base + km::vm::read<DWORD>(pid, section + 0x0c);
+		DWORD local_virtual_size = km::vm::read<DWORD>(pid, section + 0x8);
+		QWORD target_virtual_address = (QWORD)a4 + km::vm::read<DWORD>(pid, section + 0xc);
+		km::vm::read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size );
 	}
 	return (QWORD)a4;
 }
@@ -368,13 +444,95 @@ void scan_image(DWORD pid, FILE_INFO file)
 	}
 }
 
+void scan_pcileech(void)
+{
+	//
+	// pcileech-fpga custom config space works like this ->
+	// 
+	// 0x00 -> 0x0A8 (xilinx???)
+	// 0xA8 -> 0x3FF (shadow cfg space)
+	// 
+	// when writing at 0xA8 -> 0x3FF, IORd/IOWr TLP not handled correctly and causing PC to freeze
+	//
+
+	for (int bus = 0; bus < 255; bus++)
+	{
+		for (int slot = 0; slot < 32; slot++)
+		{
+			if (km::pci::read_i16(bus, slot, 0, 4) == 0xFFFF)
+			{
+				continue;
+			}
+
+			unsigned char cfg_space[0xFF];
+			for (int i = 0; i < 0xFF; i+=2)
+			{
+				*(WORD*)&cfg_space[i] = km::pci::read_i16(bus, slot, 0, i);
+			}
+
+			DWORD tick;
+			WORD  value_before;
+
+			tick = GetTickCount();
+			value_before = *(WORD*)&cfg_space[0xA0 + 0x06];
+			km::pci::write_i16(bus, slot, 0, 0xA0 + 0x06, value_before);
+			if (GetTickCount() - tick > 100)
+			{
+				//
+				// valid device, pcileech-fpga doesn't have any issue (0x00 -> 0xA7)
+				//
+				continue;
+			}
+
+			tick = GetTickCount();
+			value_before = *(WORD*)&cfg_space[0xA0 + 0x08];
+			km::pci::write_i16(bus, slot, 0, 0xA0 + 0x08, value_before);
+
+			if (GetTickCount() - tick > 100)
+			{
+				//
+				// pcileech-fpga firmware not handling write's correctly for shadow address space
+				//
+				printf("\033[0;31m[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d (pcileech-fpga)\n",
+					*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot , GetTickCount() - tick
+					);
+			}
+			else
+			{
+				printf("\033[0;32m[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d\n",
+					*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot , GetTickCount() - tick
+					);
+			}
+		}
+	}
+}
+
 int main(void)
 {
-	std::vector<FILE_INFO> drivers = get_system_drivers();
+	if (!km::initialize())
+	{
+		printf("[-] drvscan driver is not running\n");
+		printf("Press any key to continue . . .");
+		return getchar();
+	}
+
+
+	//
+	// tested on pcileech-fpga 4.11
+	//
+	printf("[+] scanning PCIe devices\n");
+	scan_pcileech();
+	printf("\033[0;37m[+] PCIe scan is complete\n");
+	printf("Press any key to continue . . .");
+	getchar();
+
+
+	std::vector<FILE_INFO> drivers = get_kernel_modules();
 
 	//
 	// scan drivers
-	// 
+	//
+	printf("\n[+] scanning kernel drivers\n");
 	for (auto driver : drivers)
 	{
 		//
@@ -384,7 +542,9 @@ int main(void)
 		scan_image(system_pid, driver);
 	}
 
-
+	printf("[+] kernel driver scan is complete\n");
+	printf("Press any key to continue . . .");
+	getchar();
 	
 	
 	/*
@@ -394,7 +554,7 @@ int main(void)
 	// 
 
 	DWORD pid=0;
-	std::vector<FILE_INFO> modules = get_process_modules("explorer.exe", &pid);
+	std::vector<FILE_INFO> modules = get_user_modules("explorer.exe", &pid);
 
 	//
 	// scan process modules
@@ -404,11 +564,24 @@ int main(void)
 		scan_image(pid, module);
 	}
 
+
+
+
+	for (auto process : get_user_processes())
+	{
+		printf("[+] scanning process: %d\n", process.process_id);
+		for (auto module : process.process_modules)
+		{
+			scan_image(process.process_id, module);
+		}
+		printf("\033[0;37m[+] scan is complete\n");
+		printf("Press any key to continue . . .");
+		getchar();
+	}
+
 	*/
 	
 	
-
-	getchar();
 
 	return 0;
 }
@@ -442,7 +615,7 @@ ULONG                    SystemInformationLength,
 PULONG                   ReturnLength
 );
 
-std::vector<FILE_INFO> get_system_drivers(void)
+std::vector<FILE_INFO> get_kernel_modules(void)
 {
 	std::vector<FILE_INFO> driver_information;
 
@@ -503,7 +676,7 @@ std::vector<FILE_INFO> get_system_drivers(void)
 #include <TlHelp32.h>
 
 
-std::vector<FILE_INFO> get_process_modules(PCSTR process_name, DWORD *process_id)
+std::vector<FILE_INFO> get_user_modules(PCSTR process_name, DWORD *process_id)
 {
 	std::vector<FILE_INFO> info;
 
@@ -554,3 +727,52 @@ std::vector<FILE_INFO> get_process_modules(PCSTR process_name, DWORD *process_id
 	return info;
 }
 
+std::vector<PROCESS_INFO> get_user_processes()
+{
+	std::vector<PROCESS_INFO> process_info;
+
+
+	HANDLE snp = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+
+	PROCESSENTRY32 entry{};
+	entry.dwSize = sizeof(entry);
+
+	while (Process32Next(snp, &entry))
+	{
+		if (entry.th32ProcessID == 0 || entry.th32ProcessID == 4)
+		{
+			continue;
+		}
+
+		HANDLE module_snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, entry.th32ProcessID);
+
+		if (module_snap == 0)
+		{
+			continue;
+		}
+
+		MODULEENTRY32 module_entry{};
+		module_entry.dwSize = sizeof(module_entry);
+
+		std::vector<FILE_INFO> module_info;
+
+		while (Module32Next(module_snap, &module_entry))
+		{
+			FILE_INFO temp;
+
+			temp.base = (QWORD)module_entry.modBaseAddr;
+			temp.size = module_entry.modBaseSize;
+			temp.path = std::string(module_entry.szExePath);
+
+			module_info.push_back(temp);
+		}
+
+		process_info.push_back({entry.th32ProcessID, module_info});
+
+		CloseHandle(module_snap);
+	}
+
+	CloseHandle(snp);
+
+	return process_info;
+}
