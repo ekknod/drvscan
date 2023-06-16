@@ -15,6 +15,8 @@
 #define IOCTL_READMEMORY_PROCESS 0xECAC02
 #define IOCTL_READ_PORT 0xECAC04
 #define IOCTL_WRITE_PORT 0xECAC06
+#define IOCTL_IO_READ 0xECAC08
+#define IOCTL_IO_WRITE 0xECAC10
 
 #pragma pack(1)
 typedef struct {
@@ -38,6 +40,13 @@ typedef struct {
 	ULONG_PTR      length;
 	PVOID          buffer;
 } DRIVER_READWRITEPORT;
+
+#pragma pack(1)
+typedef struct {
+	PVOID address;
+	PVOID buffer;
+	ULONG_PTR length;
+} DRIVER_READWRITEIO;
 
 typedef ULONG_PTR QWORD;
 
@@ -122,7 +131,7 @@ namespace km
 
 	namespace pm
 	{
-		BOOL read(DWORD pid, ULONG_PTR address, PVOID buffer, QWORD length)
+		BOOL read(ULONG_PTR address, PVOID buffer, QWORD length)
 		{
 			if (!km::initialize())
 			{
@@ -137,14 +146,59 @@ namespace km
 		}
 
 		template <typename t>
-		t read(DWORD pid, ULONG_PTR address)
+		t read(ULONG_PTR address)
 		{
 			t b;
-			if (!read(pid, address, &b, sizeof(b)))
+			if (!read(address, &b, sizeof(b)))
 			{
 				b = 0;
 			}
 			return b;
+		}
+	}
+
+	namespace io
+	{
+		BOOL read(ULONG_PTR address, PVOID buffer, QWORD length)
+		{
+			if (!km::initialize())
+			{
+				return 0;
+			}
+			DRIVER_READWRITEIO io;
+			io.address = (PVOID)address;
+			io.buffer = buffer;
+			io.length = length;
+			return DeviceIoControl(hDriver, IOCTL_IO_READ, &io, sizeof(io), &io, sizeof(io), 0, 0);
+		}
+
+		BOOL write(ULONG_PTR address, PVOID buffer, QWORD length)
+		{
+			if (!km::initialize())
+			{
+				return 0;
+			}
+			DRIVER_READWRITEIO io;
+			io.address = (PVOID)address;
+			io.buffer = buffer;
+			io.length = length;
+			return DeviceIoControl(hDriver, IOCTL_IO_WRITE, &io, sizeof(io), &io, sizeof(io), 0, 0);
+		}
+
+		template <typename t>
+		t read(ULONG_PTR address)
+		{
+			t b;
+			if (!read(address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
+		template <typename t>
+		BOOL write(WORD address, t value)
+		{
+			return km::io::write(address, &value, sizeof(t));
 		}
 	}
 
@@ -453,6 +507,11 @@ void scan_pcileech(void)
 	// 0xA8 -> 0x3FF (shadow cfg space)
 	// 
 	// when writing at 0xA8 -> 0x3FF, IORd/IOWr TLP not handled correctly and causing PC to freeze
+	// 
+	//
+	// tested on pcileech-fpga 4.11.
+	// fixed from future builds: https://github.com/ufrisk/pcileech-fpga/commit/89f808be7a68a38854ae7b22b7e41cc274d25586
+	//
 	//
 
 	for (int bus = 0; bus < 255; bus++)
@@ -488,6 +547,8 @@ void scan_pcileech(void)
 			value_before = *(WORD*)&cfg_space[0xA0 + 0x08];
 			km::pci::write_i16(bus, slot, 0, 0xA0 + 0x08, value_before);
 
+
+			// BOOL found = 0;
 			if (GetTickCount() - tick > 100)
 			{
 				//
@@ -496,6 +557,8 @@ void scan_pcileech(void)
 				printf("\033[0;31m[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d (pcileech-fpga)\n",
 					*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot , GetTickCount() - tick
 					);
+
+				// found = 1;
 			}
 			else
 			{
@@ -503,12 +566,25 @@ void scan_pcileech(void)
 					*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot , GetTickCount() - tick
 					);
 			}
+
+			/*
+			example code for accessing base address register
+
+			DWORD base_address_register = *(DWORD*)(&cfg_space[0x10]);
+			if (base_address_register < 0x1000)
+			{
+				continue;
+			}
+			printf("base address register value: %lx\n", km::io::read<DWORD>(base_address_register + 0x00));
+			*/
+			
 		}
 	}
 }
 
 int main(void)
 {
+
 	if (!km::initialize())
 	{
 		printf("[-] drvscan driver is not running\n");
@@ -518,7 +594,8 @@ int main(void)
 
 
 	//
-	// tested on pcileech-fpga 4.11
+	// tested on pcileech-fpga 4.11.
+	// fixed from future builds: https://github.com/ufrisk/pcileech-fpga/commit/89f808be7a68a38854ae7b22b7e41cc274d25586
 	//
 	printf("[+] scanning PCIe devices\n");
 	scan_pcileech();
@@ -548,14 +625,11 @@ int main(void)
 	
 	
 	/*
-
 	// 
 	// you can uncomment this if you want to use it for process patch scanning (works both x86 and x64)
 	// 
-
 	DWORD pid=0;
 	std::vector<FILE_INFO> modules = get_user_modules("explorer.exe", &pid);
-
 	//
 	// scan process modules
 	//
@@ -563,10 +637,6 @@ int main(void)
 	{
 		scan_image(pid, module);
 	}
-
-
-
-
 	for (auto process : get_user_processes())
 	{
 		printf("[+] scanning process: %d\n", process.process_id);
@@ -578,7 +648,6 @@ int main(void)
 		printf("Press any key to continue . . .");
 		getchar();
 	}
-
 	*/
 	
 	

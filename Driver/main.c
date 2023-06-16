@@ -7,6 +7,8 @@ typedef ULONG_PTR QWORD;
 #define IOCTL_READMEMORY_PROCESS 0xECAC02
 #define IOCTL_READ_PORT 0xECAC04
 #define IOCTL_WRITE_PORT 0xECAC06
+#define IOCTL_IO_READ 0xECAC08
+#define IOCTL_IO_WRITE 0xECAC10
 
 PDRIVER_OBJECT gDriverObject;
 PDEVICE_OBJECT gDeviceObject;
@@ -35,6 +37,13 @@ typedef struct {
 	ULONG_PTR      length;
 	PVOID          buffer;
 } DRIVER_READWRITEPORT;
+
+#pragma pack(1)
+typedef struct {
+	PVOID address;
+	PVOID buffer;
+	ULONG_PTR length;
+} DRIVER_READWRITEIO;
 
 NTSTATUS NTAPI MmCopyVirtualMemory
 (
@@ -168,6 +177,37 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 		irp->IoStatus.Information = sizeof(DRIVER_READWRITEPORT);
 	}
 
+	else if (ioctl_code == IOCTL_IO_READ)
+	{
+		DRIVER_READWRITEIO *mem = (DRIVER_READWRITEIO*)buffer;
+		PVOID io = MmMapIoSpace(*(PHYSICAL_ADDRESS*)&mem->address, mem->length, NonPagedPool);
+
+
+		if (io)
+		{
+			memcpy(mem->buffer, io, mem->length);
+			MmUnmapIoSpace(io, mem->length);
+			irp->IoStatus.Status = STATUS_SUCCESS;
+		} else {
+			irp->IoStatus.Status = STATUS_INVALID_ADDRESS;
+		}
+		irp->IoStatus.Information = sizeof(DRIVER_READWRITEIO);
+	}
+
+	else if (ioctl_code == IOCTL_IO_WRITE)
+	{
+		DRIVER_READWRITEIO *mem = (DRIVER_READWRITEIO*)buffer;
+		PVOID io = MmMapIoSpace(*(PHYSICAL_ADDRESS*)&mem->address, mem->length, NonPagedPool);
+		if (io)
+		{
+			memcpy(io, mem->buffer, mem->length);
+			MmUnmapIoSpace(io, mem->length);
+			irp->IoStatus.Status = STATUS_SUCCESS;
+		} else {
+			irp->IoStatus.Status = STATUS_INVALID_ADDRESS;
+		}
+		irp->IoStatus.Information = sizeof(DRIVER_READWRITEIO);
+	}
 E0:
 	IoCompleteRequest(irp, IO_NO_INCREMENT);
 	return STATUS_SUCCESS;
