@@ -64,12 +64,6 @@ typedef struct {
 	std::vector<FILE_INFO> process_modules;
 } PROCESS_INFO;
 
-#pragma pack(1)
-typedef struct {
-	QWORD address;
-	DWORD size;
-} WHITELIST_ADDRESS;
-
 std::vector<FILE_INFO>    get_kernel_modules(void);
 std::vector<FILE_INFO>    get_user_modules(PCSTR process_name, DWORD *process_id);
 std::vector<PROCESS_INFO> get_user_processes();
@@ -300,16 +294,22 @@ static BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
 	return res <= cnt;
 }
 
-void scan_section(DWORD pid, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<WHITELIST_ADDRESS> &wla)
+void scan_section(BOOL wow64, DWORD pid, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<DWORD> &wla)
 {
 	DWORD min_difference = MIN_DIFFERENCE;
 	if (wla.size())
 	{
-		min_difference = 1;
+		if (wow64)
+			min_difference = 3;
+		else
+			min_difference = 1;
 	} else {
 		if (pid != 4)
 		{
-			min_difference = 4;
+			if (wow64)
+				min_difference = 3;
+			else
+				min_difference = 1;
 		}
 	}
 
@@ -344,12 +344,12 @@ void scan_section(DWORD pid, CHAR *section_name, QWORD local_image, QWORD runtim
 			//
 			// check if it was allowed change from our earlier clean dump
 			//
-			for (auto& wl : wla)
+			for (auto wl : wla)
 			{
 				//
 				// in case issues -> change 3 to something higher e.g 8.
 				//
-				if (IsAddressEqual(wl.address, (section_address + i), 3))
+				if (IsAddressEqual(wl, (section_address + i), 3))
 				{
 					found = 1;
 					break;
@@ -376,11 +376,11 @@ void scan_section(DWORD pid, CHAR *section_name, QWORD local_image, QWORD runtim
 	}
 }
 
-std::vector<WHITELIST_ADDRESS> get_whitelisted_addresses(QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address)
+std::vector<DWORD> get_whitelisted_addresses(QWORD local_image, QWORD runtime_image, DWORD size, DWORD section_address)
 {
-	std::vector<WHITELIST_ADDRESS> whitelist_addresses;
+	std::vector<DWORD> whitelist_addresses;
 
-	for (QWORD i = 0; i < size; i++)
+	for (DWORD i = 0; i < size; i++)
 	{
 		if (((unsigned char*)local_image)[i] == ((unsigned char*)runtime_image)[i])
 		{
@@ -404,7 +404,7 @@ std::vector<WHITELIST_ADDRESS> get_whitelisted_addresses(QWORD local_image, QWOR
 		}
 		if (cnt >= 1)
 		{
-			whitelist_addresses.push_back( {section_address + i, cnt} );
+			whitelist_addresses.push_back( (section_address + i) );
 		}
 		i += cnt;	
 	}
@@ -456,24 +456,17 @@ QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 	for (WORD i = 0; i < km::vm::read<WORD>(pid, image_nt_header + 0x06); i++) {
 
 		QWORD section = section_header + (i * 40);
+		DWORD section_characteristics = km::vm::read<DWORD>(pid, section + 0x24);
+
 
 		if (code_only)
 		{
-			DWORD section_characteristics = km::vm::read<DWORD>(pid, section + 0x24);
 			if (!(section_characteristics & 0x00000020))
 				continue;
-
 		}
-		else
-		{
-			DWORD section_characteristics = km::vm::read<DWORD>(pid, section + 0x24);
 
-			//
-			// discardable
-			//
-			if ((section_characteristics & 0x02000000))
-				continue;
-		}
+		if ((section_characteristics & 0x02000000))
+			continue;
 
 		QWORD local_virtual_address = base + km::vm::read<DWORD>(pid, section + 0x0c);
 		DWORD local_virtual_size = km::vm::read<DWORD>(pid, section + 0x08);
@@ -576,7 +569,7 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 		image_nt_header + 0x0108 :
 		image_nt_header + 0x00F8;
 
-	std::vector <WHITELIST_ADDRESS> whitelist_addresses;
+	std::vector <DWORD> whitelist_addresses;
 
 	for (WORD i = 0; i < *(WORD*)(image_nt_header + 0x06); i++) {
 		QWORD section = section_header_off + (i * 40);
@@ -633,7 +626,7 @@ void scan_image(DWORD pid, FILE_INFO file)
 	//
 	// try to use existing memory dumps
 	//
-	std::vector<WHITELIST_ADDRESS> whitelist_addresses;
+	std::vector<DWORD> whitelist_addresses;
 	HMODULE dll = (HMODULE)LoadFileEx(("./dumps/" + file.name).c_str(), 0);
 	if (dll == 0)
 	{
@@ -648,10 +641,9 @@ void scan_image(DWORD pid, FILE_INFO file)
 		PVOID wt = LoadFileEx(("./dumps/" + file.name + ".wl").c_str(), &size);
 		if (wt)
 		{
-			for (DWORD i = 0; i < size / sizeof(WHITELIST_ADDRESS); i++)
+			for (DWORD i = 0; i < size / sizeof(DWORD); i++)
 			{
-				auto entry = ((WHITELIST_ADDRESS*)wt)[i];
-				whitelist_addresses.push_back(entry);
+				whitelist_addresses.push_back(((DWORD*)wt)[i]);
 			}
 		}
 		FreeFileEx(wt);
@@ -698,6 +690,7 @@ void scan_image(DWORD pid, FILE_INFO file)
 				}
 		
 				scan_section(
+					machine != 0x8664,
 					pid,
 					(CHAR*)section_name,
 					(QWORD)((BYTE*)dll + section_raw_address),
@@ -826,6 +819,7 @@ int main(int argc, char **argv)
 	//
 	// scan drivers
 	//
+	
 	printf("\n[+] scanning kernel drivers\n");
 	for (auto driver : drivers)
 	{
@@ -839,6 +833,7 @@ int main(int argc, char **argv)
 	printf("[+] kernel driver scan is complete\n");
 	printf("Press any key to continue . . .");
 	getchar();
+	
 
 	//
 	// -> run dump_module_to_file from fresh Windows installation
@@ -870,18 +865,20 @@ int main(int argc, char **argv)
 		// currently get_user_modules picks both x86/x64 ntdll.dll. that causes trouble when using cached modules
 		//
 		if (strcmp(module.name.c_str(), "ntdll.dll") == 0)
-			continue;
+		 	continue;
 
 		scan_image(pid, module);
 	}
 	*/
 	
-
 	/*
+
+	
 	for (auto module : modules)
 	{
 		dump_module_to_file(pid, module);
 	}
+	
 	*/
 
 	return 0;
@@ -1062,6 +1059,9 @@ std::vector<PROCESS_INFO> get_user_processes()
 		while (Module32Next(module_snap, &module_entry))
 		{
 			FILE_INFO temp;
+
+
+			printf("%s\n", module_entry.szExePath);
 
 			temp.base = (QWORD)module_entry.modBaseAddr;
 			temp.size = module_entry.modBaseSize;
