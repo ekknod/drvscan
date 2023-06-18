@@ -353,7 +353,7 @@ void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QW
 
 			if (found == 0)
 			{
-				printf("%s:0x%llx is modified: ", section_name, section_address + i);
+				printf("\033[0;31m%s:0x%llx is modified: ", section_name, section_address + i);
 				for (DWORD j = 0; j < cnt; j++)
 				{
 					printf("%02X ", ((unsigned char*)local_image)[i + j]);
@@ -363,10 +363,10 @@ void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QW
 				{
 					printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
 				}
-				printf("\n");
+				printf("\033[0;37m\n");
 			}
 		}
-		i += cnt;	
+		i += cnt;
 	}
 }
 
