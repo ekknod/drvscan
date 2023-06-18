@@ -300,12 +300,17 @@ static BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
 	return res <= cnt;
 }
 
-void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<WHITELIST_ADDRESS> &wla)
+void scan_section(DWORD pid, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<WHITELIST_ADDRESS> &wla)
 {
 	DWORD min_difference = MIN_DIFFERENCE;
 	if (wla.size())
 	{
 		min_difference = 1;
+	} else {
+		if (pid != 4)
+		{
+			min_difference = 4;
+		}
 	}
 
 	for (QWORD i = 0; i < size; i++)
@@ -350,18 +355,19 @@ void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QW
 					break;
 				}
 			}
-
 			if (found == 0)
 			{
-				printf("\033[0;31m%s:0x%llx is modified: ", section_name, section_address + i);
+				printf("%s:0x%llx is modified: ", section_name, section_address + i);
 				for (DWORD j = 0; j < cnt; j++)
 				{
-					printf("%02X ", ((unsigned char*)local_image)[i + j]);
+					printf("\033[0;32m%02X ", ((unsigned char*)local_image)[i + j]);
+
+
 				}
-				printf("-> ");
+				printf("\033[0;37m-> ");
 				for (DWORD j = 0; j < cnt; j++)
 				{
-					printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
+					printf("\033[0;31m%02X ", ((unsigned char*)runtime_image)[i + j]);
 				}
 				printf("\033[0;37m\n");
 			}
@@ -538,7 +544,7 @@ BOOL write_dump_file(std::string name, PVOID buffer, QWORD size)
 	return 0;
 }
 
-BOOL dump_driver(DWORD pid, FILE_INFO file)
+BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 {
 
 	QWORD target_base = vm_dump_module_ex(pid, file.base, 0);
@@ -692,6 +698,7 @@ void scan_image(DWORD pid, FILE_INFO file)
 				}
 		
 				scan_section(
+					pid,
 					(CHAR*)section_name,
 					(QWORD)((BYTE*)dll + section_raw_address),
 					(QWORD)(target_base + section_raw_address),
@@ -834,13 +841,10 @@ int main(int argc, char **argv)
 	getchar();
 
 	//
-	// dump drivers (we can cache memory dumps, and after changes in PC do scan again)
-	// easier way to find malware for example, because this allows us to do more accurate scan
-	// -> run dump_driver from fresh Windows installation
+	// -> run dump_module_to_file from fresh Windows installation
 	// -> infect PC
 	// -> reboot
 	// -> scan again ( scan_image should automatically use cached drivers )
-	//
 	/*
 	for (auto driver : drivers)
 	{
@@ -848,37 +852,37 @@ int main(int argc, char **argv)
 		// system process id (4)
 		//
 		DWORD system_pid = 4;
-		dump_driver(system_pid, driver);
+		dump_module_to_file(system_pid, driver);
 	}
 	*/
 	
+
 	/*
-	// 
-	// you can uncomment this if you want to use it for process patch scanning (works both x86 and x64)
-	// 
 	DWORD pid=0;
-	std::vector<FILE_INFO> modules = get_user_modules("explorer.exe", &pid);
+	std::vector<FILE_INFO> modules = get_user_modules("csgo.exe", &pid);
 	//
 	// scan process modules
 	//
+	
 	for (auto module : modules)
 	{
+		//
+		// currently get_user_modules picks both x86/x64 ntdll.dll. that causes trouble when using cached modules
+		//
+		if (strcmp(module.name.c_str(), "ntdll.dll") == 0)
+			continue;
+
 		scan_image(pid, module);
-	}
-	for (auto process : get_user_processes())
-	{
-		printf("[+] scanning process: %d\n", process.process_id);
-		for (auto module : process.process_modules)
-		{
-			scan_image(process.process_id, module);
-		}
-		printf("\033[0;37m[+] scan is complete\n");
-		printf("Press any key to continue . . .");
-		getchar();
 	}
 	*/
 	
-	
+
+	/*
+	for (auto module : modules)
+	{
+		dump_module_to_file(pid, module);
+	}
+	*/
 
 	return 0;
 }
@@ -1003,7 +1007,7 @@ std::vector<FILE_INFO> get_user_modules(PCSTR process_name, DWORD *process_id)
 		return info;
 	}
 
-	snp = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
+	snp = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
 
 	MODULEENTRY32 module_entry{};
 	module_entry.dwSize = sizeof(module_entry);
@@ -1011,10 +1015,10 @@ std::vector<FILE_INFO> get_user_modules(PCSTR process_name, DWORD *process_id)
 	while (Module32Next(snp, &module_entry))
 	{
 		FILE_INFO temp;
-
 		temp.base = (QWORD)module_entry.modBaseAddr;
 		temp.size = module_entry.modBaseSize;
 		temp.path = std::string(module_entry.szExePath);
+		temp.name = std::string(module_entry.szModule);
 
 		info.push_back(temp);
 	}
