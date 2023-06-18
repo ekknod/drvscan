@@ -50,16 +50,25 @@ typedef struct {
 
 typedef ULONG_PTR QWORD;
 
+#pragma pack(1)
 typedef struct {
 	std::string path;
+	std::string name;
 	QWORD       base;
 	QWORD       size;
 } FILE_INFO ;
 
+#pragma pack(1)
 typedef struct {
 	DWORD                  process_id;
 	std::vector<FILE_INFO> process_modules;
 } PROCESS_INFO;
+
+#pragma pack(1)
+typedef struct {
+	QWORD address;
+	DWORD size;
+} WHITELIST_ADDRESS;
 
 std::vector<FILE_INFO>    get_kernel_modules(void);
 std::vector<FILE_INFO>    get_user_modules(PCSTR process_name, DWORD *process_id);
@@ -284,8 +293,21 @@ namespace km
 	}
 }
 
-void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address)
+#include <stdlib.h>
+static BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
 {
+	INT64 res = abs(  (INT64)(address2 - address0)  );
+	return res <= cnt;
+}
+
+void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<WHITELIST_ADDRESS> &wla)
+{
+	DWORD min_difference = MIN_DIFFERENCE;
+	if (wla.size())
+	{
+		min_difference = 1;
+	}
+
 	for (QWORD i = 0; i < size; i++)
 	{
 		if (((unsigned char*)local_image)[i] == ((unsigned char*)runtime_image)[i])
@@ -310,28 +332,78 @@ void scan_section(CHAR *section_name, QWORD local_image, QWORD runtime_image, QW
 			cnt++;
 		}
 
-		if (cnt >= MIN_DIFFERENCE)
+		if (cnt >= min_difference)
 		{
-
-			printf("%s:0x%llx is modified: ", section_name, section_address + i);
-
-			for (DWORD j = 0; j < cnt; j++)
+			BOOL found = 0;
+			 
+			//
+			// check if it was allowed change from our earlier clean dump
+			//
+			for (auto& wl : wla)
 			{
-				printf("%02X ", ((unsigned char*)local_image)[i + j]);
+				//
+				// in case issues -> change 3 to something higher e.g 8.
+				//
+				if (IsAddressEqual(wl.address, (section_address + i), 3))
+				{
+					found = 1;
+					break;
+				}
 			}
-			printf("-> ");
 
-			for (DWORD j = 0; j < cnt; j++)
+			if (found == 0)
 			{
-				printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
+				printf("%s:0x%llx is modified: ", section_name, section_address + i);
+				for (DWORD j = 0; j < cnt; j++)
+				{
+					printf("%02X ", ((unsigned char*)local_image)[i + j]);
+				}
+				printf("-> ");
+				for (DWORD j = 0; j < cnt; j++)
+				{
+					printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
+				}
+				printf("\n");
 			}
-
-			printf("\n");
-
 		}
-
 		i += cnt;	
 	}
+}
+
+std::vector<WHITELIST_ADDRESS> get_whitelisted_addresses(QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address)
+{
+	std::vector<WHITELIST_ADDRESS> whitelist_addresses;
+
+	for (QWORD i = 0; i < size; i++)
+	{
+		if (((unsigned char*)local_image)[i] == ((unsigned char*)runtime_image)[i])
+		{
+			continue;
+		}
+		DWORD cnt = 0;
+		while (1)
+		{
+
+			if (i + cnt >= size)
+			{
+				break;
+			}
+
+			if (((unsigned char*)local_image)[i + cnt] == ((unsigned char*)runtime_image)[i + cnt])
+			{
+				break;
+			}
+
+			cnt++;
+		}
+		if (cnt >= 1)
+		{
+			whitelist_addresses.push_back( {section_address + i, cnt} );
+		}
+		i += cnt;	
+	}
+
+	return whitelist_addresses;
 }
 
 QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
@@ -386,11 +458,22 @@ QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 				continue;
 
 		}
+		else
+		{
+			DWORD section_characteristics = km::vm::read<DWORD>(pid, section + 0x24);
+
+			//
+			// discardable
+			//
+			if ((section_characteristics & 0x02000000))
+				continue;
+		}
 
 		QWORD local_virtual_address = base + km::vm::read<DWORD>(pid, section + 0x0c);
-		DWORD local_virtual_size = km::vm::read<DWORD>(pid, section + 0x8);
-		QWORD target_virtual_address = (QWORD)a4 + km::vm::read<DWORD>(pid, section + 0xc);
+		DWORD local_virtual_size = km::vm::read<DWORD>(pid, section + 0x08);
+		QWORD target_virtual_address = (QWORD)a4 + km::vm::read<DWORD>(pid, section + 0x14);
 		km::vm::read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size );
+		*(DWORD*)((QWORD)a4 + (section - image_dos_header) + 0x10) = local_virtual_size;
 	}
 	return (QWORD)a4;
 }
@@ -401,14 +484,8 @@ void vm_free_module(QWORD dumped_module)
 	free((void *)dumped_module);
 }
 
-//
-// implemented for x86 image load
-//
-HMODULE IMP_LoadLibraryEx(PCSTR path, DWORD a1, DWORD a2)
+PVOID LoadFileEx(PCSTR path, DWORD *out_len)
 {
-	(a1);
-	(a2);
-
 	VOID *ret = 0;
 
 	FILE *f = fopen(path, "rb");
@@ -417,6 +494,10 @@ HMODULE IMP_LoadLibraryEx(PCSTR path, DWORD a1, DWORD a2)
 		fseek(f, 0, SEEK_END);
 		long len = ftell(f);
 		fseek(f, 0, SEEK_SET);
+
+
+		if (out_len)
+			*out_len = len;
 
 		ret = malloc(len);
 
@@ -429,17 +510,146 @@ HMODULE IMP_LoadLibraryEx(PCSTR path, DWORD a1, DWORD a2)
 		fclose(f);
 	}
 
-	return (HMODULE)ret;
+	return (PVOID)ret;
 }
 
-void IMP_FreeLibrary(HMODULE hMod)
+void FreeFileEx(PVOID hMod)
 {
 	free(hMod);
 }
 
+BOOL write_dump_file(std::string name, PVOID buffer, QWORD size)
+{
+	if (CreateDirectoryA("./dumps/", NULL) || ERROR_ALREADY_EXISTS == GetLastError())
+	{
+		std::string path = "./dumps/" + name;
+		FILE *f = fopen(path.c_str(), "wb");
+
+		if (f)
+		{
+			fwrite(buffer, size, 1, f);
+
+			fclose(f);
+
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+BOOL dump_driver(DWORD pid, FILE_INFO file)
+{
+
+	QWORD target_base = vm_dump_module_ex(pid, file.base, 0);
+
+	if (target_base == 0 || *(WORD*)target_base != IMAGE_DOS_SIGNATURE)
+	{
+		vm_free_module(target_base);
+		return FALSE;
+	}
+
+	//
+	// write dump file to /dumps/drivername
+	//
+	if (write_dump_file (file.name.c_str(), (PVOID)target_base, *(QWORD*)(target_base - 24 + 8)))
+		printf("[+] driver: %s is succesfully dumped\n", file.name.c_str());
+
+	HMODULE dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+	if (!dll)
+	{
+		vm_free_module(target_base);
+		return 0;
+	}
+	
+	QWORD image_dos_header = (QWORD)dll;
+	QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
+	unsigned short machine = *(WORD*)(image_nt_header + 0x4);
+
+	QWORD section_header_off = machine == 0x8664 ?
+		image_nt_header + 0x0108 :
+		image_nt_header + 0x00F8;
+
+	std::vector <WHITELIST_ADDRESS> whitelist_addresses;
+
+	for (WORD i = 0; i < *(WORD*)(image_nt_header + 0x06); i++) {
+		QWORD section = section_header_off + (i * 40);
+		ULONG section_characteristics = *(ULONG*)(section + 0x24);
+
+		UCHAR *section_name = (UCHAR*)(section + 0x00);
+		ULONG section_virtual_address = *(ULONG*)(section + 0x0C);
+		ULONG section_raw_address = *(ULONG*)(section + 0x14);
+		ULONG section_virtual_size = *(ULONG*)(section + 0x08);
+
+		if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
+		{
+			//
+			// skip Warbird page
+			//
+			if (!strcmp((const char*)section_name, "PAGEwx3"))
+			{
+				continue;
+			}
+		
+			auto temp = get_whitelisted_addresses(
+				(QWORD)((BYTE*)dll + section_raw_address),
+				(QWORD)(target_base + section_raw_address),
+				section_virtual_size,
+				section_virtual_address
+			);
+
+			whitelist_addresses.reserve(whitelist_addresses.size() + temp.size());
+			whitelist_addresses.insert(whitelist_addresses.end(), temp.begin(), temp.end());
+
+		}
+	}
+
+	FreeFileEx(dll);
+	vm_free_module(target_base);
+
+	if (whitelist_addresses.size())
+	{
+		FILE *f = fopen(("./dumps/" + file.name + ".wl").c_str(), "wb+");
+		if (f) {
+			for (auto& wt : whitelist_addresses)
+			{
+				fwrite(&wt, sizeof(wt), 1, f);
+			}
+			fclose(f);
+		}
+	}
+
+	return TRUE;
+}
+
 void scan_image(DWORD pid, FILE_INFO file)
 {
-	HMODULE dll = (HMODULE)IMP_LoadLibraryEx(file.path.c_str(), 0, DONT_RESOLVE_DLL_REFERENCES);
+	//
+	// try to use existing memory dumps
+	//
+	std::vector<WHITELIST_ADDRESS> whitelist_addresses;
+	HMODULE dll = (HMODULE)LoadFileEx(("./dumps/" + file.name).c_str(), 0);
+	if (dll == 0)
+	{
+		dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+	}
+	else
+	{
+		//
+		// build up whitelist
+		//
+		DWORD size;
+		PVOID wt = LoadFileEx(("./dumps/" + file.name + ".wl").c_str(), &size);
+		if (wt)
+		{
+			for (DWORD i = 0; i < size / sizeof(WHITELIST_ADDRESS); i++)
+			{
+				auto entry = ((WHITELIST_ADDRESS*)wt)[i];
+				whitelist_addresses.push_back(entry);
+			}
+		}
+		FreeFileEx(wt);
+	}
 
 	if (dll)
 	{
@@ -447,11 +657,11 @@ void scan_image(DWORD pid, FILE_INFO file)
 
 		if (target_base == 0 || *(WORD*)target_base != IMAGE_DOS_SIGNATURE)
 		{
-			FreeLibrary(dll);
+			FreeFileEx(dll);
 			vm_free_module(target_base);
 			return;
 		}
-	
+
 		printf("scanning image: %s\n", file.path.c_str());
 
 		QWORD image_dos_header = (QWORD)dll;
@@ -467,9 +677,9 @@ void scan_image(DWORD pid, FILE_INFO file)
 			ULONG section_characteristics = *(ULONG*)(section + 0x24);
 
 			UCHAR *section_name = (UCHAR*)(section + 0x00);
-			ULONG section_va = *(ULONG*)(section + 0x0C);
-			ULONG section_pr = *(ULONG*)(section + 0x14);
-			ULONG section_size = *(ULONG*)(section + 0x08);
+			ULONG section_virtual_address = *(ULONG*)(section + 0x0C);
+			ULONG section_raw_address = *(ULONG*)(section + 0x14);
+			ULONG section_virtual_size = *(ULONG*)(section + 0x08);
 
 			if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
 			{
@@ -483,16 +693,17 @@ void scan_image(DWORD pid, FILE_INFO file)
 		
 				scan_section(
 					(CHAR*)section_name,
-					(QWORD)((BYTE*)dll + section_pr),
-					(QWORD)(target_base + section_va),
-					section_size,
-					section_va
+					(QWORD)((BYTE*)dll + section_raw_address),
+					(QWORD)(target_base + section_raw_address),
+					section_virtual_size,
+					section_virtual_address,
+					whitelist_addresses
 				);
 			}
 		}
 
 		vm_free_module(target_base);
-		IMP_FreeLibrary(dll);
+		FreeFileEx(dll);
 	} else {
 		printf("failed to open %s\n", file.path.c_str());
 	}
@@ -582,9 +793,8 @@ void scan_pcileech(void)
 	}
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
-
 	if (!km::initialize())
 	{
 		printf("[-] drvscan driver is not running\n");
@@ -622,7 +832,25 @@ int main(void)
 	printf("[+] kernel driver scan is complete\n");
 	printf("Press any key to continue . . .");
 	getchar();
-	
+
+	//
+	// dump drivers (we can cache memory dumps, and after changes in PC do scan again)
+	// easier way to find malware for example, because this allows us to do more accurate scan
+	// -> run dump_driver from fresh Windows installation
+	// -> infect PC
+	// -> reboot
+	// -> scan again ( scan_image should automatically use cached drivers )
+	//
+	/*
+	for (auto driver : drivers)
+	{
+		//
+		// system process id (4)
+		//
+		DWORD system_pid = 4;
+		dump_driver(system_pid, driver);
+	}
+	*/
 	
 	/*
 	// 
@@ -726,9 +954,11 @@ std::vector<FILE_INFO> get_kernel_modules(void)
 
 			std::string a2 = a0 + a1;
 
+			PCSTR name = (PCSTR)&entry.FullPathName[entry.OffsetToFileName];
 
 			FILE_INFO temp_information;
 			temp_information.path = a2;
+			temp_information.name = name;
 			temp_information.base = (QWORD)entry.ImageBase;
 			temp_information.size = (QWORD)entry.ImageSize;
 
