@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <stdlib.h>
 
 #define MIN_DIFFERENCE 9
 #define IOCTL_READMEMORY 0xECAC00
@@ -65,7 +66,7 @@ typedef struct {
 } PROCESS_INFO;
 
 std::vector<FILE_INFO>    get_kernel_modules(void);
-std::vector<FILE_INFO>    get_user_modules(PCSTR process_name, DWORD *process_id);
+std::vector<FILE_INFO>    get_user_modules(DWORD pid);
 std::vector<PROCESS_INFO> get_user_processes();
 
 namespace km
@@ -287,16 +288,21 @@ namespace km
 	}
 }
 
-#include <stdlib.h>
-static BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
+void FontColor(int color=0x07)
+{
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), color);
+}
+
+BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
 {
 	INT64 res = abs(  (INT64)(address2 - address0)  );
 	return res <= cnt;
 }
 
-void scan_section(BOOL wow64, DWORD pid, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<DWORD> &wla)
+void scan_section(DWORD diff, BOOL wow64, DWORD pid, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<DWORD> &wla)
 {
 	DWORD min_difference = MIN_DIFFERENCE;
+
 	if (wla.size())
 	{
 		if (wow64)
@@ -310,6 +316,14 @@ void scan_section(BOOL wow64, DWORD pid, CHAR *section_name, QWORD local_image, 
 				min_difference = 3;
 			else
 				min_difference = 1;
+		}
+	}
+
+	if (min_difference != 1)
+	{	
+		if (diff != 0)
+		{
+			min_difference = diff;
 		}
 	}
 
@@ -358,18 +372,21 @@ void scan_section(BOOL wow64, DWORD pid, CHAR *section_name, QWORD local_image, 
 			if (found == 0)
 			{
 				printf("%s:0x%llx is modified: ", section_name, section_address + i);
+				FontColor(2);
 				for (DWORD j = 0; j < cnt; j++)
 				{
-					printf("\033[0;32m%02X ", ((unsigned char*)local_image)[i + j]);
-
-
+					printf("%02X ", ((unsigned char*)local_image)[i + j]);
 				}
-				printf("\033[0;37m-> ");
+				FontColor(7);
+				printf("-> ");
+
+				FontColor(4);
 				for (DWORD j = 0; j < cnt; j++)
 				{
-					printf("\033[0;31m%02X ", ((unsigned char*)runtime_image)[i + j]);
+					printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
 				}
-				printf("\033[0;37m\n");
+				FontColor(7);
+				printf("\n");
 			}
 		}
 		i += cnt;
@@ -621,22 +638,24 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 	return TRUE;
 }
 
-void scan_image(DWORD pid, FILE_INFO file)
+void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 {
 	//
 	// try to use existing memory dumps
 	//
+
+	HMODULE dll = 0;
 	std::vector<DWORD> whitelist_addresses;
-	HMODULE dll = (HMODULE)LoadFileEx(("./dumps/" + file.name).c_str(), 0);
-	if (dll == 0)
+
+	if (use_cache)
 	{
-		dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
-	}
-	else
-	{
-		//
-		// build up whitelist
-		//
+		dll = (HMODULE)LoadFileEx(("./dumps/" + file.name).c_str(), 0);
+		if (dll == 0)
+		{
+			dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+		}
+
+	
 		DWORD size;
 		PVOID wt = LoadFileEx(("./dumps/" + file.name + ".wl").c_str(), &size);
 		if (wt)
@@ -648,6 +667,13 @@ void scan_image(DWORD pid, FILE_INFO file)
 		}
 		FreeFileEx(wt);
 	}
+	else
+	{
+		dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+	}
+
+
+
 
 	if (dll)
 	{
@@ -690,6 +716,7 @@ void scan_image(DWORD pid, FILE_INFO file)
 				}
 		
 				scan_section(
+					diff,
 					machine != 0x8664,
 					pid,
 					(CHAR*)section_name,
@@ -765,17 +792,19 @@ void scan_pcileech(void)
 				//
 				// pcileech-fpga firmware not handling write's correctly for shadow address space
 				//
-				printf("\033[0;31m[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d (pcileech-fpga)\n",
+				FontColor(4);
+				printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d (pcileech-fpga)\n",
 					*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot , GetTickCount() - tick
 					);
-
-				// found = 1;
+				FontColor(7);
 			}
 			else
 			{
-				printf("\033[0;32m[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d\n",
+				FontColor(2);
+				printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d\n",
 					*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot , GetTickCount() - tick
 					);
+				FontColor(7);
 			}
 
 			/*
@@ -802,84 +831,123 @@ int main(int argc, char **argv)
 		return getchar();
 	}
 
-
-	//
-	// tested on pcileech-fpga 4.11.
-	// fixed from future builds: https://github.com/ufrisk/pcileech-fpga/commit/89f808be7a68a38854ae7b22b7e41cc274d25586
-	//
-	printf("[+] scanning PCIe devices\n");
-	scan_pcileech();
-	printf("\033[0;37m[+] PCIe scan is complete\n");
-	printf("Press any key to continue . . .");
-	getchar();
-
-
-	std::vector<FILE_INFO> drivers = get_kernel_modules();
-
-	//
-	// scan drivers
-	//
 	
-	printf("\n[+] scanning kernel drivers\n");
-	for (auto driver : drivers)
+	if (argc < 2)
 	{
-		//
-		// system process id (4)
-		//
-		DWORD system_pid = 4;
-		scan_image(system_pid, driver);
+		printf("[drvscan] --help\n");
+		return getchar();
 	}
 
-	printf("[+] kernel driver scan is complete\n");
-	printf("Press any key to continue . . .");
-	getchar();
-	
+	BOOL scan=0, pid = 4, cache = 0, pcileech = 0, diff = 0, use_cache = 0;
 
-	//
-	// -> run dump_module_to_file from fresh Windows installation
-	// -> infect PC
-	// -> reboot
-	// -> scan again ( scan_image should automatically use cached drivers )
-	/*
-	for (auto driver : drivers)
+
+	for (int i = 1; i < argc; i++)
 	{
-		//
-		// system process id (4)
-		//
-		DWORD system_pid = 4;
-		dump_module_to_file(system_pid, driver);
-	}
-	*/
-	
+		if (!strcmp(argv[i], "--help"))
+		{
+			printf(
+				"\n"
 
-	/*
-	DWORD pid=0;
-	std::vector<FILE_INFO> modules = get_user_modules("csgo.exe", &pid);
-	//
-	// scan process modules
-	//
-	
-	for (auto module : modules)
+				"--scan			scan target process memory changes\n"
+				"--diff		        the amount of bytes that have to be different before logging the patch\n"
+				"--usecache		if option is selected, we use local dumps instead of original disk files\n"
+				"--pid			target process id\n"
+				"--savecache		dump target process modules to disk, these can be used later with --usecache\n"
+				"--pcileech		scan pcileech-fpga cards from the system\n"
+
+
+			);
+
+
+			printf("\nExample (verifying kernel modules integrity by using cache):\n");
+			printf("1.			making sure Windows is not infected\n");
+			printf("1.			drvscan.exe --savecache --pid 4\n");
+			printf("2.			reboot the computer\n");
+			printf("3.			load malware what is potentially modifying kernel modules\n");
+			printf("4.			drvscan.exe --scan --usecache --pid 4\n");
+			printf("all malware patches in kernel modules should be now visible\n");
+			
+		}
+
+		else if (!strcmp(argv[i], "--scan"))
+		{
+			scan = 1;
+		}
+
+		else if (!strcmp(argv[i], "--diff"))
+		{
+			diff = atoi(argv[i + 1]);
+		}
+
+		else if (!strcmp(argv[i], "--pid"))
+		{
+			pid = atoi(argv[i + 1]);
+		}
+
+		else if (!strcmp(argv[i], "--savecache"))
+		{
+			cache = 1;
+		}
+
+		else if (!strcmp(argv[i], "--pcileech"))
+		{
+			pcileech = 1;
+		}
+
+		else if (!strcmp(argv[i], "--usecache"))
+		{
+			use_cache = 1;
+		}
+	}
+
+	if (pcileech)
 	{
-		//
-		// currently get_user_modules picks both x86/x64 ntdll.dll. that causes trouble when using cached modules
-		//
-		if (strcmp(module.name.c_str(), "ntdll.dll") == 0)
-		 	continue;
-
-		scan_image(pid, module);
+		printf("[+] scanning PCIe devices\n");
+		scan_pcileech();
+		printf("[+] PCIe scan is complete\n");
 	}
-	*/
-	
-	/*
 
-	
-	for (auto module : modules)
+	if (scan)
 	{
-		dump_module_to_file(pid, module);
+		std::vector<FILE_INFO> modules;
+
+		if (pid == 4)
+		{
+			modules = get_kernel_modules();
+		}
+		else
+		{
+			modules = get_user_modules(pid);
+		}
+
+		printf("\n[+] scanning modules\n");
+		for (auto mod : modules)
+		{
+			scan_image(pid, mod, diff, use_cache);
+		}
+
+		printf("[+] scan is complete\n");
 	}
+
+	if (cache)
+	{
+		std::vector<FILE_INFO> modules;
+
+		if (pid == 4 || pid == 0)
+		{
+			modules = get_kernel_modules();
+		}
+		else
+		{
+			modules = get_user_modules(pid);
+		}
+
+		for (auto mod : modules)
+		{
+			dump_module_to_file(pid, mod);
+		}
 	
-	*/
+	}
 
 	return 0;
 }
@@ -976,41 +1044,58 @@ std::vector<FILE_INFO> get_kernel_modules(void)
 #include <TlHelp32.h>
 
 
-std::vector<FILE_INFO> get_user_modules(PCSTR process_name, DWORD *process_id)
+typedef struct tagMODULEENTRY32EX
+{
+    DWORD   dwSize;
+    DWORD   th32ModuleID;       // This module
+    DWORD   th32ProcessID;      // owning process
+    DWORD   GlblcntUsage;       // Global usage count on the module
+    DWORD   ProccntUsage;       // Module usage count in th32ProcessID's context
+    DWORD   modBaseAddr;        // Base address of module in th32ProcessID's context
+    DWORD   modBaseSize;        // Size in bytes of module starting at modBaseAddr
+    DWORD   hModule;            // The hModule of this module in th32ProcessID's context
+    char    szModule[MAX_MODULE_NAME32 + 1];
+    char    szExePath[MAX_PATH];
+} MODULEENTRY32EX;
+
+std::vector<FILE_INFO> get_user_modules(DWORD pid)
 {
 	std::vector<FILE_INFO> info;
 
-	DWORD pid = 0;
+	BOOL wow64=0;
 
-	HANDLE snp = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-
-	PROCESSENTRY32 entry{};
-	entry.dwSize = sizeof(entry);
-
-	while (Process32Next(snp, &entry))
+	//
+	// wow64?
+	//
 	{
-		if (!_strcmpi(entry.szExeFile, process_name))
+		HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid);
+		if (proc)
 		{
-			pid = (DWORD)entry.th32ProcessID;
-			break;
+			IsWow64Process(proc, &wow64);
+			CloseHandle(proc);
 		}
 	}
-
-	CloseHandle(snp);
-
-
-	if (pid == 0)
-	{
-		return info;
-	}
-
-	snp = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+	
+	HANDLE snp = CreateToolhelp32Snapshot(wow64 ? (TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32) : TH32CS_SNAPMODULE, pid);
 
 	MODULEENTRY32 module_entry{};
 	module_entry.dwSize = sizeof(module_entry);
 
 	while (Module32Next(snp, &module_entry))
 	{
+		if (wow64)
+		{
+			if (strstr(module_entry.szExePath, "SYSTEM32"))
+			{
+				continue;
+			}
+
+			if (strstr(module_entry.szExePath, "System32"))
+			{
+				continue;
+			}
+		}
+
 		FILE_INFO temp;
 		temp.base = (QWORD)module_entry.modBaseAddr;
 		temp.size = module_entry.modBaseSize;
@@ -1021,8 +1106,6 @@ std::vector<FILE_INFO> get_user_modules(PCSTR process_name, DWORD *process_id)
 	}
 
 	CloseHandle(snp);
-
-	*process_id = pid;
 
 	return info;
 }
@@ -1060,12 +1143,10 @@ std::vector<PROCESS_INFO> get_user_processes()
 		{
 			FILE_INFO temp;
 
-
-			printf("%s\n", module_entry.szExePath);
-
 			temp.base = (QWORD)module_entry.modBaseAddr;
 			temp.size = module_entry.modBaseSize;
 			temp.path = std::string(module_entry.szExePath);
+			temp.name = std::string(module_entry.szModule);
 
 			module_info.push_back(temp);
 		}
