@@ -10,6 +10,7 @@
 #include <string>
 #include <iostream>
 #include <stdlib.h>
+#include <TlHelp32.h>
 
 #define MIN_DIFFERENCE 9
 #define IOCTL_READMEMORY 0xECAC00
@@ -319,12 +320,12 @@ void scan_section(DWORD diff, BOOL wow64, DWORD pid, CHAR *section_name, QWORD l
 		}
 	}
 
-	if (min_difference != 1)
-	{	
-		if (diff != 0)
-		{
-			min_difference = diff;
-		}
+	//
+	// force min difference if it's set.
+	//
+	if (diff != 0)
+	{
+		min_difference = diff;
 	}
 
 	for (QWORD i = 0; i < size; i++)
@@ -360,10 +361,7 @@ void scan_section(DWORD diff, BOOL wow64, DWORD pid, CHAR *section_name, QWORD l
 			//
 			for (auto wl : wla)
 			{
-				//
-				// in case issues -> change 3 to something higher e.g 8.
-				//
-				if (IsAddressEqual(wl, (section_address + i), 3))
+				if (IsAddressEqual(wl, (section_address + i), 8))
 				{
 					found = 1;
 					break;
@@ -371,7 +369,7 @@ void scan_section(DWORD diff, BOOL wow64, DWORD pid, CHAR *section_name, QWORD l
 			}
 			if (found == 0)
 			{
-				printf("%s:0x%llx is modified: ", section_name, section_address + i);
+				printf("%s:0x%llx is modified (%ld bytes): ", section_name, section_address + i, cnt);
 				FontColor(2);
 				for (DWORD j = 0; j < cnt; j++)
 				{
@@ -846,26 +844,25 @@ int main(int argc, char **argv)
 		if (!strcmp(argv[i], "--help"))
 		{
 			printf(
-				"\n"
+				"\n\n"
 
-				"--scan			scan target process memory changes\n"
-				"--diff		        the amount of bytes that have to be different before logging the patch\n"
-				"--usecache		if option is selected, we use local dumps instead of original disk files\n"
-				"--pid			target process id\n"
-				"--savecache		dump target process modules to disk, these can be used later with --usecache\n"
-				"--pcileech		scan pcileech-fpga cards from the system\n"
-
-
+				"--scan                 scan target process memory changes\n"
+				"--diff      (optional) the amount of bytes that have to be different before logging the patch\n"
+				"--usecache             if option is selected, we use local dumps instead of original disk files\n"
+				"--savecache            dump target process modules to disk, these can be used later with --usecache\n"
+				"--pid                  target process id\n"
+				"--pcileech             scan pcileech-fpga cards from the system\n\n\n"
 			);
 
 
-			printf("\nExample (verifying kernel modules integrity by using cache):\n");
-			printf("1.			making sure Windows is not infected\n");
-			printf("1.			drvscan.exe --savecache --pid 4\n");
-			printf("2.			reboot the computer\n");
-			printf("3.			load malware what is potentially modifying kernel modules\n");
-			printf("4.			drvscan.exe --scan --usecache --pid 4\n");
-			printf("all malware patches in kernel modules should be now visible\n");
+			printf("\nExample (verifying modules integrity by using cache):\n"
+				"1.			making sure Windows is not infected\n"
+				"1.			drvscan.exe --savecache --pid 4\n"
+				"2.			reboot the computer\n"
+				"3.			load malware what is potentially modifying modules\n"
+				"4.			drvscan.exe --scan --usecache --pid 4\n"
+				"all malware patches should be now visible\n\n"
+			);
 			
 		}
 
@@ -1007,42 +1004,38 @@ std::vector<FILE_INFO> get_kernel_modules(void)
 	{
 		RTL_PROCESS_MODULE_INFORMATION entry = system_modules->Modules[i];
 
-
+		
 		char *sub_string = strstr((char *const)entry.FullPathName, "system32");
-
 		if (sub_string == 0)
 		{
 			sub_string = strstr((char *const)entry.FullPathName, "System32");
 		}
 
-			
+
+		std::string path;
 		if (sub_string)
 		{
-			std::string a0 = "C:\\Windows\\";
-			std::string a1 = std::string(sub_string);
-
-			std::string a2 = a0 + a1;
-
-			PCSTR name = (PCSTR)&entry.FullPathName[entry.OffsetToFileName];
-
-			FILE_INFO temp_information;
-			temp_information.path = a2;
-			temp_information.name = name;
-			temp_information.base = (QWORD)entry.ImageBase;
-			temp_information.size = (QWORD)entry.ImageSize;
-
-
-			driver_information.push_back(temp_information);
+			path = "C:\\Windows\\" + std::string(sub_string);
 		}
+		else
+		{
+			path = std::string((const char *)entry.FullPathName);
+		}
+
+		PCSTR name = (PCSTR)&entry.FullPathName[entry.OffsetToFileName];
+
+		FILE_INFO temp_information;
+		temp_information.path = path;
+		temp_information.name = name;
+		temp_information.base = (QWORD)entry.ImageBase;
+		temp_information.size = (QWORD)entry.ImageSize;
+		driver_information.push_back(temp_information);	
 	}
 	
 	VirtualFree(system_modules, 0, MEM_RELEASE);
 
 	return driver_information;
 }
-
-#include <TlHelp32.h>
-
 
 typedef struct tagMODULEENTRY32EX
 {
@@ -1061,29 +1054,25 @@ typedef struct tagMODULEENTRY32EX
 std::vector<FILE_INFO> get_user_modules(DWORD pid)
 {
 	std::vector<FILE_INFO> info;
-
-	BOOL wow64=0;
-
-	//
-	// wow64?
-	//
-	{
-		HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid);
-		if (proc)
-		{
-			IsWow64Process(proc, &wow64);
-			CloseHandle(proc);
-		}
-	}
 	
-	HANDLE snp = CreateToolhelp32Snapshot(wow64 ? (TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32) : TH32CS_SNAPMODULE, pid);
+
+	HANDLE snp = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
 
 	MODULEENTRY32 module_entry{};
 	module_entry.dwSize = sizeof(module_entry);
 
+	if (!Module32First(snp, &module_entry))
+	{
+		CloseHandle(snp);
+		return info;
+	}
+
+	QWORD nt_header = km::vm::read<DWORD>(pid, (QWORD)module_entry.modBaseAddr + 0x03C) + (QWORD)module_entry.modBaseAddr;
+	BOOL  wow64_process = km::vm::read<WORD>(pid, nt_header + 0x4) == 0x8664 ? 0 : 1;
+	
 	while (Module32Next(snp, &module_entry))
 	{
-		if (wow64)
+		if (wow64_process)
 		{
 			if (strstr(module_entry.szExePath, "SYSTEM32"))
 			{
@@ -1095,7 +1084,6 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 				continue;
 			}
 		}
-
 		FILE_INFO temp;
 		temp.base = (QWORD)module_entry.modBaseAddr;
 		temp.size = module_entry.modBaseSize;
@@ -1104,9 +1092,7 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 
 		info.push_back(temp);
 	}
-
 	CloseHandle(snp);
-
 	return info;
 }
 
