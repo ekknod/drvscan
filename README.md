@@ -6,7 +6,7 @@ handy tool for scanning memory changes in driver executable pages
 --usecache             if option is selected, we use local dumps instead of original disk files  
 --savecache            dump target process modules to disk, these can be used later with --usecache  
 --pid                  target process id  
---pcileech             scan pcileech-fpga cards from the system (works 4.11 and older)
+--pcileech             scan pcileech-fpga cards from the system (works 4.11 and earlier)
 </pre>
 
 Example (verifying module integrity by using cache):
