@@ -1,5 +1,5 @@
 # drvscan
-handy tool for scanning memory changes in driver executable pages
+handy tool for scanning memory changes in executable pages
 <pre>
 --scan                 scan target process memory changes  
 --diff      (optional) the amount of bytes that have to be different before logging the patch  
