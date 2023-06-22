@@ -826,7 +826,7 @@ void scan_pcileech(void)
 				if (GET_BIT(device_status, 1) && GET_BIT(device_status, 3))
 				{
 					//
-					// pcileech-fpga firmware not handling write's correctly for base address registers
+					// pcileech-fpga firmware doesnt currently support base address register Read/Write
 					//
 					FontColor(4);
 					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) Non-Fatal Error Detected & Unsupported Request Detected (pcileech-fpga)\n",
