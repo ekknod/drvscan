@@ -201,7 +201,7 @@ namespace km
 			return b;
 		}
 		template <typename t>
-		BOOL write(WORD address, t value)
+		BOOL write(ULONG_PTR address, t value)
 		{
 			return km::io::write(address, &value, sizeof(t));
 		}
@@ -255,34 +255,30 @@ namespace km
 
 	namespace pci
 	{
-		WORD read_i16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
+		WORD read_i16_legacy(BYTE bus, BYTE slot, BYTE func, BYTE offset)
 		{
-			DWORD address;
-			DWORD lbus  = (DWORD)bus;
-			DWORD lslot = (DWORD)slot;
-			DWORD lfunc = (DWORD)func;
-			WORD tmp = 0;
- 
-			address = (DWORD)((lbus << 16) | (lslot << 11) |
-				(lfunc << 8) | (offset & 0xFC) | ((DWORD)0x80000000));
-
+			DWORD address = 0x80000000 | bus << 16 | slot << 11 | func <<  8 | offset;
 			km::port::write<DWORD>(0xCF8, address);
-
-			tmp = (WORD)((km::port::read<DWORD>(0xCFC) >> ((offset & 2) * 8)) & 0xFFFF);
-			return tmp;
+			return (km::port::read<DWORD>(0xCFC) >> ((offset & 2) * 8)) & 0xFFFF;
 		}
 
-		void write_i16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, WORD value)
+		void write_i16_legacy(BYTE bus, BYTE slot, BYTE func, BYTE offset, WORD value)
 		{
-			DWORD address;
-			DWORD lbus  = (DWORD)bus;
-			DWORD lslot = (DWORD)slot;
-			DWORD lfunc = (DWORD)func;
-			WORD tmp = 0;
- 
-			address = (DWORD)((lbus << 16) | (lslot << 11) |
-				(lfunc << 8) | (offset & 0xFC) | ((DWORD)0x80000000));
+			DWORD address = 0x80000000 | bus << 16 | slot << 11 | func <<  8 | offset;
+			km::port::write<DWORD>(0xCF8, address);
+			km::port::write<WORD>(0xCFC, value);
+		}
 
+		WORD read_i16(BYTE bus, BYTE slot, BYTE func, WORD offset)
+		{
+			DWORD address = 0x80000000 | (offset & 0xf00) << 16 | bus << 16 | slot << 11 | func <<  8 | (offset & 0xff);
+			km::port::write<DWORD>(0xCF8, address);
+			return (km::port::read<DWORD>(0xCFC) >> ((offset & 2) * 8)) & 0xFFFF;
+		}
+
+		void write_i16(BYTE bus, BYTE slot, BYTE func, WORD offset, WORD value)
+		{
+			DWORD address = 0x80000000 | (offset & 0xf00) << 16 | bus << 16 | slot << 11 | func <<  8 | (offset & 0xff);
 			km::port::write<DWORD>(0xCF8, address);
 			km::port::write<WORD>(0xCFC, value);
 		}
@@ -734,6 +730,9 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 	}
 }
 
+#define GET_BITS(data, high, low) ((data >> low) & ((1 << (high - low + 1)) - 1))
+#define GET_BIT(data, bit) ((data >> bit) & 1)
+
 void scan_pcileech(void)
 {
 	//
@@ -754,68 +753,88 @@ void scan_pcileech(void)
 	{
 		for (int slot = 0; slot < 32; slot++)
 		{
-			if (km::pci::read_i16(bus, slot, 0, 4) == 0xFFFF)
+			// for (int function = 0; function < 8; function++)
+			int function = 0;
 			{
-				continue;
-			}
+				if (km::pci::read_i16_legacy(bus, slot, function, 4) == 0xFFFF)
+				{
+					continue;
+				}
 
-			unsigned char cfg_space[0xFF];
-			for (int i = 0; i < 0xFF; i+=2)
-			{
-				*(WORD*)&cfg_space[i] = km::pci::read_i16(bus, slot, 0, i);
-			}
+				unsigned char cfg_space[0xFF];
+				for (int i = 0; i < 0xFF; i+=2)
+				{
+					*(WORD*)&cfg_space[i] = km::pci::read_i16_legacy(bus, slot, function, i);
+				}
 
-			DWORD tick;
-			WORD  value_before;
+				DWORD tick;
+				WORD  value_before;
 
-			tick = GetTickCount();
-			value_before = *(WORD*)&cfg_space[0xA0 + 0x06];
-			km::pci::write_i16(bus, slot, 0, 0xA0 + 0x06, value_before);
-			if (GetTickCount() - tick > 100)
-			{
+				tick = GetTickCount();
+				value_before = *(WORD*)&cfg_space[0xA0 + 0x06];
+				km::pci::write_i16_legacy(bus, slot, function, 0xA0 + 0x06, value_before);
+				if (GetTickCount() - tick > 100)
+				{
+					//
+					// valid device, pcileech-fpga doesn't have any issue (0x00 -> 0xA7)
+					//
+					continue;
+				}
+
+				tick = GetTickCount();
+				value_before = *(WORD*)&cfg_space[0xA0 + 0x08];
+				km::pci::write_i16_legacy(bus, slot, function, 0xA0 + 0x08, value_before);
+
+
+				// BOOL found = 0;
+				if (GetTickCount() - tick > 100)
+				{
+					//
+					// pcileech-fpga firmware not handling write's correctly for shadow address space
+					//
+					FontColor(4);
+					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) IOWr took took: %d (pcileech-fpga)\n",
+						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, GetTickCount() - tick
+						);
+					FontColor(7);
+				}
+				else
+				{
+					FontColor(2);
+					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) IOWr took took: %d\n",
+						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, GetTickCount() - tick
+						);
+					FontColor(7);
+				}
+
+				DWORD base_address_register = *(DWORD*)(&cfg_space[0x10]);
+				if (base_address_register < 0x1000)
+				{
+					continue;
+				}
+
+				DWORD val = km::io::read<DWORD>(base_address_register + 0x00);
+				km::io::write<DWORD>(base_address_register + 0x00, val);
+
+
+				WORD device_status = km::pci::read_i16(bus, slot, function, 0x68+0x02);
+
+
 				//
-				// valid device, pcileech-fpga doesn't have any issue (0x00 -> 0xA7)
+				// Non-Fatal Error Detected & Unsupported Request Detected
 				//
-				continue;
+				if (GET_BIT(device_status, 1) && GET_BIT(device_status, 3))
+				{
+					//
+					// pcileech-fpga firmware not handling write's correctly for base address registers
+					//
+					FontColor(4);
+					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) Non-Fatal Error Detected & Unsupported Request Detected (pcileech-fpga)\n",
+						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function
+						);
+					FontColor(7);
+				}
 			}
-
-			tick = GetTickCount();
-			value_before = *(WORD*)&cfg_space[0xA0 + 0x08];
-			km::pci::write_i16(bus, slot, 0, 0xA0 + 0x08, value_before);
-
-
-			// BOOL found = 0;
-			if (GetTickCount() - tick > 100)
-			{
-				//
-				// pcileech-fpga firmware not handling write's correctly for shadow address space
-				//
-				FontColor(4);
-				printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d (pcileech-fpga)\n",
-					*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot , GetTickCount() - tick
-					);
-				FontColor(7);
-			}
-			else
-			{
-				FontColor(2);
-				printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d) Operation took took: %d\n",
-					*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot , GetTickCount() - tick
-					);
-				FontColor(7);
-			}
-
-			/*
-			example code for accessing base address register
-
-			DWORD base_address_register = *(DWORD*)(&cfg_space[0x10]);
-			if (base_address_register < 0x1000)
-			{
-				continue;
-			}
-			printf("base address register value: %lx\n", km::io::read<DWORD>(base_address_register + 0x00));
-			*/
-			
 		}
 	}
 }
