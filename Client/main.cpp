@@ -807,6 +807,17 @@ void scan_pcileech(void)
 					FontColor(7);
 				}
 
+
+				WORD device_control = *(WORD*)(&cfg_space[0x04]);
+
+				//
+				// bus master is not enabled
+				//
+				if (!GET_BIT(device_control, 2))
+				{
+					continue;
+				}
+
 				DWORD base_address_register = *(DWORD*)(&cfg_space[0x10]);
 				if (base_address_register < 0x1000)
 				{
