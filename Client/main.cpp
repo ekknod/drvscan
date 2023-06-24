@@ -773,28 +773,27 @@ void scan_pcileech(void)
 				tick = GetTickCount();
 				value_before = *(WORD*)&cfg_space[0xA0 + 0x06];
 				km::pci::write_i16_legacy(bus, slot, function, 0xA0 + 0x06, value_before);
-				if (GetTickCount() - tick > 100)
+				tick = GetTickCount() - tick;
+
+				if (tick > 100)
 				{
-					//
-					// valid device, pcileech-fpga doesn't have any issue (0x00 -> 0xA7)
-					//
 					continue;
 				}
 
 				tick = GetTickCount();
 				value_before = *(WORD*)&cfg_space[0xA0 + 0x08];
 				km::pci::write_i16_legacy(bus, slot, function, 0xA0 + 0x08, value_before);
+				tick = GetTickCount() - tick;
 
 
-				// BOOL found = 0;
-				if (GetTickCount() - tick > 100)
+				if (tick > 100)
 				{
 					//
 					// pcileech-fpga firmware not handling write's correctly for shadow address space
 					//
 					FontColor(4);
 					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) IOWr took took: %d (pcileech-fpga)\n",
-						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, GetTickCount() - tick
+						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, tick
 						);
 					FontColor(7);
 				}
@@ -802,16 +801,15 @@ void scan_pcileech(void)
 				{
 					FontColor(2);
 					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) IOWr took took: %d\n",
-						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, GetTickCount() - tick
+						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, tick
 						);
 					FontColor(7);
 				}
 
-
 				WORD device_control = *(WORD*)(&cfg_space[0x04]);
 
 				//
-				// bus master is not enabled
+				// check if bus master is enabled
 				//
 				if (!GET_BIT(device_control, 2))
 				{
@@ -824,27 +822,22 @@ void scan_pcileech(void)
 					continue;
 				}
 
-				DWORD val = km::io::read<DWORD>(base_address_register + 0x00);
-				km::io::write<DWORD>(base_address_register + 0x00, val);
-
-
-				WORD device_status = km::pci::read_i16(bus, slot, function, 0x68+0x02);
-
+				tick = GetTickCount();
+				km::io::read<DWORD>(base_address_register + 0x04);
+				tick = GetTickCount() - tick;
 
 				//
-				// Non-Fatal Error Detected & Unsupported Request Detected
-				//
-				if (GET_BIT(device_status, 1) && GET_BIT(device_status, 3))
+				// this is only getting triggered, if pcileech-fpga is backed by driver + doesn't reply on MRd
+				// 
+				if (tick > 100)
 				{
-					//
-					// pcileech-fpga firmware doesnt currently support base address register Read/Write
-					//
 					FontColor(4);
-					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) Non-Fatal Error Detected & Unsupported Request Detected (pcileech-fpga)\n",
-						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function
+					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) MRd took took: %d (pcileech-fpga)\n",
+						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, tick
 						);
 					FontColor(7);
 				}
+				
 			}
 		}
 	}
