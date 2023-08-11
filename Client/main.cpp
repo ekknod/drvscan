@@ -730,117 +730,284 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 	}
 }
 
+void compare_cfg(unsigned char *cfg, unsigned char *orig_cfg)
+{
+	printf("\n     00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F\n\n");
+
+	int line_counter=0;
+	for (int i = 0; i < 256; i++)
+	{
+		if (line_counter == 0)
+		{
+			printf("%02X   ", i);
+		}
+
+		line_counter++;
+
+
+		if (cfg[i] == orig_cfg[i])
+			printf("%02X ", cfg[i]);
+		else
+		{
+			FontColor(2);
+			printf("%02X ", orig_cfg[i]);
+			FontColor();
+		}
+
+		if (line_counter == 16)
+		{
+			printf("\n");
+			line_counter=0;
+		}
+		
+	}
+
+	printf("\n");
+
+	line_counter=0;
+	for (int i = 0; i < 256; i++)
+	{
+		if (line_counter == 0)
+		{
+			printf("%02X   ", i);
+		}
+
+		line_counter++;
+
+
+		if (cfg[i] == orig_cfg[i])
+			printf("%02X ", cfg[i]);
+		else
+		{
+			FontColor(4);
+			printf("%02X ", cfg[i]);
+			FontColor();
+		}
+
+		if (line_counter == 16)
+		{
+			printf("\n");
+			line_counter=0;
+		}
+		
+	}
+}
+
 #define GET_BITS(data, high, low) ((data >> low) & ((1 << (high - low + 1)) - 1))
 #define GET_BIT(data, bit) ((data >> bit) & 1)
 
+
+//
+// not complete. no cfg filtering. only experimental.
+//
 void scan_pcileech(void)
 {
-	//
-	// pcileech-fpga custom config space works like this ->
-	// 
-	// 0x00 -> 0x0A8 (xilinx???)
-	// 0xA8 -> 0x3FF (shadow cfg space)
-	// 
-	// when writing at 0xA8 -> 0x3FF, IORd/IOWr TLP not handled correctly and causing PC to freeze
-	// 
-	//
-	// tested on pcileech-fpga 4.11.
-	// fixed from future builds: https://github.com/ufrisk/pcileech-fpga/commit/89f808be7a68a38854ae7b22b7e41cc274d25586
-	//
-	//
+	typedef struct {
+		
+		unsigned char  bus, slot, func;
+		unsigned char  cfg[0x100];
+		unsigned char  blk;
+	} DEVICE_INFO;
 
-	for (int bus = 0; bus < 255; bus++)
+	std::vector<DEVICE_INFO> devices;
+
+	
+	for (unsigned char bus = 0; bus < 255; bus++)
 	{
-		for (int slot = 0; slot < 32; slot++)
+		for (unsigned char slot = 0; slot < 32; slot++)
 		{
-			// for (int function = 0; function < 8; function++)
-			int function = 0;
+			for (unsigned char function = 0; function < 8; function++)
 			{
-				if (km::pci::read_i16_legacy(bus, slot, function, 4) == 0xFFFF)
+				WORD device_control = km::pci::read_i16_legacy(bus, slot, function, 4);
+				if (device_control == 0xFFFF)
 				{
 					continue;
 				}
 
-				unsigned char cfg_space[0xFF];
-				for (int i = 0; i < 0xFF; i+=2)
+				DEVICE_INFO device;
+				device.bus = bus;
+				device.slot = slot;
+				device.func = function;
+				device.blk = 0;
+				for (int i = 0; i < 0x100; i+=2)
 				{
-					*(WORD*)&cfg_space[i] = km::pci::read_i16_legacy(bus, slot, function, i);
+					*(WORD*)&device.cfg[i] = km::pci::read_i16_legacy(bus, slot, function, i);
 				}
-
-				DWORD tick;
-				WORD  value_before;
-
-				tick = GetTickCount();
-				value_before = *(WORD*)&cfg_space[0xA0 + 0x06];
-				km::pci::write_i16_legacy(bus, slot, function, 0xA0 + 0x06, value_before);
-				tick = GetTickCount() - tick;
-
-				if (tick > 100)
-				{
-					continue;
-				}
-
-				tick = GetTickCount();
-				value_before = *(WORD*)&cfg_space[0xA0 + 0x08];
-				km::pci::write_i16_legacy(bus, slot, function, 0xA0 + 0x08, value_before);
-				tick = GetTickCount() - tick;
-
-
-				if (tick > 100)
-				{
-					//
-					// pcileech-fpga firmware not handling write's correctly for shadow address space
-					//
-					FontColor(4);
-					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) IOWr took took: %d (pcileech-fpga)\n",
-						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, tick
-						);
-					FontColor(7);
-				}
-				else
-				{
-					FontColor(2);
-					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) IOWr took took: %d\n",
-						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, tick
-						);
-					FontColor(7);
-				}
-
-				WORD device_control = *(WORD*)(&cfg_space[0x04]);
-
-				//
-				// check if bus master is enabled
-				//
-				if (!GET_BIT(device_control, 2))
-				{
-					continue;
-				}
-
-				DWORD base_address_register = *(DWORD*)(&cfg_space[0x10]);
-				if (base_address_register < 0x1000)
-				{
-					continue;
-				}
-
-				tick = GetTickCount();
-				km::io::read<DWORD>(base_address_register + 0x04);
-				tick = GetTickCount() - tick;
-
-				//
-				// this is only getting triggered, if pcileech-fpga is backed by driver + doesn't reply on MRd
-				// 
-				if (tick > 100)
-				{
-					FontColor(4);
-					printf("[+] [%04x:%04x] (BUS: %02d, SLOT: %02d, FUNC: %02d) MRd took took: %d (pcileech-fpga)\n",
-						*(WORD*)&cfg_space[0], *(WORD*)&cfg_space[2], bus, slot, function, tick
-						);
-					FontColor(7);
-				}
-				
+				devices.push_back(device);
 			}
 		}
 	}
+
+
+	//
+	// test shadow cfg (4.11 and lower)
+	//
+	printf("[+] testing shadow config space\n");
+	for (auto & dev : devices)
+	{		
+		DWORD tick = GetTickCount();
+		km::pci::write_i16_legacy(dev.bus, dev.slot, dev.func, 0xA8, *(WORD*)(dev.cfg + 0xA8));
+		tick = GetTickCount() - tick;
+		if (tick > 100)
+		{
+			FontColor(4);
+			dev.blk = 1;
+		}
+		else
+		{
+			FontColor(2);
+		}
+		printf("[+] [%02X:%02X:%02X] [%04X:%04X] IOWr took took: %d\n", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), tick);
+		FontColor(7);
+	}
+	printf("[+] test complete\n\n");
+
+
+
+	printf("[+] testing base address register\n");
+	// QWORD mgmt_base = 0xF0000000;
+	for (auto & dev : devices)
+	{
+		//
+		// device was already blocked
+		//
+		if (dev.blk)
+		{
+			continue;
+		}
+
+
+		//
+		// memory mapped configuration space, can be used instead of km::pci::read_i16_legacy if wanted to.
+		// https://wiki.osdev.org/PCI_Express
+		// 
+		// QWORD physical_address = mgmt_base + ((bus - 0) << 20 | slot << 15 | function << 12);
+		// DWORD bar = km::io::read<DWORD>(physical_address + 0x10);
+		// 
+
+
+		//
+		// make sure bus master is enabled
+		//
+		if (!GET_BIT(*(WORD*)(dev.cfg + 0x04), 2))
+		{
+			//
+			// bus master was disabled from the device, we can safely block it
+			//
+			if (dev.func == 0)
+			{
+				dev.blk = 2;
+			}
+			continue;
+		}
+
+		DWORD bar = 0;
+		for (int i = 0; i < 2; i++)
+			((unsigned short*)&bar)[i] = km::pci::read_i16_legacy(dev.bus,dev.slot,dev.func, 0x10 + (i*2));
+
+
+		if (bar < 0x10000)
+		{
+			continue;
+		}
+
+		WORD dev0 = km::pci::read_i16_legacy(dev.bus, dev.slot, dev.func, 0x00);
+		WORD dev1 = km::pci::read_i16_legacy(dev.bus, dev.slot, dev.func, 0x02);
+
+		unsigned char buffer[16];
+		DWORD tickcount = GetTickCount();
+		km::io::read(bar + 0x100, buffer, 16);
+		tickcount = GetTickCount() - tickcount;
+
+		if (tickcount > 100)
+		{
+			FontColor(4);
+			dev.blk = 3;
+		}
+		else
+		{
+			FontColor(2);
+		}
+
+		printf("[+] [%02X:%02X:%02X] [%04X:%04X] 0x%lX MRd: ", dev.bus, dev.slot,dev.func, dev0,dev1, bar);			
+		for (int i = 0; i < 16; i++)
+		{
+			printf("%02X ", buffer[i]);
+		}
+		printf("took: %d\n", tickcount);
+		FontColor(7);
+	}
+
+	printf("[+] test complete\n\n");
+
+
+	printf("[+] checking configuration space\n");
+	for (auto & dev : devices)
+	{
+		//
+		// device was already blocked
+		//
+		if (dev.blk)
+		{
+			continue;
+		}
+
+		if (dev.func != 0)
+		{
+			continue;
+		}
+
+		//
+		// add code here, something like xilinx_cfg (https://github.com/ekknod/xilinx_cfg)
+		//
+	
+	}
+	printf("[+] test complete\n\n");
+
+
+	//
+	// whitelist/verify
+	//
+	for (auto &dev : devices)
+	{
+		BYTE *cd = (BYTE*)(dev.cfg + 0x09);
+		if (cd[2] == 0x06 && cd[1] == 0x00 && cd[0] == 0x00)
+		{
+			//
+			// skip bridge devices
+			// verify_legit_bridge();
+			//
+			dev.blk = 0;
+			continue;
+		}
+
+
+		if (cd[2] == 0x0C && cd[1] == 0x05 && cd[0] == 0x00)
+		{
+			//
+			// skip SMBus controller
+			// verify_smbus_controller();
+			//
+			dev.blk = 0;
+			continue;
+		}
+	}
+
+
+	printf("[+] blocked devices\n");
+	for (auto &dev : devices)
+	{
+		if (!dev.blk)
+		{
+			continue;
+		}
+		
+
+		FontColor(14);
+		printf("[+] [%02X:%02X:%02X] [%04X:%04X] (%d)\n", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), dev.blk);
+		FontColor(7);
+	}
+	getchar();
 }
 
 int main(int argc, char **argv)
@@ -851,7 +1018,6 @@ int main(int argc, char **argv)
 		printf("Press any key to continue . . .");
 		return getchar();
 	}
-
 	
 	if (argc < 2)
 	{
