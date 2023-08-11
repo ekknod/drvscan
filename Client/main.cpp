@@ -901,18 +901,13 @@ void scan_pcileech(void)
 			continue;
 		}
 
-		DWORD bar = 0;
-		for (int i = 0; i < 2; i++)
-			((unsigned short*)&bar)[i] = km::pci::read_i16_legacy(dev.bus,dev.slot,dev.func, 0x10 + (i*2));
+		DWORD bar = *(DWORD*)(dev.cfg + 0x10);
 
 
 		if (bar < 0x10000)
 		{
 			continue;
 		}
-
-		WORD dev0 = km::pci::read_i16_legacy(dev.bus, dev.slot, dev.func, 0x00);
-		WORD dev1 = km::pci::read_i16_legacy(dev.bus, dev.slot, dev.func, 0x02);
 
 		unsigned char buffer[16];
 		DWORD tickcount = GetTickCount();
@@ -929,7 +924,7 @@ void scan_pcileech(void)
 			FontColor(2);
 		}
 
-		printf("[+] [%02X:%02X:%02X] [%04X:%04X] 0x%lX MRd: ", dev.bus, dev.slot,dev.func, dev0,dev1, bar);			
+		printf("[+] [%02X:%02X:%02X] [%04X:%04X] 0x%lX MRd: ", dev.bus, dev.slot,dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), bar);			
 		for (int i = 0; i < 16; i++)
 		{
 			printf("%02X ", buffer[i]);
