@@ -1002,7 +1002,6 @@ void scan_pcileech(void)
 		printf("[+] [%02X:%02X:%02X] [%04X:%04X] (%d)\n", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), dev.blk);
 		FontColor(7);
 	}
-	getchar();
 }
 
 int main(int argc, char **argv)
