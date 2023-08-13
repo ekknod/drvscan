@@ -730,82 +730,11 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 	}
 }
 
-void compare_cfg(unsigned char *cfg, unsigned char *orig_cfg)
-{
-	printf("\n     00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F\n\n");
-
-	int line_counter=0;
-	for (int i = 0; i < 256; i++)
-	{
-		if (line_counter == 0)
-		{
-			printf("%02X   ", i);
-		}
-
-		line_counter++;
-
-
-		if (cfg[i] == orig_cfg[i])
-			printf("%02X ", cfg[i]);
-		else
-		{
-			FontColor(2);
-			printf("%02X ", orig_cfg[i]);
-			FontColor();
-		}
-
-		if (line_counter == 16)
-		{
-			printf("\n");
-			line_counter=0;
-		}
-		
-	}
-
-	printf("\n");
-
-	line_counter=0;
-	for (int i = 0; i < 256; i++)
-	{
-		if (line_counter == 0)
-		{
-			printf("%02X   ", i);
-		}
-
-		line_counter++;
-
-
-		if (cfg[i] == orig_cfg[i])
-			printf("%02X ", cfg[i]);
-		else
-		{
-			FontColor(4);
-			printf("%02X ", cfg[i]);
-			FontColor();
-		}
-
-		if (line_counter == 16)
-		{
-			printf("\n");
-			line_counter=0;
-		}
-		
-	}
-}
-
-#define GET_BITS(data, high, low) ((data >> low) & ((1 << (high - low + 1)) - 1))
-#define GET_BIT(data, bit) ((data >> bit) & 1)
-
-
-//
-// not complete. no cfg filtering. only experimental.
-//
 void scan_pcileech(void)
 {
 	typedef struct {
 		
-		unsigned char  bus, slot, func;
-		unsigned char  cfg[0x100];
+		unsigned char  bus, slot, cfg[0x100];
 		unsigned char  blk;
 	} DEVICE_INFO;
 
@@ -815,57 +744,49 @@ void scan_pcileech(void)
 	for (unsigned char bus = 0; bus < 255; bus++)
 	{
 		for (unsigned char slot = 0; slot < 32; slot++)
-		{
-			for (unsigned char function = 0; function < 8; function++)
+		{	
+			WORD device_control = km::pci::read_i16_legacy(bus, slot, 0, 4);
+			if (device_control == 0xFFFF)
 			{
-				WORD device_control = km::pci::read_i16_legacy(bus, slot, function, 4);
-				if (device_control == 0xFFFF)
-				{
-					continue;
-				}
-
-				DEVICE_INFO device;
-				device.bus = bus;
-				device.slot = slot;
-				device.func = function;
-				device.blk = 0;
-				for (int i = 0; i < 0x100; i+=2)
-				{
-					*(WORD*)&device.cfg[i] = km::pci::read_i16_legacy(bus, slot, function, i);
-				}
-				devices.push_back(device);
+				continue;
 			}
+
+			DEVICE_INFO device;
+			device.bus = bus;
+			device.slot = slot;
+			device.blk = 0;
+			for (int i = 0; i < 0x100; i+=2)
+			{
+				*(WORD*)&device.cfg[i] = km::pci::read_i16_legacy(bus, slot, 0, i);
+			}
+			devices.push_back(device);
 		}
 	}
 
-
 	//
-	// test shadow cfg (4.11 and lower)
+	// test shadow cfg (pcileech-fpga 4.11 and lower)
 	//
-	printf("[+] testing shadow config space\n");
 	for (auto & dev : devices)
-	{		
+	{
 		DWORD tick = GetTickCount();
-		km::pci::write_i16_legacy(dev.bus, dev.slot, dev.func, 0xA8, *(WORD*)(dev.cfg + 0xA8));
+		km::pci::write_i16_legacy(dev.bus, dev.slot, 0, 0xA0, *(WORD*)(dev.cfg + 0xA0));
+		tick = GetTickCount() - tick;
+		if (tick > 100)
+			continue;
+
+		tick = GetTickCount();
+		km::pci::write_i16_legacy(dev.bus, dev.slot, 0, 0xA8, *(WORD*)(dev.cfg + 0xA8));
 		tick = GetTickCount() - tick;
 		if (tick > 100)
 		{
-			FontColor(4);
 			dev.blk = 1;
+			break;
 		}
-		else
-		{
-			FontColor(2);
-		}
-		printf("[+] [%02X:%02X:%02X] [%04X:%04X] IOWr took took: %d\n", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), tick);
-		FontColor(7);
 	}
-	printf("[+] test complete\n\n");
-
-
-
-	printf("[+] testing base address register\n");
-	// QWORD mgmt_base = 0xF0000000;
+	
+	//
+	// check configuration space
+	//
 	for (auto & dev : devices)
 	{
 		//
@@ -876,120 +797,13 @@ void scan_pcileech(void)
 			continue;
 		}
 
-
-		//
-		// memory mapped configuration space, can be used instead of km::pci::read_i16_legacy if wanted to.
-		// https://wiki.osdev.org/PCI_Express
-		// 
-		// QWORD physical_address = mgmt_base + ((bus - 0) << 20 | slot << 15 | function << 12);
-		// DWORD bar = km::io::read<DWORD>(physical_address + 0x10);
-		// 
-
-
-		//
-		// make sure bus master is enabled
-		//
-		if (!GET_BIT(*(WORD*)(dev.cfg + 0x04), 2))
-		{
-			//
-			// bus master was disabled from the device, we can safely block it
-			//
-			if (dev.func == 0)
-			{
-				dev.blk = 2;
-			}
-			continue;
-		}
-
-		DWORD bar = *(DWORD*)(dev.cfg + 0x10);
-
-
-		if (bar < 0x10000)
-		{
-			continue;
-		}
-
-		unsigned char buffer[16];
-		DWORD tickcount = GetTickCount();
-		km::io::read(bar + 0x100, buffer, 16);
-		tickcount = GetTickCount() - tickcount;
-
-		if (tickcount > 100)
-		{
-			FontColor(4);
-			dev.blk = 3;
-		}
-		else
-		{
-			FontColor(2);
-		}
-
-		printf("[+] [%02X:%02X:%02X] [%04X:%04X] 0x%lX MRd: ", dev.bus, dev.slot,dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), bar);			
-		for (int i = 0; i < 16; i++)
-		{
-			printf("%02X ", buffer[i]);
-		}
-		printf("took: %d\n", tickcount);
-		FontColor(7);
-	}
-
-	printf("[+] test complete\n\n");
-
-
-	printf("[+] checking configuration space\n");
-	for (auto & dev : devices)
-	{
-		//
-		// device was already blocked
-		//
-		if (dev.blk)
-		{
-			continue;
-		}
-
-		if (dev.func != 0)
-		{
-			continue;
-		}
-
-		//
-		// add code here, something like xilinx_cfg (https://github.com/ekknod/xilinx_cfg)
-		//
+		// QWORD mgmt_base         = 0xF0000000;
+		// QWORD memory_mapped_cfg = mgmt_base + ((bus - 0) << 20 | slot << 15 | function << 12);
+		// WORD vendor_id = km::io::read<DWORD>(memory_mapped_cfg + 0x00);
+		// WORD device_id = km::io::read<DWORD>(memory_mapped_cfg + 0x02);
 	
 	}
-	printf("[+] test complete\n\n");
 
-
-	//
-	// whitelist/verify
-	//
-	for (auto &dev : devices)
-	{
-		BYTE *cd = (BYTE*)(dev.cfg + 0x09);
-		if (cd[2] == 0x06 && cd[1] == 0x00 && cd[0] == 0x00)
-		{
-			//
-			// skip bridge devices
-			// verify_legit_bridge();
-			//
-			dev.blk = 0;
-			continue;
-		}
-
-
-		if (cd[2] == 0x0C && cd[1] == 0x05 && cd[0] == 0x00)
-		{
-			//
-			// skip SMBus controller
-			// verify_smbus_controller();
-			//
-			dev.blk = 0;
-			continue;
-		}
-	}
-
-
-	printf("[+] blocked devices\n");
 	for (auto &dev : devices)
 	{
 		if (!dev.blk)
@@ -999,7 +813,7 @@ void scan_pcileech(void)
 		
 
 		FontColor(14);
-		printf("[+] [%02X:%02X:%02X] [%04X:%04X] (%d)\n", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), dev.blk);
+		printf("[+] [%02X:%02X:%02X] [%04X:%04X] (%d)\n", dev.bus, dev.slot, 0, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), dev.blk);
 		FontColor(7);
 	}
 }
