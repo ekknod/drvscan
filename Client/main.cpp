@@ -62,26 +62,34 @@ namespace km
 			return 1;
 		}
 
-		HANDLE temp_handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, GetCurrentThreadId());
-
-		for (auto &handle : get_system_handle_information())
+		//
+		// ;_;
+		//
 		{
-			if (handle.pid == GetCurrentProcessId() && handle.object_type == 0x08)
+			REPEAT_UNTIL:
+
+			HANDLE temp_handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, GetCurrentThreadId());
+
+			for (auto &handle : get_system_handle_information())
 			{
-				if (handle.handle == (QWORD)temp_handle)
+				if (handle.pid == GetCurrentProcessId() && handle.object_type == 0x08)
 				{
-					current_thread = handle.object;
-					break;
+					if (handle.handle == (QWORD)temp_handle)
+					{
+						current_thread = handle.object;
+						break;
+					}
 				}
 			}
-		}
 
-		if (current_thread == 0)
-		{
-			return 0;
-		}
+			CloseHandle(temp_handle);
 
-		CloseHandle(temp_handle);
+			if (current_thread == 0)
+			{
+				goto REPEAT_UNTIL;
+			}
+
+		}
 
 		driver_handle = CreateFileA("\\\\.\\Nal", GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 
