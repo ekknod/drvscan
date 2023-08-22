@@ -1,9 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS
 
-/*
- * handy tool for testing
- */
-
 #include <windows.h>
 #include <stdio.h>
 #include <vector>
@@ -11,44 +7,10 @@
 #include <iostream>
 #include <stdlib.h>
 #include <TlHelp32.h>
+#include <intrin.h>
 
+#define IOCTL_INTEL 0x80862007
 #define MIN_DIFFERENCE 9
-#define IOCTL_READMEMORY 0xECAC00
-#define IOCTL_READMEMORY_PROCESS 0xECAC02
-#define IOCTL_READ_PORT 0xECAC04
-#define IOCTL_WRITE_PORT 0xECAC06
-#define IOCTL_IO_READ 0xECAC08
-#define IOCTL_IO_WRITE 0xECAC10
-
-#pragma pack(1)
-typedef struct {
-	PVOID src;
-	PVOID dst;
-	SIZE_T length;
-	ULONG virtual_memory;
-} DRIVER_READMEMORY;
-
-#pragma pack(1)
-typedef struct {
-	PVOID src;
-	PVOID dst;
-	ULONG_PTR length;
-	ULONG pid;
-} DRIVER_READMEMORY_PROCESS;
-
-#pragma pack(1)
-typedef struct {
-	unsigned short address;
-	ULONG_PTR      length;
-	PVOID          buffer;
-} DRIVER_READWRITEPORT;
-
-#pragma pack(1)
-typedef struct {
-	PVOID address;
-	PVOID buffer;
-	ULONG_PTR length;
-} DRIVER_READWRITEIO;
 
 typedef ULONG_PTR QWORD;
 
@@ -66,64 +28,194 @@ typedef struct {
 	std::vector<FILE_INFO> process_modules;
 } PROCESS_INFO;
 
+#pragma pack(1)
+typedef struct {
+	QWORD                  address;
+	DWORD                  tag;
+} BIGPOOL_INFO;
+
+#pragma pack(1)
+typedef struct {
+	DWORD                  pid;
+	BYTE                   object_type;
+	BYTE                   flags;
+	QWORD                  handle;
+	QWORD                  object;
+	ACCESS_MASK            access_mask;
+} HANDLE_INFO;
+
 std::vector<FILE_INFO>    get_kernel_modules(void);
 std::vector<FILE_INFO>    get_user_modules(DWORD pid);
 std::vector<PROCESS_INFO> get_user_processes();
+std::vector<BIGPOOL_INFO> get_kernel_allocations(void);
+std::vector<HANDLE_INFO>  get_system_handle_information(void);
 
 namespace km
 {
-	HANDLE hDriver = 0;
+	HANDLE driver_handle = 0;
+	QWORD  current_thread = 0;
 
-	bool initialize(void)
+	BOOL initialize(void)
 	{
-		if (hDriver != 0)
+		if (driver_handle != 0)
 		{
 			return 1;
 		}
 
-		hDriver = CreateFileA("\\\\.\\memdriver", GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+		HANDLE temp_handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, GetCurrentThreadId());
 
-		if (hDriver == INVALID_HANDLE_VALUE)
+		for (auto &handle : get_system_handle_information())
 		{
-			hDriver = 0;
-		}
-
-		return hDriver != 0;
-	}
-
-
-	namespace vm
-	{
-		BOOL read(DWORD pid, ULONG_PTR address, PVOID buffer, QWORD length)
-		{
-			if (pid == 4)
+			if (handle.pid == GetCurrentProcessId() && handle.object_type == 0x08)
 			{
-				if (!km::initialize())
+				if (handle.handle == (QWORD)temp_handle)
 				{
-					return 0;
+					current_thread = handle.object;
+					break;
 				}
-				DRIVER_READMEMORY io;
-				io.src = (PVOID)address;
-				io.dst = buffer;
-				io.length = length;
-				io.virtual_memory = 1;
-				return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
-			} else {
-				if (!km::initialize())
-				{
-					return 0;
-				}
-				DRIVER_READMEMORY_PROCESS io;
-				io.src = (PVOID)address;
-				io.dst = buffer;
-				io.length = length;
-				io.pid = pid;
-				return DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
 			}
 		}
 
+		if (current_thread == 0)
+		{
+			return 0;
+		}
+
+		CloseHandle(temp_handle);
+
+		driver_handle = CreateFileA("\\\\.\\Nal", GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+
+		if (driver_handle == INVALID_HANDLE_VALUE)
+		{
+			driver_handle = 0;
+			return 0;
+		}
+
+		return driver_handle != 0;
+	}
+
+	BOOL kernel_memcpy(QWORD dst, QWORD src, QWORD length)
+	{
+		typedef struct _PAYLOAD
+		{
+			QWORD case_number;
+			QWORD reserved;
+			QWORD source;
+			QWORD destination;
+			QWORD length;
+		}PAYLOAD, * PPAYLOAD;
+		
+		PAYLOAD io{};
+		io.case_number = 0x33;
+		io.reserved = 0;
+		io.source = src;
+		io.destination = dst;
+		io.length = length;
+
+		DWORD returned = 0;
+		return DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0);
+	}
+
+	QWORD MmMapIoSpace(QWORD physical_address, QWORD length)
+	{
+		typedef struct _PAYLOAD
+		{
+			QWORD case_number;
+			QWORD reserved;
+			QWORD return_value;
+			QWORD return_virtual_address;
+			QWORD physical_address_to_map;
+			QWORD size;
+		}PAYLOAD, * PPAYLOAD;
+
+		PAYLOAD io{};
+		io.case_number = 0x19;
+		io.physical_address_to_map = physical_address;
+		io.size = length;
+
+		DWORD returned = 0;
+		if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
+		{
+			return 0;
+		}
+		return io.return_virtual_address;
+	}
+
+	BOOL MmUnMapIoSpace(QWORD physical_address, QWORD length)
+	{
+		typedef struct _PAYLOAD
+		{
+			QWORD case_number;
+			QWORD reserved1;
+			QWORD reserved2;
+			QWORD virt_address;
+			QWORD reserved3;
+			QWORD number_of_bytes;
+		}PAYLOAD, * PPAYLOAD;
+
+		PAYLOAD io{};
+		io.case_number = 0x1A;
+		io.virt_address = physical_address;
+		io.number_of_bytes = length;
+
+		DWORD returned = 0;
+		return DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0);
+	}
+
+	QWORD MmGetPhysicalAddress(QWORD virtual_address)
+	{
+		typedef struct _PAYLOAD
+		{
+			QWORD case_number;
+			QWORD reserved;
+			QWORD return_physical_address;
+			QWORD address_to_translate;
+		}PAYLOAD, * PPAYLOAD;
+
+		PAYLOAD io{};
+		io.case_number = 0x25;
+		io.address_to_translate = virtual_address;
+
+		DWORD returned = 0;
+		if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
+		{
+			return 0;
+		}
+
+		return io.return_physical_address;
+	}
+
+	namespace vm
+	{
+		BOOL read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
+		{
+			BOOL ret = 0;
+
+			if (!km::initialize())
+			{
+				return 0;
+			}
+
+			unsigned char previous_mode = 0;
+			kernel_memcpy(current_thread + 0x232, (QWORD)&previous_mode, 1);
+
+			HANDLE process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+			if (process_handle == 0)
+			{
+				goto E0;
+			}
+			
+			ret = ReadProcessMemory(process_handle, (LPCVOID)address, buffer, length, 0);
+			CloseHandle(process_handle);
+
+		E0:
+			previous_mode = 1;
+			kernel_memcpy(current_thread + 0x232, (QWORD)&previous_mode, 1);
+			return ret;
+		}
+
 		template <typename t>
-		t read(DWORD pid, ULONG_PTR address)
+		t read(DWORD pid, QWORD address)
 		{
 			t b;
 			if (!read(pid, address, &b, sizeof(b)))
@@ -133,21 +225,23 @@ namespace km
 			return b;
 		}
 	}
-
+	
 	namespace pm
 	{
-		BOOL read(ULONG_PTR address, PVOID buffer, QWORD length)
-		{
+		BOOL read(QWORD address, PVOID buffer, QWORD length)
+		{	
 			if (!km::initialize())
 			{
 				return 0;
 			}
-			DRIVER_READMEMORY io;
-			io.src = (PVOID)address;
-			io.dst = buffer;
-			io.length = length;
-			io.virtual_memory = 0;
-			return DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
+			QWORD alloc = MmMapIoSpace(address, length);
+			if (alloc)
+			{
+				kernel_memcpy((QWORD)buffer, alloc, length);
+				MmUnMapIoSpace(alloc, length);
+				return 1;
+			}
+			return 0;
 		}
 
 		template <typename t>
@@ -164,34 +258,33 @@ namespace km
 
 	namespace io
 	{
-		BOOL read(ULONG_PTR address, PVOID buffer, QWORD length)
+		BOOL read(QWORD address, PVOID buffer, QWORD length)
 		{
 			if (!km::initialize())
 			{
 				return 0;
 			}
-			DRIVER_READWRITEIO io;
-			io.address = (PVOID)address;
-			io.buffer = buffer;
-			io.length = length;
-			return DeviceIoControl(hDriver, IOCTL_IO_READ, &io, sizeof(io), &io, sizeof(io), 0, 0);
+			return pm::read(address, buffer, length);
 		}
 
-		BOOL write(ULONG_PTR address, PVOID buffer, QWORD length)
+		BOOL write(QWORD address, PVOID buffer, QWORD length)
 		{
 			if (!km::initialize())
 			{
 				return 0;
 			}
-			DRIVER_READWRITEIO io;
-			io.address = (PVOID)address;
-			io.buffer = buffer;
-			io.length = length;
-			return DeviceIoControl(hDriver, IOCTL_IO_WRITE, &io, sizeof(io), &io, sizeof(io), 0, 0);
+			QWORD alloc = MmMapIoSpace(address, length);
+			if (alloc)
+			{
+				kernel_memcpy(alloc, (QWORD)buffer, length);
+				MmUnMapIoSpace(alloc, length);
+				return 1;
+			}
+			return 0;
 		}
 
 		template <typename t>
-		t read(ULONG_PTR address)
+		t read(QWORD address)
 		{
 			t b;
 			if (!read(address, &b, sizeof(b)))
@@ -201,7 +294,7 @@ namespace km
 			return b;
 		}
 		template <typename t>
-		BOOL write(ULONG_PTR address, t value)
+		BOOL write(QWORD address, t value)
 		{
 			return km::io::write(address, &value, sizeof(t));
 		}
@@ -215,11 +308,41 @@ namespace km
 			{
 				return 0;
 			}
-			DRIVER_READWRITEPORT io;
+
+			typedef struct _PAYLOAD
+			{
+				QWORD case_number;
+				QWORD reserved;
+				QWORD return_value;
+				QWORD address;
+			} PAYLOAD, * PPAYLOAD;
+
+			PAYLOAD io{};
+
+			if (length == 1)
+			{
+				io.case_number = 1;
+			} else if (length == 2)
+			{
+				io.case_number = 2;
+			} else if (length == 4)
+			{
+				io.case_number = 3;
+			} else {
+				return 0;
+			}
+
 			io.address = address;
-			io.buffer = buffer;
-			io.length = length;
-			return DeviceIoControl(hDriver, IOCTL_READ_PORT, &io, sizeof(io), &io, sizeof(io), 0, 0);
+
+			DWORD returned = 0;
+			if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
+			{
+				return 0;
+			}
+
+			memcpy(buffer, (const void*)&io.return_value, length);
+
+			return 1;
 		}
 
 		BOOL write(WORD address, PVOID buffer, QWORD length)
@@ -228,11 +351,43 @@ namespace km
 			{
 				return 0;
 			}
-			DRIVER_READWRITEPORT io;
+
+			typedef struct _PAYLOAD
+			{
+				QWORD case_number;
+				QWORD reserved;
+				QWORD return_value;
+				QWORD address;
+				QWORD buffer;
+			} PAYLOAD, * PPAYLOAD;
+
+			PAYLOAD io{};
+
+			if (length == 1)
+			{
+				io.case_number = 0x07;
+				io.buffer = *(BYTE*)buffer;
+			} else if (length == 2)
+			{
+				io.case_number = 0x08;
+				io.buffer = *(WORD*)buffer;
+			} else if (length == 4)
+			{
+				io.case_number = 0x09;
+				io.buffer = *(DWORD*)buffer;
+			} else {
+				return 0;
+			}
+
 			io.address = address;
-			io.buffer = buffer;
-			io.length = length;
-			return DeviceIoControl(hDriver, IOCTL_WRITE_PORT, &io, sizeof(io), &io, sizeof(io), 0, 0);
+
+			DWORD returned = 0;
+			if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
+			{
+				return 0;
+			}
+
+			return (io.return_value) == 1;
 		}
 
 		template <typename t>
@@ -287,7 +442,7 @@ namespace km
 
 void FontColor(int color=0x07)
 {
-    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), color);
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), color);
 }
 
 BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
@@ -740,7 +895,6 @@ void scan_pcileech(void)
 
 	std::vector<DEVICE_INFO> devices;
 
-	
 	for (unsigned char bus = 0; bus < 255; bus++)
 	{
 		for (unsigned char slot = 0; slot < 32; slot++)
@@ -797,10 +951,14 @@ void scan_pcileech(void)
 			continue;
 		}
 
-		// QWORD mgmt_base         = 0xF0000000;
-		// QWORD memory_mapped_cfg = mgmt_base + ((bus - 0) << 20 | slot << 15 | function << 12);
-		// WORD vendor_id = km::io::read<DWORD>(memory_mapped_cfg + 0x00);
-		// WORD device_id = km::io::read<DWORD>(memory_mapped_cfg + 0x02);
+		/*
+		QWORD mgmt_base         = 0xF0000000;
+		QWORD memory_mapped_cfg = mgmt_base + ((dev.bus - 0) << 20 | dev.slot << 15 | 0 << 12);
+		WORD vendor_id = km::io::read<WORD>(memory_mapped_cfg + 0x00);
+		WORD device_id = km::io::read<WORD>(memory_mapped_cfg + 0x02);
+
+		printf("vendor: %lx device: %lx\n", vendor_id, device_id);
+		*/
 	
 	}
 
@@ -822,7 +980,7 @@ int main(int argc, char **argv)
 {
 	if (!km::initialize())
 	{
-		printf("[-] drvscan driver is not running\n");
+		printf("[-] intel driver is not running\n");
 		printf("Press any key to continue . . .");
 		return getchar();
 	}
@@ -834,7 +992,6 @@ int main(int argc, char **argv)
 	}
 
 	BOOL scan=0, pid = 4, cache = 0, pcileech = 0, diff = 0, use_cache = 0;
-
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -936,7 +1093,7 @@ int main(int argc, char **argv)
 			modules = get_user_modules(pid);
 		}
 
-		for (auto mod : modules)
+		for (auto &mod : modules)
 		{
 			dump_module_to_file(pid, mod);
 		}
@@ -999,15 +1156,12 @@ std::vector<FILE_INFO> get_kernel_modules(void)
 
 	for (ULONG i = system_modules->NumberOfModules; i--;)
 	{
-		RTL_PROCESS_MODULE_INFORMATION entry = system_modules->Modules[i];
-
-		
+		RTL_PROCESS_MODULE_INFORMATION entry = system_modules->Modules[i];	
 		char *sub_string = strstr((char *const)entry.FullPathName, "system32");
 		if (sub_string == 0)
 		{
 			sub_string = strstr((char *const)entry.FullPathName, "System32");
 		}
-
 
 		std::string path;
 		if (sub_string)
@@ -1020,6 +1174,14 @@ std::vector<FILE_INFO> get_kernel_modules(void)
 		}
 
 		PCSTR name = (PCSTR)&entry.FullPathName[entry.OffsetToFileName];
+
+		//
+		// skip modules loaded at later boot. this is because of ReadProcessMemory missing __try/__except block.
+		//
+		if (entry.LoadOrderIndex > 21)
+		{
+			continue;
+		}
 
 		FILE_INFO temp_information;
 		temp_information.path = path;
@@ -1143,3 +1305,166 @@ std::vector<PROCESS_INFO> get_user_processes()
 
 	return process_info;
 }
+
+//
+// https://github.com/processhacker/plugins-extra/blob/master/PoolMonPlugin/pooltable.c 
+//
+NTSTATUS EnumBigPoolTable(
+	_Out_ PVOID* Buffer
+)
+{
+	NTSTATUS status;
+	PVOID buffer;
+	ULONG bufferSize;
+	ULONG attempts;
+
+	bufferSize = 0x100;
+	buffer = malloc(bufferSize);
+
+	status = NtQuerySystemInformation(
+		0x42,
+		buffer,
+		bufferSize,
+		&bufferSize
+	);
+	attempts = 0;
+
+	while (status == 0xC0000004 && attempts < 8)
+	{
+		free(buffer);
+		buffer = malloc(bufferSize);
+
+		status = NtQuerySystemInformation(
+			0x42,
+			buffer,
+			bufferSize,
+			&bufferSize
+		);
+		attempts++;
+	}
+
+	if (status == 0)
+		*Buffer = buffer;
+	else
+		free(buffer);
+
+	return status;
+}
+
+typedef struct _SYSTEM_BIGPOOL_ENTRY {
+    union {
+        PVOID VirtualAddress;
+        ULONG_PTR NonPaged : 1;
+    };
+    ULONG_PTR SizeInBytes;
+    union {
+        UCHAR Tag[4];
+        ULONG TagULong;
+    };
+} SYSTEM_BIGPOOL_ENTRY, *PSYSTEM_BIGPOOL_ENTRY;
+
+typedef struct _SYSTEM_BIGPOOL_INFORMATION {
+    ULONG Count; 
+    SYSTEM_BIGPOOL_ENTRY AllocatedInfo[ANYSIZE_ARRAY];
+} SYSTEM_BIGPOOL_INFORMATION, *PSYSTEM_BIGPOOL_INFORMATION;
+
+std::vector<BIGPOOL_INFO> get_kernel_allocations(void)
+{
+	std::vector<BIGPOOL_INFO> info;
+	PVOID buffer;
+
+	if (EnumBigPoolTable(&buffer) != 0)
+	{
+		return info;
+	}
+
+	PSYSTEM_BIGPOOL_INFORMATION bigpool_info = (PSYSTEM_BIGPOOL_INFORMATION)buffer;
+	for (ULONG i = 0; i < bigpool_info->Count; i++)
+	{
+		QWORD virtual_address = (QWORD)bigpool_info->AllocatedInfo[i].VirtualAddress;
+		virtual_address = virtual_address - 1; // prefix.
+
+		info.push_back({virtual_address, bigpool_info->AllocatedInfo[i].TagULong});
+	}
+	free(buffer);
+	return info;
+}
+
+typedef struct _SYSTEM_HANDLE
+{
+	ULONG ProcessId;
+	BYTE ObjectTypeNumber;
+	BYTE Flags;
+	USHORT Handle;
+	PVOID Object;
+	ACCESS_MASK GrantedAccess;
+} SYSTEM_HANDLE, *PSYSTEM_HANDLE;
+
+typedef struct _SYSTEM_HANDLE_INFORMATION
+{
+	ULONG HandleCount;
+	SYSTEM_HANDLE Handles[1];
+} SYSTEM_HANDLE_INFORMATION, *PSYSTEM_HANDLE_INFORMATION;
+
+NTSTATUS PhEnumHandles(_Out_ PSYSTEM_HANDLE_INFORMATION* Handles)
+{
+	static ULONG initialBufferSize = 0x4000;
+	NTSTATUS status;
+	PVOID buffer;
+	ULONG bufferSize;
+
+	bufferSize = initialBufferSize;
+	buffer = malloc(bufferSize);
+
+	while ((status = NtQuerySystemInformation(
+		0x10,
+		buffer,
+		bufferSize,
+		NULL
+	)) == 0xC0000004)
+	{
+		free(buffer);
+		bufferSize *= 2;
+		buffer = malloc(bufferSize);
+	}
+
+	if (status != 0)
+	{
+		free(buffer);
+		return status;
+	}
+
+	if (bufferSize <= 0x100000) initialBufferSize = bufferSize;
+	*Handles = (PSYSTEM_HANDLE_INFORMATION)buffer;
+
+	return status;
+}
+
+std::vector<HANDLE_INFO> get_system_handle_information(void)
+{
+	std::vector<HANDLE_INFO> info;
+	PSYSTEM_HANDLE_INFORMATION handle_info = 0;
+
+	if (PhEnumHandles(&handle_info))
+	{
+		return info;
+	}
+
+	for (ULONG i = 0; i < handle_info->HandleCount; i++)
+	{
+		HANDLE_INFO entry;
+		entry.pid = handle_info->Handles[i].ProcessId;
+		entry.object_type = handle_info->Handles[i].ObjectTypeNumber;
+		entry.flags = handle_info->Handles[i].Flags;
+		entry.handle = handle_info->Handles[i].Handle;
+		entry.object = (QWORD)handle_info->Handles[i].Object;
+		entry.access_mask = handle_info->Handles[i].GrantedAccess;
+
+		info.push_back(entry);
+	}
+
+	free(handle_info);
+
+	return info;
+}
+
