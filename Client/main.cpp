@@ -1004,7 +1004,7 @@ int main(int argc, char **argv)
 				"--diff      (optional) the amount of bytes that have to be different before logging the patch\n"
 				"--usecache  (optional) if option is selected, we use local dumps instead of original disk files\n"
 				"--savecache (optional) dump target process modules to disk, these can be used later with --usecache\n"
-				"--pid                  target process id\n"
+				"--pid       (optional) target process id\n"
 				"--pcileech             scan pcileech-fpga cards from the system\n\n\n"
 			);
 
