@@ -14,6 +14,40 @@
 #define POOLTAG (DWORD)'ECAC'
 
 typedef ULONG_PTR QWORD;
+std::vector<QWORD> global_export_list;
+
+class DLL_EXPORT
+{
+	QWORD address;
+public:
+	DLL_EXPORT(QWORD address) : address(address)
+	{
+		global_export_list.push_back((QWORD)&this->address);
+	}
+	operator QWORD () const { return address; }
+
+};
+
+//
+// NTOSKRNL_EXPORT define variables are automatically resolved in km::initialize
+//
+#define NTOSKRNL_EXPORT(export_name) \
+DLL_EXPORT export_name((QWORD)#export_name);
+
+NTOSKRNL_EXPORT(MmCopyMemory);
+NTOSKRNL_EXPORT(PsLookupProcessByProcessId);
+NTOSKRNL_EXPORT(ExAllocatePoolWithTag);
+NTOSKRNL_EXPORT(ExFreePoolWithTag);
+NTOSKRNL_EXPORT(MmCopyVirtualMemory);
+NTOSKRNL_EXPORT(PsGetThreadId);
+NTOSKRNL_EXPORT(PsGetThreadProcess);
+NTOSKRNL_EXPORT(PsGetProcessId);
+NTOSKRNL_EXPORT(PsLookupThreadByThreadId);
+NTOSKRNL_EXPORT(KeNumberProcessors);
+NTOSKRNL_EXPORT(KeQueryPrcbAddress);
+NTOSKRNL_EXPORT(PsGetCurrentThread);
+NTOSKRNL_EXPORT(PsGetProcessWow64Process);
+NTOSKRNL_EXPORT(PsGetProcessPeb);
 
 #pragma pack(1)
 typedef struct {
@@ -54,7 +88,7 @@ std::vector<HANDLE_INFO>  get_system_handle_information(void);
 namespace km
 {
 	HANDLE driver_handle = 0;
-	QWORD  ntoskrnl_base = 0;
+	
 
 	namespace ioctl
 	{
@@ -260,23 +294,23 @@ namespace km
 
 	namespace utils
 	{
-		QWORD get_kernel_export(PCSTR name)
+		QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
 		{
-			HMODULE ntos = LoadLibraryA("ntoskrnl.exe");
+			HMODULE ntos = LoadLibraryA(driver_name);
 
 			if (ntos == 0)
 			{
 				return 0;
 			}
 
-			QWORD export_address = (QWORD)GetProcAddress(ntos, name);
+			QWORD export_address = (QWORD)GetProcAddress(ntos, export_name);
 			if (export_address == 0)
 			{
 				goto cleanup;
 			}
 
 			export_address = export_address - (QWORD)ntos;
-			export_address = export_address + ntoskrnl_base;
+			export_address = export_address + base;
 
 		cleanup:
 			FreeLibrary(ntos);
@@ -343,14 +377,12 @@ namespace km
 
 	QWORD allocate_memory(QWORD size)
 	{
-		static QWORD kernel_export = utils::get_kernel_export("ExAllocatePoolWithTag");
-		return call(kernel_export, 0, 0x1000 + size, POOLTAG);
+		return call(ExAllocatePoolWithTag, 0, 0x1000 + size, POOLTAG);
 	}
 
 	void free_memory(QWORD address)
 	{
-		static QWORD kernel_export = utils::get_kernel_export("ExFreePoolWithTag");
-		call(kernel_export, address, POOLTAG);
+		call(ExFreePoolWithTag, address, POOLTAG);
 	}
 
 	QWORD install_function(PVOID shellcode, QWORD size)
@@ -391,6 +423,8 @@ namespace km
 		}
 
 		QWORD target_driver = 0;
+		QWORD ntoskrnl_base = 0;
+
 		for (auto &drv : get_kernel_modules())
 		{
 			if (!_strcmpi(drv.name.c_str(), "driver.sys"))
@@ -408,6 +442,18 @@ namespace km
 		{
 			printf("[-] driver is not loaded\n");
 			return 0;
+		}
+
+		for (auto &i : global_export_list)
+		{
+			QWORD temp = *(QWORD*)i;
+
+			*(QWORD*)i = km::utils::get_kernel_export(ntoskrnl_base, "ntoskrnl.exe", (PCSTR)temp);
+			if (*(QWORD*)i == 0)
+			{
+				printf("[-] export %s not found\n", (PCSTR)temp);
+				return 0;
+			}
 		}
 
 		driver_handle = CreateFileA("\\\\.\\Nal", GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
@@ -493,8 +539,6 @@ namespace km
 
 			if (pid == 4)
 			{
-				static QWORD MmCopyMemory = utils::get_kernel_export("MmCopyMemory");
-				
 				QWORD alloc_buffer = (QWORD)allocate_memory(length);
 
 				if (alloc_buffer == 0)
@@ -509,9 +553,6 @@ namespace km
 				}
 				free_memory(alloc_buffer);
 			} else {
-				static QWORD MmCopyVirtualMemory = utils::get_kernel_export("MmCopyVirtualMemory");
-				static QWORD PsLookupProcessByProcessId = utils::get_kernel_export("PsLookupProcessByProcessId");
-
 				QWORD target_process = 0, current_process = 0;
 				if (call(PsLookupProcessByProcessId, pid, (QWORD)&target_process) != 0)
 				{
@@ -1253,11 +1294,7 @@ BOOL IsThreadFoundKTHREAD(QWORD process, QWORD thread)
 }
 
 void scan_thread(DWORD attachpid, QWORD thread_address, QWORD target_process)
-{
-	static QWORD PsGetThreadId = km::utils::get_kernel_export("PsGetThreadId");
-	static QWORD PsGetThreadProcess = km::utils::get_kernel_export("PsGetThreadProcess");
-	static QWORD PsGetProcessId = km::utils::get_kernel_export("PsGetProcessId");
-	
+{	
 	QWORD thread_id = km::call(PsGetThreadId, thread_address);
 	QWORD process = km::call(PsGetThreadProcess, thread_address);
 
@@ -1269,8 +1306,6 @@ void scan_thread(DWORD attachpid, QWORD thread_address, QWORD target_process)
 
 	if (thread_id != 0)
 	{
-		static QWORD PsLookupThreadByThreadId = km::utils::get_kernel_export("PsLookupThreadByThreadId");
-
 		QWORD lookup_object = 0;
 		if (km::call(PsLookupThreadByThreadId, thread_id, (QWORD)&lookup_object) != 0)
 		{
@@ -1309,14 +1344,12 @@ NXT:
 //
 void scan_threads(QWORD curr_thread, DWORD attachpid, QWORD target_process)
 {
-	static UCHAR KeNumberProcessors = km::vm::read<UCHAR>(4, km::utils::get_kernel_export("KeNumberProcessors"));
-	static QWORD KeQueryPrcbAddress = km::utils::get_kernel_export("KeQueryPrcbAddress");
-
+	static UCHAR processor_count = km::vm::read<UCHAR>(4, KeNumberProcessors);
 
 	std::vector<QWORD> thread_list;
 	std::vector<QWORD> check_list;
 
-	for (UCHAR i = 0; i < KeNumberProcessors; i++)
+	for (UCHAR i = 0; i < processor_count; i++)
 	{
 		QWORD prcb = km::call(KeQueryPrcbAddress, i);
 
@@ -1438,14 +1471,14 @@ int main(int argc, char **argv)
 		QWORD target_process = 0;
 		if (attachpid)
 		{
-			if (km::call(km::utils::get_kernel_export("PsLookupProcessByProcessId"), attachpid, (QWORD)&target_process) != 0)
+			if (km::call(PsLookupProcessByProcessId, attachpid, (QWORD)&target_process) != 0)
 			{
 				printf("[-] target process is not running\n");
 				return 0;
 			}
 		}
 
-		QWORD curr_thread = km::call(km::utils::get_kernel_export("PsGetCurrentThread"));
+		QWORD curr_thread = km::call(PsGetCurrentThread);
 
 		printf("[+] scanning unlinked system threads\n");
 		for (int i = 0; i < 10000; i++)
@@ -1612,16 +1645,12 @@ std::vector<FILE_INFO> get_user_modules2(DWORD pid)
 	
 	std::vector<FILE_INFO> info;
 
-	static QWORD PsLookupProcessByProcessId = km::utils::get_kernel_export("PsLookupProcessByProcessId");
-
 	QWORD process = 0;
 
 	if (km::call(PsLookupProcessByProcessId, pid, (QWORD)&process) != 0)
 	{
 		return info;
 	}
-
-	static QWORD PsGetProcessWow64Process = km::utils::get_kernel_export("PsGetProcessWow64Process");
 
 	QWORD peb = km::call(PsGetProcessWow64Process, process);
 
@@ -1638,8 +1667,6 @@ std::vector<FILE_INFO> get_user_modules2(DWORD pid)
 	}
 	else
 	{
-		static QWORD PsGetProcessPeb = km::utils::get_kernel_export("PsGetProcessPeb");
-
 		*(QWORD*)&read_ptr = (QWORD)km::vm::read_i64;
 		peb = km::call(PsGetProcessPeb, process);
 		a0[0] = 0x08, a0[1] = 0x18, a0[2] = 0x20, a0[3] = 0x50, a0[4] = 0x20, a0[5] = 0x40, a0[6] = 0x40, a0[7] = 0x30;
