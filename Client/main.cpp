@@ -1252,7 +1252,7 @@ BOOL IsThreadFoundKTHREAD(QWORD process, QWORD thread)
 	return contains;
 }
 
-void scan_thread(DWORD attachpid, QWORD thread_address)
+void scan_thread(DWORD attachpid, QWORD thread_address, QWORD target_process)
 {
 	static QWORD PsGetThreadId = km::utils::get_kernel_export("PsGetThreadId");
 	static QWORD PsGetThreadProcess = km::utils::get_kernel_export("PsGetThreadProcess");
@@ -1281,9 +1281,7 @@ void scan_thread(DWORD attachpid, QWORD thread_address)
 		if (lookup_object != thread_address)
 		{
 			printf("[+] [%lld][%lld][%llX] thread has wrong thread ID\n", process_id, thread_id, thread_address);
-			goto NXT;
 		}
-		goto NXT;
 	} else {
 		static QWORD func = km::install_function((PVOID)IsThreadFoundKTHREAD, km::utils::get_function_size((QWORD)IsThreadFoundKTHREAD));
 		if (km::call(func, process, thread_address) == 0)
@@ -1294,14 +1292,6 @@ void scan_thread(DWORD attachpid, QWORD thread_address)
 NXT:
 	if (attachpid)
 	{
-		static QWORD PsLookupProcessByProcessId = km::utils::get_kernel_export("PsLookupProcessByProcessId");
-		QWORD target_process = 0;
-		
-		if (km::call(PsLookupProcessByProcessId, attachpid, (QWORD)&target_process) != 0)
-		{
-			return;
-		}
-
 		if (process == target_process)
 		{
 			return;
@@ -1317,13 +1307,13 @@ NXT:
 //
 // bruteforce KPRCB function from Anti-Cheat testbench project
 //
-void scan_threads(DWORD attachpid)
+void scan_threads(QWORD curr_thread, DWORD attachpid, QWORD target_process)
 {
 	static UCHAR KeNumberProcessors = km::vm::read<UCHAR>(4, km::utils::get_kernel_export("KeNumberProcessors"));
 	static QWORD KeQueryPrcbAddress = km::utils::get_kernel_export("KeQueryPrcbAddress");
-	static QWORD PsGetCurrentThread = km::utils::get_kernel_export("PsGetCurrentThread");
 
-	QWORD curr_thread = km::call(PsGetCurrentThread);
+
+	std::vector<QWORD> thread_list;
 
 	for (UCHAR i = 0; i < KeNumberProcessors; i++)
 	{
@@ -1332,18 +1322,24 @@ void scan_threads(DWORD attachpid)
 		if (prcb == 0)
 			continue;
 		
-		QWORD current_thread = km::vm::read<QWORD>(4, ((QWORD)prcb + 0x8));
-		QWORD next_thread = km::vm::read<QWORD>(4, ((QWORD)prcb + 0x10));
+		QWORD threads[2]{};
+		km::ioctl::kernel_memcpy((QWORD)threads, prcb + 0x08, sizeof(threads));
 
-		if (current_thread != 0 && current_thread != curr_thread)
+		if (threads[0])
 		{
-			scan_thread(attachpid, current_thread);
+			thread_list.push_back(threads[0]);
 		}
 
-		if (next_thread != 0 && next_thread != curr_thread)
+		if (threads[1])
 		{
-			scan_thread(attachpid, next_thread);
+			thread_list.push_back(threads[1]);
 		}
+	}
+
+	for (auto &thread : thread_list)
+	{
+		if (thread != curr_thread)
+			scan_thread(attachpid, thread, target_process);
 	}
 }
 
@@ -1436,13 +1432,22 @@ int main(int argc, char **argv)
 
 	if (scanthreads)
 	{
-		//
-		//
-		//
+		QWORD target_process = 0;
+		if (attachpid)
+		{
+			if (km::call(km::utils::get_kernel_export("PsLookupProcessByProcessId"), attachpid, (QWORD)&target_process) != 0)
+			{
+				printf("[-] target process is not running\n");
+				return 0;
+			}
+		}
+
+		QWORD curr_thread = km::call(km::utils::get_kernel_export("PsGetCurrentThread"));
+
 		printf("[+] scanning for unlinked system threads\n");
 		for (int i = 0; i < 10000; i++)
 		{
-			scan_threads(attachpid);
+			scan_threads(curr_thread, attachpid, target_process);
 		}
 		printf("[+] system thread scan is complete\n");
 	}
