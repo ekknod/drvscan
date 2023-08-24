@@ -1314,6 +1314,7 @@ void scan_threads(QWORD curr_thread, DWORD attachpid, QWORD target_process)
 
 
 	std::vector<QWORD> thread_list;
+	std::vector<QWORD> check_list;
 
 	for (UCHAR i = 0; i < KeNumberProcessors; i++)
 	{
@@ -1339,7 +1340,9 @@ void scan_threads(QWORD curr_thread, DWORD attachpid, QWORD target_process)
 	for (auto &thread : thread_list)
 	{
 		if (thread != curr_thread)
+		{
 			scan_thread(attachpid, thread, target_process);
+		}
 	}
 }
 
@@ -1373,7 +1376,7 @@ int main(int argc, char **argv)
 				"	--savecache (optional) dump target process modules to disk, these can be used later with --usecache\n"
 				"	--pid       (optional) target process id\n\n"
 				"--pcileech             scan pcileech-fpga cards from the system\n"
-				"--scanthreads          scan for unlinked system threads\n"
+				"--scanthreads          scan system threads\n"
 				"	--attachpid (optional) check if thread is attached to target process id\n\n\n"
 			);
 
@@ -1444,7 +1447,7 @@ int main(int argc, char **argv)
 
 		QWORD curr_thread = km::call(km::utils::get_kernel_export("PsGetCurrentThread"));
 
-		printf("[+] scanning for unlinked system threads\n");
+		printf("[+] scanning unlinked system threads\n");
 		for (int i = 0; i < 10000; i++)
 		{
 			scan_threads(curr_thread, attachpid, target_process);
