@@ -284,6 +284,20 @@ namespace km
 
 			return export_address;
 		}
+
+		QWORD get_function_size(QWORD function_address)
+		{
+			QWORD begin = function_address;
+			while (1)
+			{
+				if (*(WORD*)(function_address) == 0xCCC3)
+				{
+					break;
+				}
+				function_address++;
+			}
+			return (function_address - begin) + 1;
+		}
 	}
 
 	QWORD call(QWORD kernel_address, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0)
@@ -1216,24 +1230,139 @@ void scan_pcileech(void)
 	}
 }
 
+//
+// https://github.com/ekknod/Anti-Cheat-TestBench/blob/7abfd9ed2cb9e608fe6a0200ff1fbfa05fdfdade/main.c#L77
+//
+BOOL IsThreadFoundKTHREAD(QWORD process, QWORD thread)
+{
+	BOOL contains = 0;
+
+
+	PLIST_ENTRY list_head = (PLIST_ENTRY)((QWORD)process + 0x30);
+	PLIST_ENTRY list_entry = list_head;
+
+	while ((list_entry = list_entry->Flink) != 0 && list_entry != list_head) {
+		QWORD entry = (QWORD)((char*)list_entry - 0x2f8);
+		if (entry == thread) {
+			contains = 1;
+			break;
+		}
+	}
+
+	return contains;
+}
+
+void scan_thread(DWORD attachpid, QWORD thread_address)
+{
+	static QWORD PsGetThreadId = km::utils::get_kernel_export("PsGetThreadId");
+	static QWORD PsGetThreadProcess = km::utils::get_kernel_export("PsGetThreadProcess");
+	static QWORD PsGetProcessId = km::utils::get_kernel_export("PsGetProcessId");
+	
+	QWORD thread_id = km::call(PsGetThreadId, thread_address);
+	QWORD process = km::call(PsGetThreadProcess, thread_address);
+
+	QWORD process_id = 0;
+	if (process)
+	{
+		process_id = km::call(PsGetProcessId, process);
+	}
+
+	if (thread_id != 0)
+	{
+		static QWORD PsLookupThreadByThreadId = km::utils::get_kernel_export("PsLookupThreadByThreadId");
+
+		QWORD lookup_object = 0;
+		if (km::call(PsLookupThreadByThreadId, thread_id, (QWORD)&lookup_object) != 0)
+		{
+			printf("[+] [%lld][%lld][%llX] thread is unlinked\n", process_id, thread_id, thread_address);
+			goto NXT;
+		}
+
+		if (lookup_object != thread_address)
+		{
+			printf("[+] [%lld][%lld][%llX] thread has wrong thread ID\n", process_id, thread_id, thread_address);
+			goto NXT;
+		}
+		goto NXT;
+	} else {
+		static QWORD func = km::install_function((PVOID)IsThreadFoundKTHREAD, km::utils::get_function_size((QWORD)IsThreadFoundKTHREAD));
+		if (km::call(func, process, thread_address) == 0)
+		{
+			printf("[+] [%lld][%lld][%llX] thread is unlinked\n", process_id, thread_id, thread_address);
+		}
+	}
+NXT:
+	if (attachpid)
+	{
+		static QWORD PsLookupProcessByProcessId = km::utils::get_kernel_export("PsLookupProcessByProcessId");
+		QWORD target_process = 0;
+		
+		if (km::call(PsLookupProcessByProcessId, attachpid, (QWORD)&target_process) != 0)
+		{
+			return;
+		}
+
+		if (process == target_process)
+		{
+			return;
+		}
+
+		if (km::vm::read<QWORD>(4, thread_address + 0x98 + 0x20) == target_process)
+		{
+			printf("[+] [%lld][%lld][%llx] thread is attached to %d\n", process_id, thread_id, thread_address, attachpid);
+		}
+	}
+}
+
+//
+// bruteforce KPRCB function from Anti-Cheat testbench project
+//
+void scan_threads(DWORD attachpid)
+{
+	static UCHAR KeNumberProcessors = km::vm::read<UCHAR>(4, km::utils::get_kernel_export("KeNumberProcessors"));
+	static QWORD KeQueryPrcbAddress = km::utils::get_kernel_export("KeQueryPrcbAddress");
+	static QWORD PsGetCurrentThread = km::utils::get_kernel_export("PsGetCurrentThread");
+
+	QWORD curr_thread = km::call(PsGetCurrentThread);
+
+	for (UCHAR i = 0; i < KeNumberProcessors; i++)
+	{
+		QWORD prcb = km::call(KeQueryPrcbAddress, i);
+
+		if (prcb == 0)
+			continue;
+		
+		QWORD current_thread = km::vm::read<QWORD>(4, ((QWORD)prcb + 0x8));
+		QWORD next_thread = km::vm::read<QWORD>(4, ((QWORD)prcb + 0x10));
+
+		if (current_thread != 0 && current_thread != curr_thread)
+		{
+			scan_thread(attachpid, current_thread);
+		}
+
+		if (next_thread != 0 && next_thread != curr_thread)
+		{
+			scan_thread(attachpid, next_thread);
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
-
-
 	if (!km::initialize())
 	{
 		printf("[-] intel driver is not running\n");
 		printf("Press any key to continue . . .");
 		return getchar();
 	}
-	
+
 	if (argc < 2)
 	{
 		printf("[drvscan] --help\n");
 		return getchar();
 	}
 
-	BOOL scan=0, pid = 4, cache = 0, pcileech = 0, diff = 0, use_cache = 0;
+	BOOL scan=0, pid = 4, cache = 0, pcileech = 0, diff = 0, use_cache = 0, scanthreads = 0, attachpid = 0;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -1243,11 +1372,13 @@ int main(int argc, char **argv)
 				"\n\n"
 
 				"--scan                 scan target process memory changes\n"
-				"--diff      (optional) the amount of bytes that have to be different before logging the patch\n"
-				"--usecache  (optional) if option is selected, we use local dumps instead of original disk files\n"
-				"--savecache (optional) dump target process modules to disk, these can be used later with --usecache\n"
-				"--pid       (optional) target process id\n"
-				"--pcileech             scan pcileech-fpga cards from the system\n\n\n"
+				"	--diff      (optional) the amount of bytes that have to be different before logging the patch\n"
+				"	--usecache  (optional) if option is selected, we use local dumps instead of original disk files\n"
+				"	--savecache (optional) dump target process modules to disk, these can be used later with --usecache\n"
+				"	--pid       (optional) target process id\n\n"
+				"--pcileech             scan pcileech-fpga cards from the system\n"
+				"--scanthreads          scan for unlinked system threads\n"
+				"	--attachpid (optional) check if thread is attached to target process id\n\n\n"
 			);
 
 
@@ -1291,6 +1422,29 @@ int main(int argc, char **argv)
 		{
 			use_cache = 1;
 		}
+
+		else if (!strcmp(argv[i], "--scanthreads"))
+		{
+			scanthreads = 1;
+		}
+
+		else if (!strcmp(argv[i], "--attachpid"))
+		{
+			attachpid = atoi(argv[i + 1]);
+		}
+	}
+
+	if (scanthreads)
+	{
+		//
+		//
+		//
+		printf("[+] scanning for unlinked system threads\n");
+		for (int i = 0; i < 10000; i++)
+		{
+			scan_threads(attachpid);
+		}
+		printf("[+] system thread scan is complete\n");
 	}
 
 	if (pcileech)
