@@ -34,6 +34,7 @@ public:
 #define NTOSKRNL_EXPORT(export_name) \
 DLL_EXPORT export_name((QWORD)#export_name);
 
+
 NTOSKRNL_EXPORT(MmCopyMemory);
 NTOSKRNL_EXPORT(PsLookupProcessByProcessId);
 NTOSKRNL_EXPORT(ExAllocatePoolWithTag);
@@ -42,6 +43,8 @@ NTOSKRNL_EXPORT(MmCopyVirtualMemory);
 NTOSKRNL_EXPORT(PsGetThreadId);
 NTOSKRNL_EXPORT(PsGetThreadProcess);
 NTOSKRNL_EXPORT(PsGetProcessId);
+NTOSKRNL_EXPORT(MmMapIoSpace);
+NTOSKRNL_EXPORT(MmUnmapIoSpace);
 NTOSKRNL_EXPORT(PsLookupThreadByThreadId);
 NTOSKRNL_EXPORT(KeNumberProcessors);
 NTOSKRNL_EXPORT(KeQueryPrcbAddress);
@@ -49,12 +52,17 @@ NTOSKRNL_EXPORT(PsGetCurrentThread);
 NTOSKRNL_EXPORT(PsGetProcessWow64Process);
 NTOSKRNL_EXPORT(PsGetProcessPeb);
 
+namespace kernel
+{
+	NTOSKRNL_EXPORT(memcpy);
+}
+
 #pragma pack(1)
 typedef struct {
-	std::string path;
-	std::string name;
-	QWORD       base;
-	QWORD       size;
+	std::string             path;
+	std::string             name;
+	QWORD                   base;
+	QWORD                   size;
 } FILE_INFO ;
 
 #pragma pack(1)
@@ -69,269 +77,138 @@ typedef struct {
 	DWORD                  tag;
 } BIGPOOL_INFO;
 
-#pragma pack(1)
-typedef struct {
-	DWORD                  pid;
-	BYTE                   object_type;
-	BYTE                   flags;
-	QWORD                  handle;
-	QWORD                  object;
-	ACCESS_MASK            access_mask;
-} HANDLE_INFO;
-
 std::vector<FILE_INFO>    get_kernel_modules(void);
 std::vector<FILE_INFO>    get_user_modules(DWORD pid);
-std::vector<PROCESS_INFO> get_user_processes();
+std::vector<PROCESS_INFO> get_system_processes();
 std::vector<BIGPOOL_INFO> get_kernel_allocations(void);
-std::vector<HANDLE_INFO>  get_system_handle_information(void);
+
+QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
+{
+	HMODULE ntos = LoadLibraryA(driver_name);
+
+	if (ntos == 0)
+	{
+		return 0;
+	}
+
+	QWORD export_address = (QWORD)GetProcAddress(ntos, export_name);
+	if (export_address == 0)
+	{
+		goto cleanup;
+	}
+
+	export_address = export_address - (QWORD)ntos;
+	export_address = export_address + base;
+
+cleanup:
+	FreeLibrary(ntos);
+	return export_address;
+}
+
+QWORD get_function_size(QWORD function_address)
+{
+	QWORD begin = function_address;
+	while (1)
+	{
+		if (*(WORD*)(function_address) == 0xCCC3)
+		{
+			break;
+		}
+		function_address++;
+	}
+	return (function_address - begin) + 1;
+}
 
 namespace km
 {
 	HANDLE driver_handle = 0;
 	
-
-	namespace ioctl
+	BOOL port_read(WORD address, PVOID buffer, QWORD length)
 	{
-		BOOL kernel_memcpy(QWORD dst, QWORD src, QWORD length)
+		if (driver_handle == 0)
 		{
-			typedef struct _PAYLOAD
-			{
-				QWORD case_number;
-				QWORD reserved;
-				QWORD source;
-				QWORD destination;
-				QWORD length;
-			}PAYLOAD, * PPAYLOAD;
-		
-			PAYLOAD io{};
-			io.case_number = 0x33;
-			io.reserved = 0;
-			io.source = src;
-			io.destination = dst;
-			io.length = length;
-
-			DWORD returned = 0;
-			return DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0);
+			return 0;
 		}
 
-		QWORD MmMapIoSpace(QWORD physical_address, QWORD length)
+		typedef struct _PAYLOAD
 		{
-			typedef struct _PAYLOAD
-			{
-				QWORD case_number;
-				QWORD reserved;
-				QWORD return_value;
-				QWORD return_virtual_address;
-				QWORD physical_address_to_map;
-				QWORD size;
-			}PAYLOAD, * PPAYLOAD;
+			QWORD case_number;
+			QWORD reserved;
+			QWORD return_value;
+			QWORD address;
+		} PAYLOAD, * PPAYLOAD;
 
-			PAYLOAD io{};
-			io.case_number = 0x19;
-			io.physical_address_to_map = physical_address;
-			io.size = length;
+		PAYLOAD io{};
 
-			DWORD returned = 0;
-			if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
-			{
-				return 0;
-			}
-			return io.return_virtual_address;
+		if (length == 1)
+		{
+			io.case_number = 1;
+		} else if (length == 2)
+		{
+			io.case_number = 2;
+		} else if (length == 4)
+		{
+			io.case_number = 3;
+		} else {
+			return 0;
 		}
 
-		BOOL MmUnMapIoSpace(QWORD map_address, QWORD length)
+		io.address = address;
+
+		DWORD returned = 0;
+		if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
 		{
-			typedef struct _PAYLOAD
-			{
-				QWORD case_number;
-				QWORD reserved1;
-				QWORD reserved2;
-				QWORD virt_address;
-				QWORD reserved3;
-				QWORD number_of_bytes;
-			}PAYLOAD, * PPAYLOAD;
-
-			PAYLOAD io{};
-			io.case_number = 0x1A;
-			io.virt_address = map_address;
-			io.number_of_bytes = length;
-
-			DWORD returned = 0;
-			return DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0);
+			return 0;
 		}
 
-		QWORD MmGetPhysicalAddress(QWORD virtual_address)
-		{
-			typedef struct _PAYLOAD
-			{
-				QWORD case_number;
-				QWORD reserved;
-				QWORD return_physical_address;
-				QWORD address_to_translate;
-			}PAYLOAD, * PPAYLOAD;
+		memcpy(buffer, (const void*)&io.return_value, length);
 
-			PAYLOAD io{};
-			io.case_number = 0x25;
-			io.address_to_translate = virtual_address;
-
-			DWORD returned = 0;
-			if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
-			{
-				return 0;
-			}
-
-			return io.return_physical_address;
-		}
-
-		BOOL kernel_memcpy_wp(QWORD dst, QWORD src, QWORD length)
-		{
-			QWORD physical_address = MmGetPhysicalAddress(dst);
-			if (physical_address == 0)
-			{
-				return 0;
-			}
-
-			QWORD alloc = MmMapIoSpace(physical_address, length);
-			if (alloc == 0)
-			{
-				return 0;
-			}
-
-			BOOL ret = kernel_memcpy(alloc, src, length);
-			MmUnMapIoSpace(alloc, length);
-
-			return ret;
-		}
-
-		BOOL port_read(WORD address, PVOID buffer, QWORD length)
-		{
-			if (driver_handle == 0)
-			{
-				return 0;
-			}
-
-			typedef struct _PAYLOAD
-			{
-				QWORD case_number;
-				QWORD reserved;
-				QWORD return_value;
-				QWORD address;
-			} PAYLOAD, * PPAYLOAD;
-
-			PAYLOAD io{};
-
-			if (length == 1)
-			{
-				io.case_number = 1;
-			} else if (length == 2)
-			{
-				io.case_number = 2;
-			} else if (length == 4)
-			{
-				io.case_number = 3;
-			} else {
-				return 0;
-			}
-
-			io.address = address;
-
-			DWORD returned = 0;
-			if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
-			{
-				return 0;
-			}
-
-			memcpy(buffer, (const void*)&io.return_value, length);
-
-			return 1;
-		}
-
-		BOOL port_write(WORD address, PVOID buffer, QWORD length)
-		{
-			if (driver_handle == 0)
-			{
-				return 0;
-			}
-
-			typedef struct _PAYLOAD
-			{
-				QWORD case_number;
-				QWORD reserved;
-				QWORD return_value;
-				QWORD address;
-				QWORD buffer;
-			} PAYLOAD, * PPAYLOAD;
-
-			PAYLOAD io{};
-
-			if (length == 1)
-			{
-				io.case_number = 0x07;
-				io.buffer = *(BYTE*)buffer;
-			} else if (length == 2)
-			{
-				io.case_number = 0x08;
-				io.buffer = *(WORD*)buffer;
-			} else if (length == 4)
-			{
-				io.case_number = 0x09;
-				io.buffer = *(DWORD*)buffer;
-			} else {
-				return 0;
-			}
-
-			io.address = address;
-
-			DWORD returned = 0;
-			if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
-			{
-				return 0;
-			}
-
-			return (io.return_value) == 1;
-		}
+		return 1;
 	}
 
-	namespace utils
+	BOOL port_write(WORD address, PVOID buffer, QWORD length)
 	{
-		QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
+		if (driver_handle == 0)
 		{
-			HMODULE ntos = LoadLibraryA(driver_name);
-
-			if (ntos == 0)
-			{
-				return 0;
-			}
-
-			QWORD export_address = (QWORD)GetProcAddress(ntos, export_name);
-			if (export_address == 0)
-			{
-				goto cleanup;
-			}
-
-			export_address = export_address - (QWORD)ntos;
-			export_address = export_address + base;
-
-		cleanup:
-			FreeLibrary(ntos);
-
-
-			return export_address;
+			return 0;
 		}
 
-		QWORD get_function_size(QWORD function_address)
+		typedef struct _PAYLOAD
 		{
-			QWORD begin = function_address;
-			while (1)
-			{
-				if (*(WORD*)(function_address) == 0xCCC3)
-				{
-					break;
-				}
-				function_address++;
-			}
-			return (function_address - begin) + 1;
+			QWORD case_number;
+			QWORD reserved;
+			QWORD return_value;
+			QWORD address;
+			QWORD buffer;
+		} PAYLOAD, * PPAYLOAD;
+
+		PAYLOAD io{};
+
+		if (length == 1)
+		{
+			io.case_number = 0x07;
+			io.buffer = *(BYTE*)buffer;
+		} else if (length == 2)
+		{
+			io.case_number = 0x08;
+			io.buffer = *(WORD*)buffer;
+		} else if (length == 4)
+		{
+			io.case_number = 0x09;
+			io.buffer = *(DWORD*)buffer;
+		} else {
+			return 0;
 		}
+
+		io.address = address;
+
+		DWORD returned = 0;
+		if (!DeviceIoControl(driver_handle, IOCTL_INTEL, &io, sizeof(io), 0, 0, &returned, 0))
+		{
+			return 0;
+		}
+
+		return (io.return_value) == 1;
 	}
 
 	QWORD call(QWORD kernel_address, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0)
@@ -392,9 +269,7 @@ namespace km
 		{
 			return 0;
 		}
-
-		ioctl::kernel_memcpy( mem, (QWORD)shellcode, size );
-
+		call(kernel::memcpy, mem, (QWORD)shellcode, size );
 		return mem;
 	}
 
@@ -448,7 +323,7 @@ namespace km
 		{
 			QWORD temp = *(QWORD*)i;
 
-			*(QWORD*)i = km::utils::get_kernel_export(ntoskrnl_base, "ntoskrnl.exe", (PCSTR)temp);
+			*(QWORD*)i = get_kernel_export(ntoskrnl_base, "ntoskrnl.exe", (PCSTR)temp);
 			if (*(QWORD*)i == 0)
 			{
 				printf("[-] export %s not found\n", (PCSTR)temp);
@@ -490,19 +365,26 @@ namespace km
 		target_driver = target_driver + 0x2450;
 		for (int i = 0; i < sizeof(payload); i++)
 		{
-			//
-			// we dont need performance, lets copy byte by byte
-			//
-			ioctl::kernel_memcpy_wp(  target_driver + i, (QWORD)&payload[i], 1  );
+			typedef struct { QWORD a0,a1,a2,a3; } I0; I0 i0{0x25,0,0,target_driver + i};
+			DeviceIoControl(driver_handle, IOCTL_INTEL, &i0, sizeof(i0), 0, 0, 0, 0);
+
+			typedef struct { QWORD a0,a1,a2,a3,a4,a5; } I1; I1 i1{0x19,0,0,0,i0.a2,1};
+			DeviceIoControl(driver_handle, IOCTL_INTEL, &i1, sizeof(i1), 0, 0, 0, 0);
+
+			typedef struct { QWORD a0,a1,a2,a3,a4; } I2; I2 i2{0x33,0,(QWORD)&payload[i],i1.a3,1};
+			DeviceIoControl(driver_handle, IOCTL_INTEL, &i2, sizeof(i2), 0, 0, 0, 0);
+
+			typedef struct { QWORD a0, a1,a2, a3, a4, a5; } I3 ; I3 i3{0x1A, 0,0, i1.a3, 0, 1};
+			DeviceIoControl(driver_handle, IOCTL_INTEL, &i3, sizeof(i3), 0, 0, 0, 0);
 		}
 
+		unsigned char integrity_check[sizeof(payload)]{};
+		typedef struct { QWORD a0,a1,a2,a3,a4; } PX; PX px{0x33,0,target_driver,(QWORD)integrity_check,sizeof(integrity_check)};
+		DeviceIoControl(driver_handle, IOCTL_INTEL, &px, sizeof(px), 0, 0, 0, 0);
 
-		unsigned char mem_check[64];
-		ioctl::kernel_memcpy((QWORD)mem_check, target_driver, sizeof(mem_check));
-
-		for (int i = 0; i < sizeof(mem_check); i++)
+		for (int i = 0; i < sizeof(integrity_check); i++)
 		{
-			if (mem_check[i] != payload[i])
+			if (integrity_check[i] != payload[i])
 			{
 				printf("[-] driver integrity check failed\n");
 				CloseHandle(driver_handle);
@@ -510,7 +392,6 @@ namespace km
 				return 0;
 			}
 		}
-
 
 		//
 		// uninstall old shellcodes to avoid memory leaks
@@ -548,7 +429,7 @@ namespace km
 				QWORD status = call(MmCopyMemory, (QWORD)alloc_buffer, address, length, 0x02, (QWORD)&res);
 				if (status == 0)
 				{
-					ioctl::kernel_memcpy((QWORD)buffer, alloc_buffer, res);
+					call(kernel::memcpy, (QWORD)buffer, alloc_buffer, res );
 					ret = 1;
 				}
 				free_memory(alloc_buffer);
@@ -607,11 +488,11 @@ namespace km
 			{
 				return 0;
 			}
-			QWORD alloc = ioctl::MmMapIoSpace(address, length);
+			QWORD alloc = call(MmMapIoSpace, address, length);
 			if (alloc)
 			{
-				ioctl::kernel_memcpy((QWORD)buffer, alloc, length);
-				ioctl::MmUnMapIoSpace(alloc, length);
+				call(kernel::memcpy, (QWORD)buffer, alloc, length);
+				call(MmUnmapIoSpace, alloc, length);
 				return 1;
 			}
 			return 0;
@@ -637,7 +518,14 @@ namespace km
 			{
 				return 0;
 			}
-			return pm::read(address, buffer, length);
+			QWORD alloc = call(MmMapIoSpace, address, length);
+			if (alloc)
+			{
+				call(kernel::memcpy, (QWORD)buffer, alloc, length);
+				call(MmUnmapIoSpace, alloc, length);
+				return 1;
+			}
+			return 0;
 		}
 
 		BOOL write(QWORD address, PVOID buffer, QWORD length)
@@ -646,11 +534,11 @@ namespace km
 			{
 				return 0;
 			}
-			QWORD alloc = ioctl::MmMapIoSpace(address, length);
+			QWORD alloc = call(MmMapIoSpace, address, length);
 			if (alloc)
 			{
-				ioctl::kernel_memcpy(alloc, (QWORD)buffer, length);
-				ioctl::MmUnMapIoSpace(alloc, length);
+				call(kernel::memcpy, alloc, (QWORD)buffer, length);
+				call(MmUnmapIoSpace, alloc, length);
 				return 1;
 			}
 			return 0;
@@ -673,64 +561,21 @@ namespace km
 		}
 	}
 
-	namespace port
-	{
-		BOOL read(WORD address, PVOID buffer, QWORD length)
-		{
-			return ioctl::port_read(address, buffer, length);
-		}
-
-		BOOL write(WORD address, PVOID buffer, QWORD length)
-		{
-			return ioctl::port_write(address, buffer, length);
-		}
-
-		template <typename t>
-		t read(WORD address)
-		{
-			t b;
-			if (!km::port::read(address, &b, sizeof(b)))
-			{
-				b = 0;
-			}
-			return b;
-		}
-
-		template <typename t>
-		BOOL write(WORD address, t value)
-		{
-			return km::port::write(address, &value, sizeof(t));
-		}
-	}
-
 	namespace pci
 	{
 		WORD read_i16_legacy(BYTE bus, BYTE slot, BYTE func, BYTE offset)
 		{
 			DWORD address = 0x80000000 | bus << 16 | slot << 11 | func <<  8 | offset;
-			km::port::write<DWORD>(0xCF8, address);
-			return (km::port::read<DWORD>(0xCFC) >> ((offset & 2) * 8)) & 0xFFFF;
+			port_write(0xCF8, &address, 4);
+			port_read(0xCFC, &address, 4);
+			return (address >> ((offset & 2) * 8)) & 0xFFFF;
 		}
 
 		void write_i16_legacy(BYTE bus, BYTE slot, BYTE func, BYTE offset, WORD value)
 		{
 			DWORD address = 0x80000000 | bus << 16 | slot << 11 | func <<  8 | offset;
-			km::port::write<DWORD>(0xCF8, address);
-			km::port::write<WORD>(0xCFC, value);
-		}
-
-		WORD read_i16(BYTE bus, BYTE slot, BYTE func, WORD offset)
-		{
-			DWORD address = 0x80000000 | (offset & 0xf00) << 16 | bus << 16 | slot << 11 | func <<  8 | (offset & 0xff);
-			km::port::write<DWORD>(0xCF8, address);
-			return (km::port::read<DWORD>(0xCFC) >> ((offset & 2) * 8)) & 0xFFFF;
-		}
-
-		void write_i16(BYTE bus, BYTE slot, BYTE func, WORD offset, WORD value)
-		{
-			DWORD address = 0x80000000 | (offset & 0xf00) << 16 | bus << 16 | slot << 11 | func <<  8 | (offset & 0xff);
-			km::port::write<DWORD>(0xCF8, address);
-			km::port::write<WORD>(0xCFC, value);
+			port_write(0xCF8, &address, 4);
+			port_write(0xCFC, &value, 2);
 		}
 	}
 }
@@ -1318,7 +1163,7 @@ void scan_thread(DWORD attachpid, QWORD thread_address, QWORD target_process)
 			printf("[+] [%lld][%lld][%llX] thread has wrong thread ID\n", process_id, thread_id, thread_address);
 		}
 	} else {
-		static QWORD func = km::install_function((PVOID)IsThreadFoundKTHREAD, km::utils::get_function_size((QWORD)IsThreadFoundKTHREAD));
+		static QWORD func = km::install_function((PVOID)IsThreadFoundKTHREAD, get_function_size((QWORD)IsThreadFoundKTHREAD));
 		if (km::call(func, process, thread_address) == 0)
 		{
 			printf("[+] [%lld][%lld][%llX] thread is unlinked\n", process_id, thread_id, thread_address);
@@ -1357,7 +1202,7 @@ void scan_threads(QWORD curr_thread, DWORD attachpid, QWORD target_process)
 			continue;
 		
 		QWORD threads[2]{};
-		km::ioctl::kernel_memcpy((QWORD)threads, prcb + 0x08, sizeof(threads));
+		km::call(kernel::memcpy, (QWORD)threads, prcb + 0x08, sizeof(threads));
 
 		if (threads[0])
 		{
@@ -1639,103 +1484,6 @@ typedef struct tagMODULEENTRY32EX
     char    szExePath[MAX_PATH];
 } MODULEENTRY32EX;
 
-
-std::vector<FILE_INFO> get_user_modules2(DWORD pid)
-{
-	
-	std::vector<FILE_INFO> info;
-
-	QWORD process = 0;
-
-	if (km::call(PsLookupProcessByProcessId, pid, (QWORD)&process) != 0)
-	{
-		return info;
-	}
-
-	QWORD peb = km::call(PsGetProcessWow64Process, process);
-
-	DWORD a0[8]{};
-	QWORD a1, a2;
-	unsigned short a3[120]{};
-	unsigned short a5[260]{};
-
-	QWORD(*read_ptr)(DWORD process, QWORD address) = 0;
-	if (peb)
-	{
-		*(QWORD*)&read_ptr = (QWORD)km::vm::read_i32;
-		a0[0] = 0x04, a0[1] = 0x0C, a0[2] = 0x14, a0[3] = 0x28, a0[4] = 0x10, a0[5] = 0x20, a0[6] = 0x20, a0[7] = 0x18;
-	}
-	else
-	{
-		*(QWORD*)&read_ptr = (QWORD)km::vm::read_i64;
-		peb = km::call(PsGetProcessPeb, process);
-		a0[0] = 0x08, a0[1] = 0x18, a0[2] = 0x20, a0[3] = 0x50, a0[4] = 0x20, a0[5] = 0x40, a0[6] = 0x40, a0[7] = 0x30;
-	}
-
-	if (peb == 0)
-	{
-		return info;
-	}
-
-	a1 = read_ptr(pid, peb + a0[1]);
-	if (a1 == 0)
-	{
-		return info;
-	}
-
-	a1 = read_ptr(pid, a1 + a0[2]);
-	if (a1 == 0)
-	{
-		return info;
-	}
-
-	a2 = read_ptr(pid, a1 + a0[0]);
-
-	while (a1 != a2) {
-		QWORD n4 = read_ptr(pid, a1 + a0[3]);
-		QWORD n5 = read_ptr(pid, a1 + a0[6]);
-
-		if (n4 == 0 || n5 == 0)
-		{
-			goto skip_module;
-		}
-
-		{
-		km::vm::read(pid, n4, a3, sizeof(a3));
-		km::vm::read(pid, n5, a5, sizeof(a5));
-
-		char final_name[120]{};
-		for (int i = 0; i < 120; i++) {
-			final_name[i] = (char)a3[i];
-			if (a3[i] == 0)
-				break;
-		}
-
-		char final_path[260]{};
-		for (int i = 0; i < 260; i++) {
-			final_path[i] = (char)a5[i];
-			if (a5[i] == 0)
-				break;
-		}
-
-		FILE_INFO temp;
-		temp.base = (QWORD)read_ptr(pid, a1 + a0[4]);
-		temp.size = (QWORD)km::vm::read<DWORD>(pid, a1 + a0[7]);
-		temp.path = std::string(final_path);
-		temp.name = std::string(final_name);
-
-		info.push_back(temp);
-		}
-		
-	skip_module:
-		a1 = read_ptr(pid, a1);
-		if (a1 == 0)
-			break;
-	}
-
-	return info;
-}
-
 std::vector<FILE_INFO> get_user_modules(DWORD pid)
 {
 	std::vector<FILE_INFO> info;
@@ -1745,11 +1493,6 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 
 	if (snp == INVALID_HANDLE_VALUE)
 	{
-		//
-		// access denied
-		//
-		if (GetLastError() == 5)
-			return get_user_modules2(pid);
 		return info;
 	}
 
@@ -1779,6 +1522,12 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 				continue;
 			}
 		}
+
+		if (strstr(module_entry.szExePath, "WindowsApps"))
+		{
+			continue;
+		}
+
 		FILE_INFO temp;
 		temp.base = (QWORD)module_entry.modBaseAddr;
 		temp.size = module_entry.modBaseSize;
@@ -1791,54 +1540,26 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 	return info;
 }
 
-std::vector<PROCESS_INFO> get_user_processes()
+std::vector<PROCESS_INFO> get_system_processes()
 {
 	std::vector<PROCESS_INFO> process_info;
 
-
 	HANDLE snp = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-
 	PROCESSENTRY32 entry{};
 	entry.dwSize = sizeof(entry);
 
 	while (Process32Next(snp, &entry))
 	{
-		if (entry.th32ProcessID == 0 || entry.th32ProcessID == 4)
+		if (entry.th32ProcessID == 0)
 		{
 			continue;
 		}
-
-		HANDLE module_snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, entry.th32ProcessID);
-
-		if (module_snap == 0)
-		{
-			continue;
-		}
-
-		MODULEENTRY32 module_entry{};
-		module_entry.dwSize = sizeof(module_entry);
-
-		std::vector<FILE_INFO> module_info;
-
-		while (Module32Next(module_snap, &module_entry))
-		{
-			FILE_INFO temp;
-
-			temp.base = (QWORD)module_entry.modBaseAddr;
-			temp.size = module_entry.modBaseSize;
-			temp.path = std::string(module_entry.szExePath);
-			temp.name = std::string(module_entry.szModule);
-
-			module_info.push_back(temp);
-		}
-
-		process_info.push_back({entry.th32ProcessID, module_info});
-
-		CloseHandle(module_snap);
+		if (entry.th32ProcessID == 4)
+			process_info.push_back({entry.th32ProcessID, get_kernel_modules()});
+		else
+			process_info.push_back({entry.th32ProcessID, get_user_modules(entry.th32ProcessID)});
 	}
-
 	CloseHandle(snp);
-
 	return process_info;
 }
 
@@ -1923,84 +1644,6 @@ std::vector<BIGPOOL_INFO> get_kernel_allocations(void)
 		info.push_back({virtual_address, bigpool_info->AllocatedInfo[i].TagULong});
 	}
 	free(buffer);
-	return info;
-}
-
-typedef struct _SYSTEM_HANDLE
-{
-	ULONG ProcessId;
-	BYTE ObjectTypeNumber;
-	BYTE Flags;
-	USHORT Handle;
-	PVOID Object;
-	ACCESS_MASK GrantedAccess;
-} SYSTEM_HANDLE, *PSYSTEM_HANDLE;
-
-typedef struct _SYSTEM_HANDLE_INFORMATION
-{
-	ULONG HandleCount;
-	SYSTEM_HANDLE Handles[1];
-} SYSTEM_HANDLE_INFORMATION, *PSYSTEM_HANDLE_INFORMATION;
-
-NTSTATUS PhEnumHandles(_Out_ PSYSTEM_HANDLE_INFORMATION* Handles)
-{
-	static ULONG initialBufferSize = 0x4000;
-	NTSTATUS status;
-	PVOID buffer;
-	ULONG bufferSize;
-
-	bufferSize = initialBufferSize;
-	buffer = malloc(bufferSize);
-
-	while ((status = NtQuerySystemInformation(
-		0x10,
-		buffer,
-		bufferSize,
-		NULL
-	)) == 0xC0000004)
-	{
-		free(buffer);
-		bufferSize *= 2;
-		buffer = malloc(bufferSize);
-	}
-
-	if (status != 0)
-	{
-		free(buffer);
-		return status;
-	}
-
-	if (bufferSize <= 0x100000) initialBufferSize = bufferSize;
-	*Handles = (PSYSTEM_HANDLE_INFORMATION)buffer;
-
-	return status;
-}
-
-std::vector<HANDLE_INFO> get_system_handle_information(void)
-{
-	std::vector<HANDLE_INFO> info;
-	PSYSTEM_HANDLE_INFORMATION handle_info = 0;
-
-	if (PhEnumHandles(&handle_info))
-	{
-		return info;
-	}
-
-	for (ULONG i = 0; i < handle_info->HandleCount; i++)
-	{
-		HANDLE_INFO entry;
-		entry.pid = handle_info->Handles[i].ProcessId;
-		entry.object_type = handle_info->Handles[i].ObjectTypeNumber;
-		entry.flags = handle_info->Handles[i].Flags;
-		entry.handle = handle_info->Handles[i].Handle;
-		entry.object = (QWORD)handle_info->Handles[i].Object;
-		entry.access_mask = handle_info->Handles[i].GrantedAccess;
-
-		info.push_back(entry);
-	}
-
-	free(handle_info);
-
 	return info;
 }
 
