@@ -1396,36 +1396,23 @@ BOOL ResolveHalEfiBase(PVOID fn, QWORD address, QWORD* base, QWORD* size)
 
 void scan_efi(void)
 {
-	QWORD HalEfiRuntimeServicesTable = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
-	HalEfiRuntimeServicesTable = km::vm::get_relative_address(4, HalEfiRuntimeServicesTable + 0x69, 3, 7);
-	HalEfiRuntimeServicesTable = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTable);
+	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
+	HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
+	HalEfiRuntimeServicesTableAddr = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);
 
 	//
 	// no table found
 	//
-	if (HalEfiRuntimeServicesTable == 0)
+	if (HalEfiRuntimeServicesTableAddr == 0)
 	{
 		return;
 	}
 
-	std::vector<QWORD> hal_efi;
-
-	for (int i = 0; i < 9; i++)
-	{
-		QWORD vt = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTable + (i * 8));
-		if (vt)
-		{
-			hal_efi.push_back(vt);
-		}
-	}
-
-	if (!hal_efi.size())
-	{
-		return;
-	}
+	QWORD HalEfiRuntimeServicesTable[9];
+	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
 
 	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase, get_function_size((QWORD)ResolveHalEfiBase));
-	for (auto &rt : hal_efi)
+	for (auto &rt : HalEfiRuntimeServicesTable)
 	{
 		//
 		// resolve hal efi base, size
