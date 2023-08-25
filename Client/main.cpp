@@ -15,6 +15,7 @@
 
 typedef ULONG_PTR QWORD;
 std::vector<QWORD> global_export_list;
+std::vector<QWORD> global_pattern_list;
 
 class DLL_EXPORT
 {
@@ -35,6 +36,7 @@ public:
 DLL_EXPORT export_name((QWORD)#export_name);
 
 
+QWORD g_ntoskrnl_base;
 NTOSKRNL_EXPORT(MmCopyMemory);
 NTOSKRNL_EXPORT(PsLookupProcessByProcessId);
 NTOSKRNL_EXPORT(ExAllocatePoolWithTag);
@@ -51,11 +53,15 @@ NTOSKRNL_EXPORT(KeQueryPrcbAddress);
 NTOSKRNL_EXPORT(PsGetCurrentThread);
 NTOSKRNL_EXPORT(PsGetProcessWow64Process);
 NTOSKRNL_EXPORT(PsGetProcessPeb);
+NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
+NTOSKRNL_EXPORT(MmGetPhysicalAddress);
+NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
 
 namespace kernel
 {
 	NTOSKRNL_EXPORT(memcpy);
 }
+
 
 #pragma pack(1)
 typedef struct {
@@ -117,6 +123,89 @@ QWORD get_function_size(QWORD function_address)
 		function_address++;
 	}
 	return (function_address - begin) + 1;
+}
+
+BOOLEAN data_compare(const BYTE* data, const BYTE* pattern, const char* mask)
+{
+	for (; *mask; ++mask, ++data, ++pattern)
+		if (*mask == 'x' && *data != *pattern)
+			return 0;
+	return (*mask) == 0;
+}
+
+QWORD find_pattern_ex(UINT64 dwAddress, QWORD dwLen, UCHAR *pattern, char *mask)
+{
+	if (dwLen <= 0)
+		return 0;
+	for (QWORD i = 0; i < dwLen; i++)
+		if (data_compare((BYTE*)(dwAddress + i), pattern, mask))
+			return (QWORD)(dwAddress + i);
+	return 0;
+}
+
+QWORD find_pattern(QWORD module, UCHAR *pattern, CHAR *mask, QWORD len, int counter=1)
+{
+	ULONG_PTR ret = 0;
+	PIMAGE_DOS_HEADER pidh = (PIMAGE_DOS_HEADER)module;
+	PIMAGE_NT_HEADERS pinh = (PIMAGE_NT_HEADERS)((BYTE*)pidh + pidh->e_lfanew);
+	PIMAGE_SECTION_HEADER pish = (PIMAGE_SECTION_HEADER)((BYTE*)pinh + sizeof(IMAGE_NT_HEADERS64));
+	
+	for (USHORT sec = 0; sec < pinh->FileHeader.NumberOfSections; sec++)
+	{
+		
+		if ((pish[sec].Characteristics & 0x00000020))
+		{
+			QWORD address = find_pattern_ex(pish[sec].VirtualAddress + (ULONG_PTR)(module), pish[sec].Misc.VirtualSize - len, pattern, mask);
+ 
+			if (address) {
+				ret = address;
+
+				counter --;
+
+				if (counter == 0)
+					break;
+			}
+		}
+		
+	}
+	return ret;
+}
+
+QWORD find_kernel_pattern(QWORD module, PCSTR driver_name, UCHAR *pattern, QWORD len, int counter=1)
+{
+	HMODULE ntos = LoadLibraryA(driver_name);
+
+	if (ntos == 0)
+	{
+		return 0;
+	}
+
+	std::vector<CHAR> mask;
+	for (QWORD i = 0; i < len; i++)
+	{
+		if (pattern[i] == 0xEC)
+		{
+			mask.push_back('?');
+		}
+		else
+		{
+			mask.push_back('x');
+		}
+	}
+
+
+	QWORD pattern_address = find_pattern((QWORD)ntos, pattern, mask.data(), len, counter);
+	if (pattern_address == 0)
+	{
+		goto cleanup;
+	}
+
+	pattern_address = pattern_address - (QWORD)ntos;
+	pattern_address = pattern_address + module;
+
+cleanup:
+	FreeLibrary(ntos);
+	return pattern_address;
 }
 
 namespace km
@@ -319,6 +408,8 @@ namespace km
 			return 0;
 		}
 
+		g_ntoskrnl_base = ntoskrnl_base;
+
 		for (auto &i : global_export_list)
 		{
 			QWORD temp = *(QWORD*)i;
@@ -327,6 +418,36 @@ namespace km
 			if (*(QWORD*)i == 0)
 			{
 				printf("[-] export %s not found\n", (PCSTR)temp);
+				return 0;
+			}
+		}
+
+		for (auto &i : global_pattern_list)
+		{
+			QWORD temp = *(QWORD*)i;
+
+			QWORD pattern_len = strlen((const char*)temp);
+
+
+			*(QWORD*)i = find_kernel_pattern(ntoskrnl_base, "ntoskrnl.exe", (UCHAR*)temp, pattern_len);
+			if (*(QWORD*)i == 0)
+			{
+				printf("[-] pattern ");
+
+				for (int i = 0; i < pattern_len; i++)
+				{
+					if (((UCHAR*)temp)[i] == 0xEC)
+					{
+						printf("? ");
+					}
+					else
+					{
+						printf("%02X ", ((UCHAR*)temp)[i]);
+					}
+				}
+
+				printf("not found\n");
+
 				return 0;
 			}
 		}
@@ -433,6 +554,10 @@ namespace km
 					ret = 1;
 				}
 				free_memory(alloc_buffer);
+			}
+			else if (pid == 0)
+			{
+				ret = km::call(kernel::memcpy, (QWORD)buffer, address, length) != 0;
 			} else {
 				QWORD target_process = 0, current_process = 0;
 				if (call(PsLookupProcessByProcessId, pid, (QWORD)&target_process) != 0)
@@ -478,24 +603,33 @@ namespace km
 			}
 			return b;
 		}
+
+		QWORD get_relative_address(DWORD pid, QWORD instruction, DWORD offset, DWORD instruction_size)
+		{
+			INT32 rip_address = read_i32(pid, instruction + offset);
+			return (QWORD)(instruction + instruction_size + rip_address);
+		}
 	}
 	
 	namespace pm
 	{
 		BOOL read(QWORD address, PVOID buffer, QWORD length)
 		{	
-			if (!km::initialize())
+			BOOL ret = 0;
+			QWORD alloc_buffer = (QWORD)allocate_memory(length);
+
+			if (alloc_buffer == 0)
+				return ret;
+
+			QWORD res = 0;
+			QWORD status = call(MmCopyMemory, (QWORD)alloc_buffer, address, length, 0x01, (QWORD)&res);
+			if (status == 0)
 			{
-				return 0;
+				call(kernel::memcpy, (QWORD)buffer, alloc_buffer, res );
+				ret = 1;
 			}
-			QWORD alloc = call(MmMapIoSpace, address, length);
-			if (alloc)
-			{
-				call(kernel::memcpy, (QWORD)buffer, alloc, length);
-				call(MmUnmapIoSpace, alloc, length);
-				return 1;
-			}
-			return 0;
+			free_memory(alloc_buffer);
+			return ret;
 		}
 
 		template <typename t>
@@ -1224,6 +1358,117 @@ void scan_threads(QWORD curr_thread, DWORD attachpid, QWORD target_process)
 	}
 }
 
+#define PAGE_SIZE 0x1000
+#define PAGE_ALIGN(Va) ((PVOID)((ULONG_PTR)(Va) & ~(PAGE_SIZE - 1)))
+BOOL ResolveHalEfiBase(PVOID fn, QWORD address, QWORD* base, QWORD* size)
+{
+	BOOL result = 0;
+	*base = 0;
+	if (size)
+		*size = 0;
+
+	address = (QWORD)PAGE_ALIGN((QWORD)address);
+	while (1)
+	{
+		address -= 0x1000;
+		if (((QWORD(*)(QWORD))(fn))(address) == 0)
+		{
+			break;
+		}
+
+		if (*(unsigned short*)address == 0x5A4D)
+		{
+			IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)address;
+			IMAGE_NT_HEADERS64* nt = (IMAGE_NT_HEADERS64*)((char*)dos + dos->e_lfanew);
+			if (nt->Signature != 0x00004550)
+				continue;
+
+			*base = address;
+			if (size)
+				*size = nt->OptionalHeader.SizeOfImage;
+
+			result = 1;
+			break;
+		}
+	}
+	return result;
+}
+
+void scan_efi(void)
+{
+	QWORD HalEfiRuntimeServicesTable = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
+	HalEfiRuntimeServicesTable = km::vm::get_relative_address(4, HalEfiRuntimeServicesTable + 0x69, 3, 7);
+	HalEfiRuntimeServicesTable = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTable);
+
+	//
+	// no table found
+	//
+	if (HalEfiRuntimeServicesTable == 0)
+	{
+		return;
+	}
+
+	std::vector<QWORD> hal_efi;
+
+	for (int i = 0; i < 9; i++)
+	{
+		QWORD vt = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTable + (i * 8));
+		if (vt)
+		{
+			hal_efi.push_back(vt);
+		}
+	}
+
+	if (!hal_efi.size())
+	{
+		return;
+	}
+
+	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase, get_function_size((QWORD)ResolveHalEfiBase));
+	for (auto &rt : hal_efi)
+	{
+		//
+		// resolve hal efi base, size
+		//
+		QWORD base,size;
+		if (!km::call(resolve_base_fn, MmGetPhysicalAddress, rt, (QWORD)&base, (QWORD)&size))
+		{
+			continue;
+		}
+
+		if (rt < base || rt > (base + size))
+		{
+			printf("[+] EFI Runtime service (%llx) is not pointing at original Image: %llx\n", rt, base);
+			continue;
+		}
+
+		DWORD begin = km::vm::read<DWORD>(0, rt);
+
+		if (begin == 0xfa1e0ff3)
+		{
+			printf("[+] EFI Runtime service (%llx) is hooked with efi-memory: %llx\n", rt, base);
+			//
+			// 
+			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
+			//
+			//
+			continue;
+		}
+
+		if (((WORD*)&begin)[0] == 0x25ff)
+		{
+			printf("[+] EFI Runtime service (%llx) is hooked with byte patch: %llx\n", rt, base);
+			//
+			// 
+			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
+			//
+			//
+			continue;
+		}
+	}
+	km::uninstall_function(resolve_base_fn);
+}
+
 int main(int argc, char **argv)
 {
 	if (!km::initialize())
@@ -1232,14 +1477,14 @@ int main(int argc, char **argv)
 		printf("Press any key to continue . . .");
 		return getchar();
 	}
-
+	
 	if (argc < 2)
 	{
 		printf("[drvscan] --help\n");
 		return getchar();
 	}
 
-	BOOL scan=0, pid = 4, cache = 0, pcileech = 0, diff = 0, use_cache = 0, scanthreads = 0, attachpid = 0;
+	BOOL scan=0, pid = 4, cache = 0, pcileech = 0, diff = 0, use_cache = 0, scanthreads = 0, attachpid = 0,scanefi=0;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -1248,14 +1493,15 @@ int main(int argc, char **argv)
 			printf(
 				"\n\n"
 
-				"--scan                 scan target process memory changes\n"
-				"	--diff      (optional) the amount of bytes that have to be different before logging the patch\n"
-				"	--usecache  (optional) if option is selected, we use local dumps instead of original disk files\n"
-				"	--savecache (optional) dump target process modules to disk, these can be used later with --usecache\n"
-				"	--pid       (optional) target process id\n\n"
-				"--pcileech             scan pcileech-fpga cards from the system\n"
-				"--scanthreads          scan system threads\n"
-				"	--attachpid (optional) check if thread is attached to target process id\n\n\n"
+				"--scan                    scan target process memory changes\n"
+				"   --diff      (optional) the amount of bytes that have to be different before logging the patch\n"
+				"   --usecache  (optional) if option is selected, we use local dumps instead of original disk files\n"
+				"   --savecache (optional) dump target process modules to disk, these can be used later with --usecache\n"
+				"   --pid       (optional) target process id\n\n"
+				"--pcileech                scan pcileech-fpga cards from the system (4.11 and lower)\n\n"
+				"--scanthreads             scan system threads\n"
+				"   --attachpid (optional) check if thread is attached to target process id\n\n"
+				"--scanefi                 scan efi runtime services\n\n\n"
 			);
 
 
@@ -1309,6 +1555,18 @@ int main(int argc, char **argv)
 		{
 			attachpid = atoi(argv[i + 1]);
 		}
+
+		else if (!strcmp(argv[i], "--scanefi"))
+		{
+			scanefi = 1;
+		}
+	}
+
+	if (scanefi)
+	{
+		printf("[+] scanning EFI runtime services\n");
+		scan_efi();
+		printf("[+] EFI runtime services scan is complete\n");
 	}
 
 	if (scanthreads)
@@ -1380,6 +1638,18 @@ int main(int argc, char **argv)
 			dump_module_to_file(pid, mod);
 		}
 	
+	}
+
+	//
+	// garbage collector
+	//
+	for (auto &pool : get_kernel_allocations())
+	{
+		if (pool.tag == POOLTAG)
+		{
+			printf("[+] uninstalling shellcode: %llx\n", pool.address);
+			km::uninstall_function(pool.address);
+		}
 	}
 
 	return 0;
