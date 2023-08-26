@@ -1346,6 +1346,49 @@ QWORD get_efi_runtimes_pages(EFIRT_MODULES_INFO *info)
 			if (!info->MmIsAddressValidFn(pde) || !pde)
 				continue;
 
+			//
+			// 1gb
+			//
+			if (pdpt[pdpt_index].large_page)
+			{
+				//
+				// we dont need add 1gb pages, but in case you want add them you can uncomment
+				//
+				/*
+				DWORD page_count = 0;
+				for (auto i = 0; i < 0x40000; i++)
+				{
+					
+					if (!pde[i].present)
+					{
+						continue;
+					}
+
+					if (pde[i].execute_disable)
+					{
+						continue;
+					}
+					
+					if (info->MmGetVirtualForPhysicalFn(physical_address + (i * PAGE_SIZE)) != 0)
+					{
+						continue;
+					}
+
+					page_count = (i + 1);
+				}
+				if (page_count)
+				{
+					if (*info->total_count > index)
+					{
+						*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = physical_address;
+						*(QWORD*)((QWORD)info->page_count_buffer + (index * 8))   = page_count;
+						index++;
+					}
+				}
+				*/
+				continue;
+			}
+
 
 
 			DWORD page_count=0;
@@ -1411,6 +1454,17 @@ QWORD get_efi_runtimes_pages(EFIRT_MODULES_INFO *info)
 				for (int pte_index = 0; pte_index < 512; pte_index++)
 				{
 					physical_address = pte[pte_index].page_frame_number << PAGE_SHIFT;
+
+
+					//
+					// skip pci devices
+					//
+					if (physical_address >= 0xF0000000 && physical_address <= 0xfffff000)
+					{
+						continue;
+					}
+
+
 					if (!pte[pte_index].present)
 					{
 						continue;
