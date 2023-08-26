@@ -1337,10 +1337,7 @@ typedef struct {
 	PVOID page_count_buffer;
 
 
-	QWORD pci_start;
-	QWORD pci_end;
 	BOOL  vmware;
-
 	DWORD *total_count;
 } EFI_RT_PAGES ;
 
@@ -1496,18 +1493,10 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 
 
 					//
-					// skip pci devices
-					//
-					if (physical_address >= info->pci_start && physical_address <= info->pci_end)
-					{
-						continue;
-					}
-
-					//
 					// skip SPI
 					//
 					if (!info->vmware)
-						if (physical_address >= 0xF0000000 && physical_address <= 0xFFFF0000)
+						if (physical_address >= 0xF0000000 && physical_address <= 0xF7FFFFFF)
 						{
 							continue;
 						}
@@ -1568,8 +1557,6 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 	info.page_address_buffer = (PVOID)page_address;
 	info.page_count_buffer   = (PVOID)page_count;
 	info.total_count         = &address_count;
-	info.pci_start           = 0xF0000000; // to-do: better to not hardcode
-	info.pci_end             = 0xFF000000; // to-do: better to not hardcode
 	info.vmware              = km::pm::read<QWORD>(0x10A0) == 0;
 
 	QWORD status = km::call_shellcode((PVOID)__get_efi_runtime_pages, (QWORD)&info);
