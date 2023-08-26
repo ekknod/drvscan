@@ -1052,6 +1052,8 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 	}
 }
 
+
+#define GET_BIT(data, bit) ((data >> bit) & 1)
 void scan_pcileech(void)
 {
 	typedef struct {
@@ -1116,6 +1118,11 @@ void scan_pcileech(void)
 		if (dev.blk)
 		{
 			continue;
+		}
+
+		if (!GET_BIT(*(WORD*)(dev.cfg + 0x04), 2))
+		{
+			dev.blk = 1;
 		}
 
 		/*
