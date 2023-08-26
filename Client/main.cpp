@@ -101,7 +101,7 @@ std::vector<FILE_INFO>       get_kernel_modules(void);
 std::vector<FILE_INFO>       get_user_modules(DWORD pid);
 std::vector<PROCESS_INFO>    get_system_processes();
 std::vector<BIGPOOL_INFO>    get_kernel_allocations(void);
-std::vector<EFI_PAGE_INFO>   get_efi_pages(void);
+std::vector<EFI_PAGE_INFO>   get_efi_runtime_pages(void);
 std::vector<EFI_MODULE_INFO> get_efi_module_list(void);
 
 QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
@@ -1330,7 +1330,7 @@ typedef struct {
 	DWORD *total_count;
 } EFI_RT_PAGES ;
 
-QWORD get_efi_runtimes_pages(EFI_RT_PAGES *info)
+QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 {
 	cr3 kernel_cr3;
 	kernel_cr3.flags = __readcr3();
@@ -1530,11 +1530,11 @@ QWORD get_efi_runtimes_pages(EFI_RT_PAGES *info)
 	return 1;
 }
 
-std::vector<EFI_PAGE_INFO> get_efi_pages(void)
+std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 {
 	std::vector<EFI_PAGE_INFO> ret;
 
-	QWORD get_efi_pages = km::install_function((PVOID)get_efi_runtimes_pages, get_function_size((QWORD)get_efi_runtimes_pages));
+	QWORD get_efi_pages = km::install_function((PVOID)__get_efi_runtime_pages, get_function_size((QWORD)__get_efi_runtime_pages));
 
 	QWORD page_addresses[1000];
 	QWORD page_counts[1000];
@@ -1573,7 +1573,7 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 {
 	std::vector<EFI_MODULE_INFO> modules;
 
-	for (auto &page : get_efi_pages())
+	for (auto &page : get_efi_runtime_pages())
 	{
 		DWORD image_cnt = 0;
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
@@ -1601,9 +1601,9 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 
 		if (image_cnt < 4)
 		{
-			printf("[+] Unlinked EFI page [%llx - %llx], page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+			printf("[+] Unlinked EFI page [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 		} else {
-			printf("[+] EFI page found [%llx - %llx], page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+			printf("[+] EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 		}
 	}
 
@@ -1647,7 +1647,7 @@ void scan_efi(void)
 
 		if (rt < base || rt > (base + size))
 		{
-			printf("[+] EFI Runtime service (%llx) is not pointing at original Image: %llx\n", rt, base);
+			printf("[+] EFI Runtime service [0x%llx] is not pointing at original Image: %llx\n", rt, base);
 			continue;
 		}
 
@@ -1657,7 +1657,7 @@ void scan_efi(void)
 
 		if (begin == 0xfa1e0ff3)
 		{
-			printf("[+] EFI Runtime service (%llx) is hooked with efi-memory: %llx\n", rt, base);
+			printf("[+] EFI Runtime service [0x%llx] is hooked with efi-memory: %llx\n", rt, base);
 			//
 			// 
 			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
@@ -1668,7 +1668,7 @@ void scan_efi(void)
 
 		if (((WORD*)&begin)[0] == 0x25ff)
 		{
-			printf("[+] EFI Runtime service (%llx) is hooked with byte patch: %llx\n", rt, base);
+			printf("[+] EFI Runtime service [0x%llx] is hooked with byte patch: %llx\n", rt, base);
 			//
 			// 
 			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
@@ -1690,14 +1690,14 @@ void scan_efi(void)
 
 		if (!found)
 		{
-			printf("[+] EFI Runtime service (%llx) found from invalid memory range: %llx\n", rt, physical_base);
+			printf("[+] EFI Runtime service [0x%llx] found from invalid memory range: [0x%llx]\n", rt, physical_base);
 		}
 	}
 	km::uninstall_function(resolve_base_fn);
 
 	for (auto &base : module_list)
 	{
-		printf("[+] EFI runtime image found: (%llx - %llx)\n", base.address, base.address + base.size);
+		printf("[+] EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
 	}
 }
 
