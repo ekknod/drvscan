@@ -1507,7 +1507,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 					// skip SPI
 					//
 					if (!info->vmware)
-						if (physical_address >= 0xF0000000 && physical_address <= 0xFFFFFFFF)
+						if (physical_address >= 0xF0000000 && physical_address <= 0xFFFF0000)
 						{
 							continue;
 						}
