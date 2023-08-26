@@ -289,9 +289,10 @@ namespace km
 		call(ExFreePoolWithTag, address, POOLTAG);
 	}
 
-	QWORD install_function(PVOID shellcode, QWORD size)
+	QWORD install_function(PVOID shellcode)
 	{
-		QWORD mem = allocate_memory(size);
+		QWORD size = get_function_size((QWORD)shellcode);
+		QWORD mem  = allocate_memory(size);
 		if (mem == 0)
 		{
 			return 0;
@@ -307,7 +308,7 @@ namespace km
 
 	QWORD call_shellcode(PVOID shellcode, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0)
 	{
-		QWORD func = install_function(shellcode, get_function_size((QWORD)shellcode));
+		QWORD func = install_function(shellcode);
 		if (func == 0)
 		{
 			return 0;
@@ -1223,7 +1224,7 @@ void scan_thread(DWORD attachpid, QWORD thread_address, QWORD target_process)
 			LOG_RED("[%lld][%lld][%llX] thread has wrong thread ID\n", process_id, thread_id, thread_address);
 		}
 	} else {
-		static QWORD func = km::install_function((PVOID)IsThreadFoundKTHREAD, get_function_size((QWORD)IsThreadFoundKTHREAD));
+		static QWORD func = km::install_function((PVOID)IsThreadFoundKTHREAD);
 		if (km::call(func, process, thread_address) == 0)
 		{
 			LOG_RED("[%lld][%lld][%llX] thread is unlinked\n", process_id, thread_id, thread_address);
@@ -1563,7 +1564,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 	QWORD status = km::call_shellcode((PVOID)__get_efi_runtime_pages, (QWORD)&info);
 	if (status == 0)
 	{
-		return{};
+		return {};
 	}
 
 	for (DWORD i = 0; i < address_count; i++)
@@ -1632,7 +1633,7 @@ void scan_efi(void)
 	QWORD HalEfiRuntimeServicesTable[9];
 	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
 
-	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase, get_function_size((QWORD)ResolveHalEfiBase));
+	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase);
 
 
 	auto module_list = get_efi_module_list();
