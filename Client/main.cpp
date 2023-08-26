@@ -41,7 +41,6 @@ public:
 DLL_EXPORT export_name((QWORD)#export_name);
 
 
-QWORD g_ntoskrnl_base;
 NTOSKRNL_EXPORT(MmCopyMemory);
 NTOSKRNL_EXPORT(PsLookupProcessByProcessId);
 NTOSKRNL_EXPORT(ExAllocatePoolWithTag);
@@ -306,9 +305,9 @@ namespace km
 		free_memory(shellcode_function);
 	}
 
-	QWORD call_shellcode(PVOID shellcode, QWORD size, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0)
+	QWORD call_shellcode(PVOID shellcode, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0)
 	{
-		QWORD func = install_function(shellcode, size);
+		QWORD func = install_function(shellcode, get_function_size((QWORD)shellcode));
 		if (func == 0)
 		{
 			return 0;
@@ -347,8 +346,6 @@ namespace km
 			return 0;
 		}
 
-		g_ntoskrnl_base = ntoskrnl_base;
-
 		for (auto &i : global_export_list)
 		{
 			QWORD temp = *(QWORD*)i;
@@ -365,6 +362,7 @@ namespace km
 
 		if (driver_handle == INVALID_HANDLE_VALUE)
 		{
+			LOG("intel driver is not running\n");
 			driver_handle = 0;
 			return 0;
 		}
@@ -1548,10 +1546,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 {
 	std::vector<EFI_PAGE_INFO> ret;
 
-	QWORD get_efi_pages = km::install_function((PVOID)__get_efi_runtime_pages, get_function_size((QWORD)__get_efi_runtime_pages));
-
-	QWORD page_addresses[1000];
-	QWORD page_counts[1000];
+	QWORD page_address[1000], page_count[1000];
 	DWORD address_count = 1000;
 
 	EFI_RT_PAGES info{};
@@ -1559,17 +1554,13 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 	*(QWORD*)&info.MmGetVirtualForPhysicalFn = MmGetVirtualForPhysical;
 	*(QWORD*)&info.MmIsAddressValidFn = MmIsAddressValid;
 
-
-	info.page_address_buffer = (PVOID)page_addresses;
-	info.page_count_buffer   = (PVOID)page_counts;
+	info.page_address_buffer = (PVOID)page_address;
+	info.page_count_buffer   = (PVOID)page_count;
 	info.total_count         = &address_count;
-	info.pci_start           = 0xF0000000; // todo: better to not hardcode
-	info.pci_end             = 0xFF000000; // todo: better to not hardcode
+	info.pci_start           = 0xF0000000; // to-do: better to not hardcode
+	info.pci_end             = 0xFF000000; // to-do: better to not hardcode
 
-	QWORD status = km::call(get_efi_pages, (QWORD)&info);
-	km::uninstall_function(get_efi_pages);
-
-
+	QWORD status = km::call_shellcode((PVOID)__get_efi_runtime_pages, (QWORD)&info);
 	if (status == 0)
 	{
 		return{};
@@ -1577,7 +1568,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 
 	for (DWORD i = 0; i < address_count; i++)
 	{
-		ret.push_back(  {page_addresses[i], (DWORD)page_counts[i]} );
+		ret.push_back( {page_address[i], (DWORD)page_count[i]} );
 	}
 
 	return ret;
@@ -1647,7 +1638,6 @@ void scan_efi(void)
 	auto module_list = get_efi_module_list();
 
 
-	QWORD test_target_base = 0;
 	for (auto &rt : HalEfiRuntimeServicesTable)
 	{
 		//
@@ -1664,8 +1654,6 @@ void scan_efi(void)
 			LOG_RED("EFI Runtime service [0x%llx] is not pointing at original Image: %llx\n", rt, base);
 			continue;
 		}
-
-		test_target_base = base;
 
 		DWORD begin = km::vm::read<DWORD>(0, rt);
 
@@ -1693,6 +1681,7 @@ void scan_efi(void)
 
 		BOOL found = 0;
 		QWORD physical_base = km::call(MmGetPhysicalAddress, base);
+
 		for (auto &base : module_list)
 		{
 			if (physical_base >= (QWORD)base.address && physical_base <= (QWORD)((QWORD)base.address + base.size))
@@ -1712,11 +1701,9 @@ void scan_efi(void)
 	for (auto &base : module_list)
 	{
 		LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
-
 		//
-		// verify image certificate
+		// to-do: verify image integrity
 		//
-
 	}
 }
 
@@ -1724,7 +1711,6 @@ int main(int argc, char **argv)
 {
 	if (!km::initialize())
 	{
-		LOG("intel driver is not running\n");
 		printf("Press any key to continue . . .");
 		return getchar();
 	}
