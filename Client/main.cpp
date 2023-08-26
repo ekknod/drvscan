@@ -15,7 +15,6 @@
 
 typedef ULONG_PTR QWORD;
 std::vector<QWORD> global_export_list;
-std::vector<QWORD> global_pattern_list;
 
 class DLL_EXPORT
 {
@@ -123,89 +122,6 @@ QWORD get_function_size(QWORD function_address)
 		function_address++;
 	}
 	return (function_address - begin) + 1;
-}
-
-BOOLEAN data_compare(const BYTE* data, const BYTE* pattern, const char* mask)
-{
-	for (; *mask; ++mask, ++data, ++pattern)
-		if (*mask == 'x' && *data != *pattern)
-			return 0;
-	return (*mask) == 0;
-}
-
-QWORD find_pattern_ex(UINT64 dwAddress, QWORD dwLen, UCHAR *pattern, char *mask)
-{
-	if (dwLen <= 0)
-		return 0;
-	for (QWORD i = 0; i < dwLen; i++)
-		if (data_compare((BYTE*)(dwAddress + i), pattern, mask))
-			return (QWORD)(dwAddress + i);
-	return 0;
-}
-
-QWORD find_pattern(QWORD module, UCHAR *pattern, CHAR *mask, QWORD len, int counter=1)
-{
-	ULONG_PTR ret = 0;
-	PIMAGE_DOS_HEADER pidh = (PIMAGE_DOS_HEADER)module;
-	PIMAGE_NT_HEADERS pinh = (PIMAGE_NT_HEADERS)((BYTE*)pidh + pidh->e_lfanew);
-	PIMAGE_SECTION_HEADER pish = (PIMAGE_SECTION_HEADER)((BYTE*)pinh + sizeof(IMAGE_NT_HEADERS64));
-	
-	for (USHORT sec = 0; sec < pinh->FileHeader.NumberOfSections; sec++)
-	{
-		
-		if ((pish[sec].Characteristics & 0x00000020))
-		{
-			QWORD address = find_pattern_ex(pish[sec].VirtualAddress + (ULONG_PTR)(module), pish[sec].Misc.VirtualSize - len, pattern, mask);
- 
-			if (address) {
-				ret = address;
-
-				counter --;
-
-				if (counter == 0)
-					break;
-			}
-		}
-		
-	}
-	return ret;
-}
-
-QWORD find_kernel_pattern(QWORD module, PCSTR driver_name, UCHAR *pattern, QWORD len, int counter=1)
-{
-	HMODULE ntos = LoadLibraryA(driver_name);
-
-	if (ntos == 0)
-	{
-		return 0;
-	}
-
-	std::vector<CHAR> mask;
-	for (QWORD i = 0; i < len; i++)
-	{
-		if (pattern[i] == 0xEC)
-		{
-			mask.push_back('?');
-		}
-		else
-		{
-			mask.push_back('x');
-		}
-	}
-
-
-	QWORD pattern_address = find_pattern((QWORD)ntos, pattern, mask.data(), len, counter);
-	if (pattern_address == 0)
-	{
-		goto cleanup;
-	}
-
-	pattern_address = pattern_address - (QWORD)ntos;
-	pattern_address = pattern_address + module;
-
-cleanup:
-	FreeLibrary(ntos);
-	return pattern_address;
 }
 
 namespace km
@@ -418,36 +334,6 @@ namespace km
 			if (*(QWORD*)i == 0)
 			{
 				printf("[-] export %s not found\n", (PCSTR)temp);
-				return 0;
-			}
-		}
-
-		for (auto &i : global_pattern_list)
-		{
-			QWORD temp = *(QWORD*)i;
-
-			QWORD pattern_len = strlen((const char*)temp);
-
-
-			*(QWORD*)i = find_kernel_pattern(ntoskrnl_base, "ntoskrnl.exe", (UCHAR*)temp, pattern_len);
-			if (*(QWORD*)i == 0)
-			{
-				printf("[-] pattern ");
-
-				for (int i = 0; i < pattern_len; i++)
-				{
-					if (((UCHAR*)temp)[i] == 0xEC)
-					{
-						printf("? ");
-					}
-					else
-					{
-						printf("%02X ", ((UCHAR*)temp)[i]);
-					}
-				}
-
-				printf("not found\n");
-
 				return 0;
 			}
 		}
