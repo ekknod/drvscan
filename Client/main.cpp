@@ -12,6 +12,12 @@
 #define IOCTL_INTEL 0x80862007
 #define MIN_DIFFERENCE 9
 #define POOLTAG (DWORD)'ECAC'
+#define LOG(...) printf("[ecac.exe] "  __VA_ARGS__)
+#define LOG_RED(...) \
+printf("[ecac.exe] "); \
+FontColor(4); \
+printf(__VA_ARGS__); \
+FontColor(7); \
 
 typedef ULONG_PTR QWORD;
 std::vector<QWORD> global_export_list;
@@ -337,7 +343,7 @@ namespace km
 
 		if (target_driver == 0 || ntoskrnl_base == 0)
 		{
-			printf("[-] driver is not loaded\n");
+			LOG("driver is not loaded\n");
 			return 0;
 		}
 
@@ -350,7 +356,7 @@ namespace km
 			*(QWORD*)i = get_kernel_export(ntoskrnl_base, "ntoskrnl.exe", (PCSTR)temp);
 			if (*(QWORD*)i == 0)
 			{
-				printf("[-] export %s not found\n", (PCSTR)temp);
+				LOG("export %s not found\n", (PCSTR)temp);
 				return 0;
 			}
 		}
@@ -410,7 +416,7 @@ namespace km
 		{
 			if (integrity_check[i] != payload[i])
 			{
-				printf("[-] driver integrity check failed\n");
+				LOG("driver integrity check failed\n");
 				CloseHandle(driver_handle);
 				driver_handle = 0;
 				return 0;
@@ -869,7 +875,7 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 	// write dump file to /dumps/drivername
 	//
 	if (write_dump_file (file.name.c_str(), (PVOID)target_base, *(QWORD*)(target_base - 24 + 8)))
-		printf("[+] driver: %s is succesfully dumped\n", file.name.c_str());
+		LOG("driver: %s is succesfully dumped\n", file.name.c_str());
 
 	HMODULE dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
 	if (!dll)
@@ -1011,6 +1017,14 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 	}
 	else
 	{
+		const char *sub_str = strstr(file.path.c_str(), "\\dump_");
+
+		if (sub_str)
+		{
+			std::string sub_name = sub_str + 6;
+			file.path = "C:\\Windows\\System32\\Drivers\\" + sub_name;
+		}
+
 		local_image = (HMODULE)LoadFileEx(file.path.c_str(), 0);
 	}
 
@@ -1025,7 +1039,7 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 			return;
 		}
 
-		printf("scanning image: %s\n", file.path.c_str());
+		LOG("scanning image: %s\n", file.path.c_str());
 
 		QWORD image_dos_header = (QWORD)local_image;
 		QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
@@ -1062,13 +1076,13 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 		vm_free_module(runtime_image);
 		FreeFileEx(local_image);
 	} else {
-		printf("failed to open %s\n", file.path.c_str());
+		LOG_RED("failed to open %s\n", file.path.c_str());
 	}
 }
 
 
 #define GET_BIT(data, bit) ((data >> bit) & 1)
-void scan_pcileech(void)
+void scan_pci(void)
 {
 	typedef struct {
 		
@@ -1159,7 +1173,7 @@ void scan_pcileech(void)
 		
 
 		FontColor(14);
-		printf("[+] [%02X:%02X:%02X] [%04X:%04X] (%d)\n", dev.bus, dev.slot, 0, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), dev.blk);
+		LOG_RED("device [%02X:%02X:%02X] [%04X:%04X] is not allowed device\n", dev.bus, dev.slot, 0, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
 		FontColor(7);
 	}
 }
@@ -1202,19 +1216,19 @@ void scan_thread(DWORD attachpid, QWORD thread_address, QWORD target_process)
 		QWORD lookup_object = 0;
 		if (km::call(PsLookupThreadByThreadId, thread_id, (QWORD)&lookup_object) != 0)
 		{
-			printf("[+] [%lld][%lld][%llX] thread is unlinked\n", process_id, thread_id, thread_address);
+			LOG_RED("[%lld][%lld][%llX] thread is unlinked\n", process_id, thread_id, thread_address);
 			goto NXT;
 		}
 
 		if (lookup_object != thread_address)
 		{
-			printf("[+] [%lld][%lld][%llX] thread has wrong thread ID\n", process_id, thread_id, thread_address);
+			LOG_RED("[%lld][%lld][%llX] thread has wrong thread ID\n", process_id, thread_id, thread_address);
 		}
 	} else {
 		static QWORD func = km::install_function((PVOID)IsThreadFoundKTHREAD, get_function_size((QWORD)IsThreadFoundKTHREAD));
 		if (km::call(func, process, thread_address) == 0)
 		{
-			printf("[+] [%lld][%lld][%llX] thread is unlinked\n", process_id, thread_id, thread_address);
+			LOG_RED("[%lld][%lld][%llX] thread is unlinked\n", process_id, thread_id, thread_address);
 		}
 	}
 NXT:
@@ -1227,7 +1241,7 @@ NXT:
 
 		if (km::vm::read<QWORD>(4, thread_address + 0x98 + 0x20) == target_process)
 		{
-			printf("[+] [%lld][%lld][%llx] thread is attached to %d\n", process_id, thread_id, thread_address, attachpid);
+			LOG("[%lld][%lld][%llx] thread is attached to %d\n", process_id, thread_id, thread_address, attachpid);
 		}
 	}
 }
@@ -1601,9 +1615,9 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 
 		if (image_cnt < 4)
 		{
-			printf("[+] Unlinked EFI page [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+			LOG_RED("unlinked EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 		} else {
-			printf("[+] EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+			LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 		}
 	}
 
@@ -1647,7 +1661,7 @@ void scan_efi(void)
 
 		if (rt < base || rt > (base + size))
 		{
-			printf("[+] EFI Runtime service [0x%llx] is not pointing at original Image: %llx\n", rt, base);
+			LOG_RED("EFI Runtime service [0x%llx] is not pointing at original Image: %llx\n", rt, base);
 			continue;
 		}
 
@@ -1657,7 +1671,7 @@ void scan_efi(void)
 
 		if (begin == 0xfa1e0ff3)
 		{
-			printf("[+] EFI Runtime service [0x%llx] is hooked with efi-memory: %llx\n", rt, base);
+			LOG_RED("EFI Runtime service [0x%llx] is hooked with efi-memory: %llx\n", rt, base);
 			//
 			// 
 			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
@@ -1668,7 +1682,7 @@ void scan_efi(void)
 
 		if (((WORD*)&begin)[0] == 0x25ff)
 		{
-			printf("[+] EFI Runtime service [0x%llx] is hooked with byte patch: %llx\n", rt, base);
+			LOG_RED("EFI Runtime service [0x%llx] is hooked with byte patch: %llx\n", rt, base);
 			//
 			// 
 			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
@@ -1690,14 +1704,19 @@ void scan_efi(void)
 
 		if (!found)
 		{
-			printf("[+] EFI Runtime service [0x%llx] found from invalid memory range: [0x%llx]\n", rt, physical_base);
+			LOG_RED("EFI Runtime service [0x%llx] found from invalid memory range: [0x%llx]\n", rt, physical_base);
 		}
 	}
 	km::uninstall_function(resolve_base_fn);
 
 	for (auto &base : module_list)
 	{
-		printf("[+] EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
+		LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
+
+		//
+		// verify image certificate
+		//
+
 	}
 }
 
@@ -1705,18 +1724,18 @@ int main(int argc, char **argv)
 {
 	if (!km::initialize())
 	{
-		printf("[-] intel driver is not running\n");
+		LOG("intel driver is not running\n");
 		printf("Press any key to continue . . .");
 		return getchar();
 	}
 	
 	if (argc < 2)
 	{
-		printf("[drvscan] --help\n");
+		LOG("--help\n");
 		return getchar();
 	}
 
-	BOOL scan=0, pid = 4, cache = 0, pcileech = 0, diff = 0, use_cache = 0, scanthreads = 0, attachpid = 0,scanefi=0;
+	BOOL scan=0, pid = 4, cache = 0, scanpci = 0, diff = 0, use_cache = 0, scanthreads = 0, attachpid = 0,scanefi=0;
 
 	for (int i = 1; i < argc; i++)
 	{
@@ -1730,7 +1749,7 @@ int main(int argc, char **argv)
 				"   --usecache  (optional) if option is selected, we use local dumps instead of original disk files\n"
 				"   --savecache (optional) dump target process modules to disk, these can be used later with --usecache\n"
 				"   --pid       (optional) target process id\n\n"
-				"--pcileech                scan pcileech-fpga cards from the system (4.11 and lower)\n\n"
+				"--scanpci                 scan pcileech-fpga cards from the system (4.11 and lower)\n\n"
 				"--scanthreads             scan system threads\n"
 				"   --attachpid (optional) check if thread is attached to target process id\n\n"
 				"--scanefi                 scan efi runtime services\n\n\n"
@@ -1739,10 +1758,10 @@ int main(int argc, char **argv)
 
 			printf("\nExample (verifying modules integrity by using cache):\n"
 				"1.			making sure Windows is not infected\n"
-				"1.			drvscan.exe --savecache --pid 4\n"
+				"1.			ecac.exe --savecache --pid 4\n"
 				"2.			reboot the computer\n"
 				"3.			load malware what is potentially modifying modules\n"
-				"4.			drvscan.exe --scan --usecache --pid 4\n"
+				"4.			ecac.exe --scan --usecache --pid 4\n"
 				"all malware patches should be now visible\n\n"
 			);
 			
@@ -1768,9 +1787,9 @@ int main(int argc, char **argv)
 			cache = 1;
 		}
 
-		else if (!strcmp(argv[i], "--pcileech"))
+		else if (!strcmp(argv[i], "--scanpci"))
 		{
-			pcileech = 1;
+			scanpci = 1;
 		}
 
 		else if (!strcmp(argv[i], "--usecache"))
@@ -1796,9 +1815,9 @@ int main(int argc, char **argv)
 
 	if (scanefi)
 	{
-		printf("[+] scanning EFI runtime memory\n");
+		LOG("scanning EFI runtime memory\n");
 		scan_efi();
-		printf("[+] EFI runtime memory scan is complete\n");
+		LOG("EFI runtime memory scan is complete\n");
 	}
 
 	if (scanthreads)
@@ -1808,26 +1827,26 @@ int main(int argc, char **argv)
 		{
 			if (km::call(PsLookupProcessByProcessId, attachpid, (QWORD)&target_process) != 0)
 			{
-				printf("[-] target process is not running\n");
+				LOG("target process is not running\n");
 				return 0;
 			}
 		}
 
 		QWORD curr_thread = km::call(PsGetCurrentThread);
 
-		printf("[+] scanning unlinked system threads\n");
+		LOG("scanning unlinked system threads\n");
 		for (int i = 0; i < 10000; i++)
 		{
 			scan_threads(curr_thread, attachpid, target_process);
 		}
-		printf("[+] system thread scan is complete\n");
+		LOG("system thread scan is complete\n");
 	}
 
-	if (pcileech)
+	if (scanpci)
 	{
-		printf("[+] scanning PCIe devices\n");
-		scan_pcileech();
-		printf("[+] PCIe scan is complete\n");
+		LOG("scanning PCIe devices\n");
+		scan_pci();
+		LOG("PCIe scan is complete\n");
 	}
 
 	if (scan)
@@ -1843,13 +1862,13 @@ int main(int argc, char **argv)
 			modules = get_user_modules(pid);
 		}
 
-		printf("\n[+] scanning modules\n");
+		LOG("\nscanning modules\n");
 		for (auto mod : modules)
 		{
 			scan_image(pid, mod, diff, use_cache);
 		}
 
-		printf("[+] scan is complete\n");
+		LOG("scan is complete\n");
 	}
 
 	if (cache)
@@ -1879,7 +1898,7 @@ int main(int argc, char **argv)
 	{
 		if (pool.tag == POOLTAG)
 		{
-			printf("[+] uninstalling shellcode: %llx\n", pool.address);
+			LOG("uninstalling shellcode: %llx\n", pool.address);
 			km::uninstall_function(pool.address);
 		}
 	}
