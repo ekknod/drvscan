@@ -55,6 +55,9 @@ NTOSKRNL_EXPORT(PsGetProcessPeb);
 NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
 NTOSKRNL_EXPORT(MmGetPhysicalAddress);
 NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
+NTOSKRNL_EXPORT(KeStackAttachProcess);
+NTOSKRNL_EXPORT(KeUnstackDetachProcess);
+NTOSKRNL_EXPORT(MmIsAddressValid);
 
 namespace kernel
 {
@@ -611,34 +614,8 @@ BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
 	return res <= cnt;
 }
 
-void scan_section(DWORD diff, BOOL wow64, DWORD pid, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<DWORD> &wla)
+void scan_section(DWORD diff, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<DWORD> &wla)
 {
-	DWORD min_difference = MIN_DIFFERENCE;
-
-	if (wla.size())
-	{
-		if (wow64)
-			min_difference = 3;
-		else
-			min_difference = 1;
-	} else {
-		if (pid != 4)
-		{
-			if (wow64)
-				min_difference = 3;
-			else
-				min_difference = 1;
-		}
-	}
-
-	//
-	// force min difference if it's set.
-	//
-	if (diff != 0)
-	{
-		min_difference = diff;
-	}
-
 	for (QWORD i = 0; i < size; i++)
 	{
 		if (((unsigned char*)local_image)[i] == ((unsigned char*)runtime_image)[i])
@@ -663,7 +640,7 @@ void scan_section(DWORD diff, BOOL wow64, DWORD pid, CHAR *section_name, QWORD l
 			cnt++;
 		}
 
-		if (cnt >= min_difference)
+		if (cnt >= diff)
 		{
 			BOOL found = 0;
 			 
@@ -947,21 +924,63 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 	return TRUE;
 }
 
+void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff, std::vector<DWORD> &whitelist_addresses)
+{
+	QWORD image_dos_header = (QWORD)local_image;
+	QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
+	unsigned short machine = *(WORD*)(image_nt_header + 0x4);
+
+	QWORD section_header_off = machine == 0x8664 ?
+		image_nt_header + 0x0108 :
+		image_nt_header + 0x00F8;
+
+	for (WORD i = 0; i < *(WORD*)(image_nt_header + 0x06); i++) {
+		QWORD section = section_header_off + (i * 40);
+		ULONG section_characteristics = *(ULONG*)(section + 0x24);
+
+		UCHAR *section_name = (UCHAR*)(section + 0x00);
+		ULONG section_virtual_address = *(ULONG*)(section + 0x0C);
+		ULONG section_raw_address = *(ULONG*)(section + 0x14);
+		ULONG section_virtual_size = *(ULONG*)(section + 0x08);
+
+		if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
+		{
+			//
+			// skip Warbird page
+			//
+			if (!strcmp((const char*)section_name, "PAGEwx3"))
+			{
+				continue;
+			}
+		
+			scan_section(
+				diff,
+				(CHAR*)section_name,
+				(QWORD)((BYTE*)local_image + section_raw_address),
+				(QWORD)(runtime_image + section_raw_address),
+				section_virtual_size,
+				section_virtual_address,
+				whitelist_addresses
+			);
+		}
+	}
+}
+
 void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 {
 	//
 	// try to use existing memory dumps
 	//
 
-	HMODULE dll = 0;
+	HMODULE local_image = 0;
 	std::vector<DWORD> whitelist_addresses;
 
 	if (use_cache)
 	{
-		dll = (HMODULE)LoadFileEx(("./dumps/" + file.name).c_str(), 0);
-		if (dll == 0)
+		local_image = (HMODULE)LoadFileEx(("./dumps/" + file.name).c_str(), 0);
+		if (local_image == 0)
 		{
-			dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+			local_image = (HMODULE)LoadFileEx(file.path.c_str(), 0);
 		}
 
 	
@@ -978,68 +997,56 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 	}
 	else
 	{
-		dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+		local_image = (HMODULE)LoadFileEx(file.path.c_str(), 0);
 	}
 
-
-
-
-	if (dll)
+	if (local_image)
 	{
-		QWORD target_base = vm_dump_module_ex(pid, file.base, 1);
+		QWORD runtime_image = vm_dump_module_ex(pid, file.base, 1);
 
-		if (target_base == 0 || *(WORD*)target_base != IMAGE_DOS_SIGNATURE)
+		if (runtime_image == 0 || *(WORD*)runtime_image != IMAGE_DOS_SIGNATURE)
 		{
-			FreeFileEx(dll);
-			vm_free_module(target_base);
+			FreeFileEx(local_image);
+			vm_free_module(runtime_image);
 			return;
 		}
 
 		printf("scanning image: %s\n", file.path.c_str());
 
-		QWORD image_dos_header = (QWORD)dll;
+		QWORD image_dos_header = (QWORD)local_image;
 		QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
 		unsigned short machine = *(WORD*)(image_nt_header + 0x4);
 
-		QWORD section_header_off = machine == 0x8664 ?
-			image_nt_header + 0x0108 :
-			image_nt_header + 0x00F8;
+		DWORD min_difference = MIN_DIFFERENCE;
 
-		for (WORD i = 0; i < *(WORD*)(image_nt_header + 0x06); i++) {
-			QWORD section = section_header_off + (i * 40);
-			ULONG section_characteristics = *(ULONG*)(section + 0x24);
-
-			UCHAR *section_name = (UCHAR*)(section + 0x00);
-			ULONG section_virtual_address = *(ULONG*)(section + 0x0C);
-			ULONG section_raw_address = *(ULONG*)(section + 0x14);
-			ULONG section_virtual_size = *(ULONG*)(section + 0x08);
-
-			if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
+		if (whitelist_addresses.size())
+		{
+			if (machine != 0x8664)
+				min_difference = 3;
+			else
+				min_difference = 1;
+		} else {
+			if (pid != 4)
 			{
-				//
-				// skip Warbird page
-				//
-				if (!strcmp((const char*)section_name, "PAGEwx3"))
-				{
-					continue;
-				}
-		
-				scan_section(
-					diff,
-					machine != 0x8664,
-					pid,
-					(CHAR*)section_name,
-					(QWORD)((BYTE*)dll + section_raw_address),
-					(QWORD)(target_base + section_raw_address),
-					section_virtual_size,
-					section_virtual_address,
-					whitelist_addresses
-				);
+				if (machine != 0x8664)
+					min_difference = 3;
+				else
+					min_difference = 1;
 			}
 		}
 
-		vm_free_module(target_base);
-		FreeFileEx(dll);
+		//
+		// force min difference if it's set.
+		//
+		if (diff != 0)
+		{
+			min_difference = diff;
+		}
+
+		compare_sections((QWORD)local_image, runtime_image, min_difference, whitelist_addresses);
+
+		vm_free_module(runtime_image);
+		FreeFileEx(local_image);
 	} else {
 		printf("failed to open %s\n", file.path.c_str());
 	}
@@ -1280,8 +1287,244 @@ BOOL ResolveHalEfiBase(PVOID fn, QWORD address, QWORD* base, QWORD* size)
 	return result;
 }
 
+
+//
+// bruteforce scan Cr3 and find EFI RT pages
+//
+#include "ia32.hpp"
+#define PAGE_SHIFT 12l
+
+typedef struct {
+	QWORD (*MmGetPhysicalAddressFn)(QWORD BaseAddress);
+	QWORD (*MmGetVirtualForPhysicalFn)(QWORD BaseAddress);
+	BOOLEAN (*MmIsAddressValidFn)(PVOID VirtualAddress);
+
+	PVOID page_address_buffer;
+	PVOID page_count_buffer;
+
+	DWORD *total_count;
+} EFIRT_MODULES_INFO ;
+
+QWORD get_efi_runtimes_pages(EFIRT_MODULES_INFO *info)
+{
+	cr3 kernel_cr3;
+	kernel_cr3.flags = __readcr3();
+	
+	DWORD index = 0;
+
+	QWORD physical_address = kernel_cr3.address_of_page_directory << PAGE_SHIFT;
+
+	pml4e_64* pml4 = (pml4e_64*)(info->MmGetVirtualForPhysicalFn(physical_address));
+
+	if (!info->MmIsAddressValidFn(pml4) || !pml4)
+		return 0;
+
+	
+	for (int pml4_index = 255; pml4_index < 512; pml4_index++)
+	{
+
+		physical_address = pml4[pml4_index].page_frame_number << PAGE_SHIFT;
+		if (!pml4[pml4_index].present)
+		{
+			continue;
+		}
+	
+		pdpte_64* pdpt = (pdpte_64*)(info->MmGetVirtualForPhysicalFn(physical_address));
+		if (!info->MmIsAddressValidFn(pdpt) || !pdpt)
+			continue;
+
+		for (int pdpt_index = 0; pdpt_index < 512; pdpt_index++)
+		{
+
+			physical_address = pdpt[pdpt_index].page_frame_number << PAGE_SHIFT;
+			if (!pdpt[pdpt_index].present)
+			{
+				continue;
+			}
+
+			pde_64* pde = (pde_64*)(info->MmGetVirtualForPhysicalFn(physical_address));
+			if (!info->MmIsAddressValidFn(pde) || !pde)
+				continue;
+
+
+
+			DWORD page_count=0;
+			QWORD earlier_num=0;
+			for (int pde_index = 0; pde_index < 512; pde_index++) {
+				physical_address = pde[pde_index].page_frame_number << PAGE_SHIFT;
+
+				if (!pde[pde_index].present)
+				{
+					continue;
+				}
+
+				pte_64* pte = (pte_64*)(info->MmGetVirtualForPhysicalFn(physical_address));
+				if (!info->MmIsAddressValidFn(pte) || !pte)
+					continue;
+
+
+				//
+				// 2mb page
+				//
+				
+				if (pde[pde_index].large_page)
+				{
+					//
+					// we dont need add 2mb pages, but in case you want add them you can uncomment
+					//
+					/*
+					DWORD page_count = 0;
+					for (auto i = 0; i < 512; i++)
+					{
+						if (!pte[i].present)
+						{
+							continue;
+						}
+
+						if (pte[i].execute_disable)
+						{
+							continue;
+						}
+
+						if (info->MmGetVirtualForPhysicalFn(physical_address + (i * PAGE_SIZE)) != 0)
+						{
+							continue;
+						}
+
+						page_count = (i + 1);
+					}
+					if (page_count)
+					{
+						if (*info->total_count > index)
+						{
+							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = physical_address;
+							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8))   = page_count;
+							index++;
+						}
+					}
+					*/
+					continue;
+				}
+				
+
+	
+				for (int pte_index = 0; pte_index < 512; pte_index++)
+				{
+					physical_address = pte[pte_index].page_frame_number << PAGE_SHIFT;
+					if (!pte[pte_index].present)
+					{
+						continue;
+					}
+					
+					if (pte[pte_index].execute_disable)
+					{
+						continue;
+					}
+					
+					if (info->MmGetVirtualForPhysicalFn(physical_address) != 0)
+					{
+						continue;
+					}
+
+					if ((physical_address - earlier_num) == 0x1000)
+					{
+						page_count++;
+					}
+					else
+					{
+						if (page_count > 4 && *info->total_count > index)
+						{
+							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = earlier_num - (page_count * 0x1000);
+							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count;
+							index++;
+						}
+						page_count = 0;
+					}
+					earlier_num = physical_address;
+				}
+				
+
+			}
+		}
+	}
+	*info->total_count = index;
+	return 1;
+}
+
+//
+// not full rdy yet
+//
+std::vector<QWORD> get_efi_module_list()
+{
+	QWORD get_efi_rt_modules_func = km::install_function((PVOID)get_efi_runtimes_pages, get_function_size((QWORD)get_efi_runtimes_pages));
+
+	QWORD page_addresses[1000];
+	QWORD page_counts[1000];
+	DWORD address_count = 1000;
+
+	EFIRT_MODULES_INFO info{};
+	*(QWORD*)&info.MmGetPhysicalAddressFn = MmGetPhysicalAddress;
+	*(QWORD*)&info.MmGetVirtualForPhysicalFn = MmGetVirtualForPhysical;
+	*(QWORD*)&info.MmIsAddressValidFn = MmIsAddressValid;
+
+
+	info.page_address_buffer = (PVOID)page_addresses;
+	info.page_count_buffer = (PVOID)page_counts;
+	info.total_count = &address_count;
+
+	QWORD status = km::call(get_efi_rt_modules_func, (QWORD)&info);
+	km::uninstall_function(get_efi_rt_modules_func);
+
+
+	if (status == 0)
+	{
+		return{};
+	}
+	
+
+	for (DWORD i = 0; i < address_count; i++)
+	{
+		QWORD start_address = page_addresses[i];
+		QWORD page_count = page_counts[i];
+
+
+		QWORD end_address = start_address + (page_count * PAGE_SIZE);
+
+
+
+
+		BOOL found = 0;
+		for (DWORD page_num = 0; page_num < page_count; page_num++)
+		{
+			WORD mz = km::io::read<WORD>(start_address + (page_num * PAGE_SIZE));
+
+
+			if (mz == IMAGE_DOS_SIGNATURE)
+			{
+				printf("[+] EFI runtime image found from address: %llx\n", start_address + (page_num * PAGE_SIZE));
+
+				found++;
+			}
+
+		}
+
+		if (found < 4)
+		{
+			printf("[+] unlinked EFI page [%llx - %llx], page count: %lld\n", start_address, end_address, page_count);	
+		}
+	}
+
+	return {};
+}
+
 void scan_efi(void)
 {
+	//
+	// soon
+	//
+	get_efi_module_list();
+
+
 	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
 	HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
 	HalEfiRuntimeServicesTableAddr = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);
@@ -1298,6 +1541,9 @@ void scan_efi(void)
 	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
 
 	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase, get_function_size((QWORD)ResolveHalEfiBase));
+
+
+	QWORD test_target_base = 0;
 	for (auto &rt : HalEfiRuntimeServicesTable)
 	{
 		//
@@ -1314,6 +1560,8 @@ void scan_efi(void)
 			printf("[+] EFI Runtime service (%llx) is not pointing at original Image: %llx\n", rt, base);
 			continue;
 		}
+
+		test_target_base = base;
 
 		DWORD begin = km::vm::read<DWORD>(0, rt);
 
@@ -1437,9 +1685,9 @@ int main(int argc, char **argv)
 
 	if (scanefi)
 	{
-		printf("[+] scanning EFI runtime services\n");
+		printf("[+] scanning EFI runtime memory\n");
 		scan_efi();
-		printf("[+] EFI runtime services scan is complete\n");
+		printf("[+] EFI runtime memory scan is complete\n");
 	}
 
 	if (scanthreads)
