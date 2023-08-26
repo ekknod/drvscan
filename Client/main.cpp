@@ -1477,11 +1477,10 @@ QWORD get_efi_runtimes_pages(EFI_RT_PAGES *info)
 					//
 					// skip pci devices
 					//
-					if (info->pci_start || info->pci_end)
-						if (physical_address >= info->pci_start && physical_address <= info->pci_end)
-						{
-							continue;
-						}
+					if (physical_address >= info->pci_start && physical_address <= info->pci_end)
+					{
+						continue;
+					}
 
 
 					if (!pte[pte_index].present)
