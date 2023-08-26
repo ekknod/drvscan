@@ -85,10 +85,17 @@ typedef struct {
 	DWORD                  tag;
 } BIGPOOL_INFO;
 
-std::vector<FILE_INFO>    get_kernel_modules(void);
-std::vector<FILE_INFO>    get_user_modules(DWORD pid);
-std::vector<PROCESS_INFO> get_system_processes();
-std::vector<BIGPOOL_INFO> get_kernel_allocations(void);
+#pragma pack(1)
+typedef struct {
+	QWORD                  address;
+	DWORD                  page_count;
+} EFI_PAGE_INFO;
+
+std::vector<FILE_INFO>       get_kernel_modules(void);
+std::vector<FILE_INFO>       get_user_modules(DWORD pid);
+std::vector<PROCESS_INFO>    get_system_processes();
+std::vector<BIGPOOL_INFO>    get_kernel_allocations(void);
+std::vector<EFI_PAGE_INFO>   get_efi_pages(void);
 
 QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
 {
@@ -1309,10 +1316,14 @@ typedef struct {
 	PVOID page_address_buffer;
 	PVOID page_count_buffer;
 
-	DWORD *total_count;
-} EFIRT_MODULES_INFO ;
 
-QWORD get_efi_runtimes_pages(EFIRT_MODULES_INFO *info)
+	QWORD pci_start;
+	QWORD pci_end;
+
+	DWORD *total_count;
+} EFI_RT_PAGES ;
+
+QWORD get_efi_runtimes_pages(EFI_RT_PAGES *info)
 {
 	cr3 kernel_cr3;
 	kernel_cr3.flags = __readcr3();
@@ -1466,10 +1477,11 @@ QWORD get_efi_runtimes_pages(EFIRT_MODULES_INFO *info)
 					//
 					// skip pci devices
 					//
-					if (physical_address >= 0xF0000000 && physical_address <= 0xfffff000)
-					{
-						continue;
-					}
+					if (info->pci_start || info->pci_end)
+						if (physical_address >= info->pci_start && physical_address <= info->pci_end)
+						{
+							continue;
+						}
 
 
 					if (!pte[pte_index].present)
@@ -1512,63 +1524,65 @@ QWORD get_efi_runtimes_pages(EFIRT_MODULES_INFO *info)
 	return 1;
 }
 
-std::vector<QWORD> get_efi_module_list()
+std::vector<EFI_PAGE_INFO> get_efi_pages(void)
 {
-	QWORD get_efi_rt_modules_func = km::install_function((PVOID)get_efi_runtimes_pages, get_function_size((QWORD)get_efi_runtimes_pages));
+	std::vector<EFI_PAGE_INFO> ret;
+
+	QWORD get_efi_pages = km::install_function((PVOID)get_efi_runtimes_pages, get_function_size((QWORD)get_efi_runtimes_pages));
 
 	QWORD page_addresses[1000];
 	QWORD page_counts[1000];
 	DWORD address_count = 1000;
 
-	EFIRT_MODULES_INFO info{};
+	EFI_RT_PAGES info{};
 	*(QWORD*)&info.MmGetPhysicalAddressFn = MmGetPhysicalAddress;
 	*(QWORD*)&info.MmGetVirtualForPhysicalFn = MmGetVirtualForPhysical;
 	*(QWORD*)&info.MmIsAddressValidFn = MmIsAddressValid;
 
 
 	info.page_address_buffer = (PVOID)page_addresses;
-	info.page_count_buffer = (PVOID)page_counts;
-	info.total_count = &address_count;
+	info.page_count_buffer   = (PVOID)page_counts;
+	info.total_count         = &address_count;
+	info.pci_start           = 0xF0000000;
+	info.pci_end             = 0xFF000000;
 
-	QWORD status = km::call(get_efi_rt_modules_func, (QWORD)&info);
-	km::uninstall_function(get_efi_rt_modules_func);
+	QWORD status = km::call(get_efi_pages, (QWORD)&info);
+	km::uninstall_function(get_efi_pages);
 
 
 	if (status == 0)
 	{
 		return{};
 	}
-	
 
 	for (DWORD i = 0; i < address_count; i++)
 	{
-		QWORD start_address = page_addresses[i];
-		QWORD page_count = page_counts[i];
+		ret.push_back(  {page_addresses[i], (DWORD)page_counts[i]} );
+	}
 
+	return ret;
+}
 
-		QWORD end_address = start_address + (page_count * PAGE_SIZE);
-
-
-
-
-		BOOL found = 0;
-		for (DWORD page_num = 0; page_num < page_count; page_num++)
+std::vector<QWORD> get_efi_module_list()
+{
+	for (auto &page : get_efi_pages())
+	{
+		DWORD page_cnt = 0;
+		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
-			WORD mz = km::io::read<WORD>(start_address + (page_num * PAGE_SIZE));
-
+			WORD mz = km::io::read<WORD>(page.address + (page_num * PAGE_SIZE));
 
 			if (mz == IMAGE_DOS_SIGNATURE)
 			{
-				printf("[+] EFI runtime image found from address: %llx\n", start_address + (page_num * PAGE_SIZE));
+				printf("[+] EFI runtime image found from address: %llx\n", page.address + (page_num * PAGE_SIZE));
 
-				found++;
+				page_cnt++;
 			}
-
 		}
 
-		if (found < 4)
+		if (page_cnt < 4)
 		{
-			printf("[+] unlinked EFI page [%llx - %llx], page count: %lld\n", start_address, end_address, page_count);	
+			printf("[+] unlinked EFI page [%llx - %llx], page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 		}
 	}
 
