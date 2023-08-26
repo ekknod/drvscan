@@ -1601,7 +1601,9 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 
 		if (image_cnt < 4)
 		{
-			printf("[+] unlinked EFI page [%llx - %llx], page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+			printf("[+] Unlinked EFI page [%llx - %llx], page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+		} else {
+			printf("[+] EFI page found [%llx - %llx], page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 		}
 	}
 
