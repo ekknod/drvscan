@@ -1519,7 +1519,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 							QWORD addr = previous_address - (page_count * 0x1000);
 
 							if (!info->vmware)
-								if (addr >= (QWORD)0xFF000000 && addr <= 0xfffff000)
+								if (addr >= (QWORD)0xF0000000 && addr <= 0xfffff000)
 								{
 									page_count = 0;
 									continue;
