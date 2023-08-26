@@ -91,11 +91,18 @@ typedef struct {
 	DWORD                  page_count;
 } EFI_PAGE_INFO;
 
+#pragma pack(1)
+typedef struct {
+	QWORD                  address;
+	QWORD                  size;
+} EFI_MODULE_INFO;
+
 std::vector<FILE_INFO>       get_kernel_modules(void);
 std::vector<FILE_INFO>       get_user_modules(DWORD pid);
 std::vector<PROCESS_INFO>    get_system_processes();
 std::vector<BIGPOOL_INFO>    get_kernel_allocations(void);
 std::vector<EFI_PAGE_INFO>   get_efi_pages(void);
+std::vector<EFI_MODULE_INFO> get_efi_module_list(void);
 
 QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
 {
@@ -1410,7 +1417,7 @@ QWORD get_efi_runtimes_pages(EFI_RT_PAGES *info)
 
 
 			DWORD page_count=0;
-			QWORD earlier_num=0;
+			QWORD previous_address=0;
 			for (int pde_index = 0; pde_index < 512; pde_index++) {
 				physical_address = pde[pde_index].page_frame_number << PAGE_SHIFT;
 
@@ -1498,7 +1505,7 @@ QWORD get_efi_runtimes_pages(EFI_RT_PAGES *info)
 						continue;
 					}
 
-					if ((physical_address - earlier_num) == 0x1000)
+					if ((physical_address - previous_address) == 0x1000)
 					{
 						page_count++;
 					}
@@ -1506,13 +1513,13 @@ QWORD get_efi_runtimes_pages(EFI_RT_PAGES *info)
 					{
 						if (page_count > 4 && *info->total_count > index)
 						{
-							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = earlier_num - (page_count * 0x1000);
+							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
 							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count;
 							index++;
 						}
 						page_count = 0;
 					}
-					earlier_num = physical_address;
+					previous_address = physical_address;
 				}
 				
 
@@ -1542,8 +1549,8 @@ std::vector<EFI_PAGE_INFO> get_efi_pages(void)
 	info.page_address_buffer = (PVOID)page_addresses;
 	info.page_count_buffer   = (PVOID)page_counts;
 	info.total_count         = &address_count;
-	info.pci_start           = 0xF0000000;
-	info.pci_end             = 0xFF000000;
+	info.pci_start           = 0xF0000000; // todo: better to not hardcode
+	info.pci_end             = 0xFF000000; // todo: better to not hardcode
 
 	QWORD status = km::call(get_efi_pages, (QWORD)&info);
 	km::uninstall_function(get_efi_pages);
@@ -1562,40 +1569,47 @@ std::vector<EFI_PAGE_INFO> get_efi_pages(void)
 	return ret;
 }
 
-std::vector<QWORD> get_efi_module_list()
+std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 {
+	std::vector<EFI_MODULE_INFO> modules;
+
 	for (auto &page : get_efi_pages())
 	{
-		DWORD page_cnt = 0;
+		DWORD image_cnt = 0;
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
 			WORD mz = km::io::read<WORD>(page.address + (page_num * PAGE_SIZE));
 
 			if (mz == IMAGE_DOS_SIGNATURE)
 			{
-				printf("[+] EFI runtime image found from address: %llx\n", page.address + (page_num * PAGE_SIZE));
+				QWORD module_base = page.address + (page_num * PAGE_SIZE);
+				QWORD nt = km::io::read<DWORD>(module_base + 0x03C) + module_base;
 
-				page_cnt++;
+				if (km::io::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
+				{
+					continue;
+				}
+
+				DWORD module_size = km::io::read<DWORD>(nt + 0x050);
+
+
+				modules.push_back({module_base, module_size});
+
+				image_cnt++;
 			}
 		}
 
-		if (page_cnt < 4)
+		if (image_cnt < 4)
 		{
 			printf("[+] unlinked EFI page [%llx - %llx], page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 		}
 	}
 
-	return {};
+	return modules;
 }
 
 void scan_efi(void)
 {
-	//
-	// soon
-	//
-	get_efi_module_list();
-
-
 	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
 	HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
 	HalEfiRuntimeServicesTableAddr = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);
@@ -1612,6 +1626,9 @@ void scan_efi(void)
 	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
 
 	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase, get_function_size((QWORD)ResolveHalEfiBase));
+
+
+	auto module_list = get_efi_module_list();
 
 
 	QWORD test_target_base = 0;
@@ -1657,8 +1674,29 @@ void scan_efi(void)
 			//
 			continue;
 		}
+
+		BOOL found = 0;
+		QWORD physical_base = km::call(MmGetPhysicalAddress, base);
+		for (auto &base : module_list)
+		{
+			if (physical_base >= (QWORD)base.address && physical_base <= (QWORD)((QWORD)base.address + base.size))
+			{
+				found = 1;
+				break;
+			}
+		}
+
+		if (!found)
+		{
+			printf("[+] EFI Runtime service (%llx) found from invalid memory range: %llx\n", rt, physical_base);
+		}
 	}
 	km::uninstall_function(resolve_base_fn);
+
+	for (auto &base : module_list)
+	{
+		printf("[+] EFI runtime image found: (%llx - %llx)\n", base.address, base.address + base.size);
+	}
 }
 
 int main(int argc, char **argv)
