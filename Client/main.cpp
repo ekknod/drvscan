@@ -1320,7 +1320,7 @@ QWORD get_efi_runtimes_pages(EFIRT_MODULES_INFO *info)
 		return 0;
 
 	
-	for (int pml4_index = 255; pml4_index < 512; pml4_index++)
+	for (int pml4_index = 256; pml4_index < 512; pml4_index++)
 	{
 
 		physical_address = pml4[pml4_index].page_frame_number << PAGE_SHIFT;
@@ -1451,9 +1451,6 @@ QWORD get_efi_runtimes_pages(EFIRT_MODULES_INFO *info)
 	return 1;
 }
 
-//
-// not full rdy yet
-//
 std::vector<QWORD> get_efi_module_list()
 {
 	QWORD get_efi_rt_modules_func = km::install_function((PVOID)get_efi_runtimes_pages, get_function_size((QWORD)get_efi_runtimes_pages));
