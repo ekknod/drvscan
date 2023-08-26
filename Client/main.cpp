@@ -1490,18 +1490,6 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 				for (int pte_index = 0; pte_index < 512; pte_index++)
 				{
 					physical_address = pte[pte_index].page_frame_number << PAGE_SHIFT;
-
-
-					//
-					// skip SPI
-					//
-					if (!info->vmware)
-						if (physical_address >= 0xF0000000 && physical_address <= 0xF7FFFFFF)
-						{
-							continue;
-						}
-
-
 					if (!pte[pte_index].present)
 					{
 						continue;
@@ -1525,7 +1513,21 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 					{
 						if (page_count > 4 && *info->total_count > index)
 						{
-							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
+							//
+							// skip SPI
+							//
+							QWORD addr = previous_address - (page_count * 0x1000);
+
+							if (!info->vmware)
+								if (addr >= (QWORD)0xFF000000 && addr <= 0xfffff000)
+								{
+									page_count = 0;
+									continue;
+								}
+
+
+
+							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = addr;
 							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count;
 							index++;
 						}
@@ -1579,7 +1581,6 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 
 	for (auto &page : get_efi_runtime_pages())
 	{
-		DWORD image_cnt = 0;
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
 			WORD mz = km::io::read<WORD>(page.address + (page_num * PAGE_SIZE));
@@ -1598,17 +1599,10 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 
 
 				modules.push_back({module_base, module_size});
-
-				image_cnt++;
 			}
 		}
 
-		if (image_cnt < 4)
-		{
-			LOG_RED("unlinked EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
-		} else {
-			LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
-		}
+		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 	}
 
 	return modules;
