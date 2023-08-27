@@ -1332,7 +1332,6 @@ typedef struct {
 	QWORD (*MmGetPhysicalAddressFn)(QWORD BaseAddress);
 	QWORD (*MmGetVirtualForPhysicalFn)(QWORD BaseAddress);
 	BOOLEAN (*MmIsAddressValidFn)(PVOID VirtualAddress);
-	QWORD  efi_base_address;
 
 	PVOID page_address_buffer;
 	PVOID page_count_buffer;
@@ -1514,13 +1513,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 					{
 						if (page_count > 4 && *info->total_count > index)
 						{
-							QWORD addr = previous_address - (page_count * 0x1000);
-							if (info->MmGetPhysicalAddressFn(info->efi_base_address + addr) != addr)
-							{
-								page_count = 0;
-								continue;
-							}
-							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = addr;
+							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
 							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count;
 							index++;
 						}
@@ -1550,7 +1543,6 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(QWORD efi_base_address)
 	info.page_address_buffer = (PVOID)page_address;
 	info.page_count_buffer   = (PVOID)page_count;
 	info.total_count         = &address_count;
-	info.efi_base_address    = efi_base_address;
 
 	QWORD status = km::call_shellcode((PVOID)__get_efi_runtime_pages, (QWORD)&info);
 	if (status == 0)
@@ -1572,6 +1564,12 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 
 	for (auto &page : get_efi_runtime_pages(efi_base_address))
 	{
+		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+		if (km::call(MmGetPhysicalAddress, (efi_base_address + page.address)) != page.address)
+		{
+			continue;
+		}
+
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
 			WORD mz = km::io::read<WORD>(page.address + (page_num * PAGE_SIZE));
@@ -1592,8 +1590,6 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 				modules.push_back({module_base, module_size});
 			}
 		}
-
-		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 	}
 
 	return modules;
