@@ -1562,26 +1562,15 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 {
 	std::vector<EFI_MODULE_INFO> modules;
 
-	DWORD pages_found = 0;
-
 	for (auto &page : get_efi_runtime_pages())
 	{
-		
-		if (pages_found)
-		{
-			efi_base_address = efi_base_address - page.address;
-		}
+		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 
 		QWORD physical_address = km::call(MmGetPhysicalAddress, (efi_base_address + page.address));
 		if (physical_address != page.address)
-		{	
+		{
 			continue;
-		}
-
-		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
-
-		efi_base_address = efi_base_address + page.address + ((page.page_count + 1) * PAGE_SIZE);
-		pages_found++;
+		}		
 		
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
