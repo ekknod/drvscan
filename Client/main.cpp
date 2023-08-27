@@ -107,7 +107,7 @@ std::vector<FILE_INFO>       get_user_modules(DWORD pid);
 std::vector<PROCESS_INFO>    get_system_processes();
 std::vector<BIGPOOL_INFO>    get_kernel_allocations(void);
 std::vector<EFI_PAGE_INFO>   get_efi_runtime_pages(void);
-std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address);
+std::vector<EFI_MODULE_INFO> get_efi_module_list(void);
 
 QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
 {
@@ -1558,21 +1558,13 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 	return ret;
 }
 
-std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
+std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 {
 	std::vector<EFI_MODULE_INFO> modules;
 
 	for (auto &page : get_efi_runtime_pages())
 	{
 		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
-
-		/*
-		QWORD physical_address = km::call(MmGetPhysicalAddress, (efi_base_address + page.address));
-		if (physical_address != page.address)
-		{
-			continue;
-		}
-		*/
 
 		if (modules.size())
 		{
@@ -1621,35 +1613,49 @@ void scan_efi(void)
 	QWORD HalEfiRuntimeServicesTable[9];
 	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
 
+
+
+	auto module_list = get_efi_module_list();
+
 	
-	QWORD efi_base_address=0;
 	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase);
+
 	
-	for (auto &rt : HalEfiRuntimeServicesTable)
+	for (int i = 0; i < 9; i++)
 	{
+		QWORD rt_func = HalEfiRuntimeServicesTable[i];
 		//
 		// resolve hal efi base, size
 		//
 		QWORD base,size;
-		if (!km::call(resolve_base_fn, MmGetPhysicalAddress, rt, (QWORD)&base, (QWORD)&size))
+		if (!km::call(resolve_base_fn, MmGetPhysicalAddress, rt_func, (QWORD)&base, (QWORD)&size))
 		{
 			continue;
 		}
 
-		if (efi_base_address == 0)
-			efi_base_address = base - km::call(MmGetPhysicalAddress, base);
-
-		if (rt < base || rt > (base + size))
+		if (rt_func < base || rt_func > (base + size))
 		{
-			LOG_RED("EFI Runtime service [0x%llx] is not pointing at original Image: %llx\n", rt, base);
-			continue;
+			LOG_RED("EFI Runtime service [%d] is not pointing at original Image: %llx\n", i, rt_func);
 		}
 
-		DWORD begin = km::vm::read<DWORD>(0, rt);
 
+		DWORD begin = km::vm::read<DWORD>(0, rt_func);
+
+		
 		if (begin == 0xfa1e0ff3)
 		{
-			LOG_RED("EFI Runtime service [0x%llx] is hooked with efi-memory: %llx\n", rt, base);
+			LOG_RED("EFI Runtime service [%d] is hooked with efi-memory: %llx\n", i, rt_func);
+			//
+			// 
+			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
+			//
+			//
+			continue;
+		}
+		
+		if (((WORD*)&begin)[0] == 0x25ff)
+		{
+			LOG_RED("EFI Runtime service [%d] is hooked with byte patch: %llx\n", i, rt_func);
 			//
 			// 
 			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
@@ -1658,57 +1664,33 @@ void scan_efi(void)
 			continue;
 		}
 
-		if (((WORD*)&begin)[0] == 0x25ff)
+		QWORD physical_address = km::call(MmGetPhysicalAddress, rt_func);
+		BOOL found = 0;
+		for (auto &base : module_list)
 		{
-			LOG_RED("EFI Runtime service [0x%llx] is hooked with byte patch: %llx\n", rt, base);
-			//
-			// 
-			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
-			//
-			//
-			continue;
+			if (physical_address >= (QWORD)base.address && physical_address <= (QWORD)((QWORD)base.address + base.size))
+			{
+				found = 1;
+				break;
+			}
+		}
+
+		if (!found)
+		{
+			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx\n", i, rt_func);
 		}
 
 	}
 	km::uninstall_function(resolve_base_fn);
 
-	if (efi_base_address)
+	for (auto &base : module_list)
 	{
-		auto module_list = get_efi_module_list(efi_base_address);
-
-		for (auto &base : module_list)
-		{
-			LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
-			//
-			// to-do: verify image integrity
-			//
-		}
-
-
-		for (auto &rt : HalEfiRuntimeServicesTable)
-		{
-			QWORD physical_address = km::call(MmGetPhysicalAddress, rt);
-			if (physical_address == 0)
-			{
-				continue;
-			}
-
-			BOOL found = 0;
-			for (auto &base : module_list)
-			{
-				if (physical_address >= (QWORD)base.address && physical_address <= (QWORD)((QWORD)base.address + base.size))
-				{
-					found = 1;
-					break;
-				}
-			}
-
-			if (!found)
-			{
-				LOG_RED("EFI Runtime service [0x%llx] found from invalid memory range: [0x%llx]\n", rt, physical_address);
-			}
-		}
+		LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
+		//
+		// to-do: verify image integrity
+		//
 	}
+	
 }
 
 int main(int argc, char **argv)
