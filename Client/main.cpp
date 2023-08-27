@@ -1566,8 +1566,15 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 	{
 		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 
+		/*
 		QWORD physical_address = km::call(MmGetPhysicalAddress, (efi_base_address + page.address));
 		if (physical_address != page.address)
+		{
+			continue;
+		}
+		*/
+
+		if (modules.size())
 		{
 			continue;
 		}
@@ -1591,9 +1598,9 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 			}
 		}
 
-		if (drv_cnt < 4)
+		if (modules.size() < 4)
 		{
-			LOG_RED("EFI RT [0x%llx - 0x%llx] driver count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), drv_cnt);
+			modules.clear();
 		}
 	}
 	return modules;
