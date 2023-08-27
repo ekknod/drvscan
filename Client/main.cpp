@@ -1562,14 +1562,27 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 {
 	std::vector<EFI_MODULE_INFO> modules;
 
+	DWORD pages_found = 0;
+
 	for (auto &page : get_efi_runtime_pages())
 	{
-		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
-		if (km::call(MmGetPhysicalAddress, (efi_base_address + page.address)) != page.address)
+		
+		if (pages_found)
 		{
+			efi_base_address = efi_base_address - page.address;
+		}
+
+		QWORD physical_address = km::call(MmGetPhysicalAddress, (efi_base_address + page.address));
+		if (physical_address != page.address)
+		{	
 			continue;
 		}
 
+		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+
+		efi_base_address = efi_base_address + page.address + ((page.page_count + 1) * PAGE_SIZE);
+		pages_found++;
+		
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
 			WORD mz = km::io::read<WORD>(page.address + (page_num * PAGE_SIZE));
@@ -1583,15 +1596,10 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 				{
 					continue;
 				}
-
-				DWORD module_size = km::io::read<DWORD>(nt + 0x050);
-
-
-				modules.push_back({module_base, module_size});
+				modules.push_back({module_base, km::io::read<DWORD>(nt + 0x050)});
 			}
 		}
 	}
-
 	return modules;
 }
 
