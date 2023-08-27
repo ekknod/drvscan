@@ -106,7 +106,7 @@ std::vector<FILE_INFO>       get_kernel_modules(void);
 std::vector<FILE_INFO>       get_user_modules(DWORD pid);
 std::vector<PROCESS_INFO>    get_system_processes();
 std::vector<BIGPOOL_INFO>    get_kernel_allocations(void);
-std::vector<EFI_PAGE_INFO>   get_efi_runtime_pages(QWORD efi_base_address);
+std::vector<EFI_PAGE_INFO>   get_efi_runtime_pages(void);
 std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address);
 
 QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
@@ -1528,7 +1528,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 	return 1;
 }
 
-std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(QWORD efi_base_address)
+std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 {
 	std::vector<EFI_PAGE_INFO> ret;
 
@@ -1562,7 +1562,7 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 {
 	std::vector<EFI_MODULE_INFO> modules;
 
-	for (auto &page : get_efi_runtime_pages(efi_base_address))
+	for (auto &page : get_efi_runtime_pages())
 	{
 		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
 		if (km::call(MmGetPhysicalAddress, (efi_base_address + page.address)) != page.address)
