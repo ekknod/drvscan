@@ -1612,6 +1612,7 @@ void scan_efi(void)
 	
 	QWORD efi_base_address=0;
 	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase);
+	
 	for (auto &rt : HalEfiRuntimeServicesTable)
 	{
 		//
@@ -1661,12 +1662,39 @@ void scan_efi(void)
 
 	if (efi_base_address)
 	{
-		for (auto &base : get_efi_module_list(efi_base_address))
+		auto module_list = get_efi_module_list(efi_base_address);
+
+		for (auto &base : module_list)
 		{
 			LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
 			//
 			// to-do: verify image integrity
 			//
+		}
+
+
+		for (auto &rt : HalEfiRuntimeServicesTable)
+		{
+			QWORD physical_address = km::call(MmGetPhysicalAddress, rt);
+			if (physical_address == 0)
+			{
+				continue;
+			}
+
+			BOOL found = 0;
+			for (auto &base : module_list)
+			{
+				if (physical_address >= (QWORD)base.address && physical_address <= (QWORD)((QWORD)base.address + base.size))
+				{
+					found = 1;
+					break;
+				}
+			}
+
+			if (!found)
+			{
+				LOG_RED("EFI Runtime service [0x%llx] found from invalid memory range: [0x%llx]\n", rt, physical_address);
+			}
 		}
 	}
 }
