@@ -106,8 +106,8 @@ std::vector<FILE_INFO>       get_kernel_modules(void);
 std::vector<FILE_INFO>       get_user_modules(DWORD pid);
 std::vector<PROCESS_INFO>    get_system_processes();
 std::vector<BIGPOOL_INFO>    get_kernel_allocations(void);
-std::vector<EFI_PAGE_INFO>   get_efi_runtime_pages(void);
-std::vector<EFI_MODULE_INFO> get_efi_module_list(void);
+std::vector<EFI_PAGE_INFO>   get_efi_runtime_pages(QWORD efi_base_address);
+std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address);
 
 QWORD get_kernel_export(QWORD base, PCSTR driver_name, PCSTR export_name)
 {
@@ -1332,13 +1332,14 @@ typedef struct {
 	QWORD (*MmGetPhysicalAddressFn)(QWORD BaseAddress);
 	QWORD (*MmGetVirtualForPhysicalFn)(QWORD BaseAddress);
 	BOOLEAN (*MmIsAddressValidFn)(PVOID VirtualAddress);
+	QWORD  efi_base_address;
 
 	PVOID page_address_buffer;
 	PVOID page_count_buffer;
 
-
-	BOOL  vmware;
 	DWORD *total_count;
+
+
 } EFI_RT_PAGES ;
 
 QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
@@ -1513,20 +1514,12 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 					{
 						if (page_count > 4 && *info->total_count > index)
 						{
-							//
-							// skip SPI
-							//
 							QWORD addr = previous_address - (page_count * 0x1000);
-
-							if (!info->vmware)
-								if (addr >= (QWORD)0xF0000000 && addr <= 0xfffff000)
-								{
-									page_count = 0;
-									continue;
-								}
-
-
-
+							if (info->MmGetPhysicalAddressFn(info->efi_base_address + addr) != addr)
+							{
+								page_count = 0;
+								continue;
+							}
 							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = addr;
 							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count;
 							index++;
@@ -1535,8 +1528,6 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 					}
 					previous_address = physical_address;
 				}
-				
-
 			}
 		}
 	}
@@ -1544,7 +1535,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 	return 1;
 }
 
-std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
+std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(QWORD efi_base_address)
 {
 	std::vector<EFI_PAGE_INFO> ret;
 
@@ -1559,7 +1550,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 	info.page_address_buffer = (PVOID)page_address;
 	info.page_count_buffer   = (PVOID)page_count;
 	info.total_count         = &address_count;
-	info.vmware              = km::pm::read<QWORD>(0x10A0) == 0;
+	info.efi_base_address    = efi_base_address;
 
 	QWORD status = km::call_shellcode((PVOID)__get_efi_runtime_pages, (QWORD)&info);
 	if (status == 0)
@@ -1575,11 +1566,11 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 	return ret;
 }
 
-std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
+std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 {
 	std::vector<EFI_MODULE_INFO> modules;
 
-	for (auto &page : get_efi_runtime_pages())
+	for (auto &page : get_efi_runtime_pages(efi_base_address))
 	{
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
@@ -1625,12 +1616,9 @@ void scan_efi(void)
 	QWORD HalEfiRuntimeServicesTable[9];
 	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
 
+	
+	QWORD efi_base_address=0;
 	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase);
-
-
-	auto module_list = get_efi_module_list();
-
-
 	for (auto &rt : HalEfiRuntimeServicesTable)
 	{
 		//
@@ -1641,6 +1629,9 @@ void scan_efi(void)
 		{
 			continue;
 		}
+
+		if (efi_base_address == 0)
+			efi_base_address = base - km::call(MmGetPhysicalAddress, base);
 
 		if (rt < base || rt > (base + size))
 		{
@@ -1672,31 +1663,18 @@ void scan_efi(void)
 			continue;
 		}
 
-		BOOL found = 0;
-		QWORD physical_base = km::call(MmGetPhysicalAddress, base);
-
-		for (auto &base : module_list)
-		{
-			if (physical_base >= (QWORD)base.address && physical_base <= (QWORD)((QWORD)base.address + base.size))
-			{
-				found = 1;
-				break;
-			}
-		}
-
-		if (!found)
-		{
-			LOG_RED("EFI Runtime service [0x%llx] found from invalid memory range: [0x%llx]\n", rt, physical_base);
-		}
 	}
 	km::uninstall_function(resolve_base_fn);
 
-	for (auto &base : module_list)
+	if (efi_base_address)
 	{
-		LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
-		//
-		// to-do: verify image integrity
-		//
+		for (auto &base : get_efi_module_list(efi_base_address))
+		{
+			LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
+			//
+			// to-do: verify image integrity
+			//
+		}
 	}
 }
 
