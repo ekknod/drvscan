@@ -1579,7 +1579,6 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 			continue;
 		}
 		
-		DWORD drv_cnt = 0;
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
 			WORD mz = km::io::read<WORD>(page.address + (page_num * PAGE_SIZE));
@@ -1594,7 +1593,6 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(QWORD efi_base_address)
 					continue;
 				}
 				modules.push_back({module_base, km::io::read<DWORD>(nt + 0x050)});
-				drv_cnt++;
 			}
 		}
 
