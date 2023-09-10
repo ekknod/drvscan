@@ -506,17 +506,10 @@ namespace km
 		QWORD page_address = 0;
 		for (auto &pool : get_kernel_allocations())
 		{
-			DWORD tag = *(DWORD*)&call_ptr_address;
-
-			
-			if (tag > INT_MAX)
-			{
-				tag = tag << 4;
-				tag = tag >> 4;
-			}
+			WORD tag = *(WORD*)&call_ptr_address;
 			
 
-			if (pool.tag == tag && pool.length == 0x5000)
+			if (((WORD*)&pool.tag)[0] == tag && pool.length == 0x5000)
 			{
 				page_address = pool.address;
 				break;
