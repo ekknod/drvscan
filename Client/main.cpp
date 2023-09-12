@@ -2007,7 +2007,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 	EFI_PAGE_INFO page{};
 	while (get_next_efi_page(&page))
 	{
-		if (page.page_count < 4)
+		if (page.page_count < 2)
 		{
 			continue;
 		}
