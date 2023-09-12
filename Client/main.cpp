@@ -115,7 +115,8 @@ typedef struct {
 
 #pragma pack(1)
 typedef struct {
-	QWORD                  address;
+	QWORD                  virtual_address;
+	QWORD                  physical_address;
 	DWORD                  page_count;
 } EFI_PAGE_INFO;
 
@@ -1918,191 +1919,7 @@ BOOL ResolveHalEfiBase(PVOID fn, QWORD address, QWORD* base, QWORD* size)
 	return result;
 }
 
-
-//
-// bruteforce scan Cr3 and find EFI RT pages
-//
-/*
-#include "ia32.hpp"
-#define PAGE_SHIFT 12l
-
-typedef struct {
-	QWORD (*MmGetPhysicalAddressFn)(QWORD BaseAddress);
-	QWORD (*MmGetVirtualForPhysicalFn)(QWORD BaseAddress);
-	BOOLEAN (*MmIsAddressValidFn)(PVOID VirtualAddress);
-
-	PVOID page_address_buffer;
-	PVOID page_count_buffer;
-
-	DWORD *total_count;
-
-
-} EFI_RT_PAGES ;
-
-QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
-{
-	cr3 kernel_cr3;
-	kernel_cr3.flags = __readcr3();
-	
-	DWORD index = 0;
-
-	QWORD physical_address = kernel_cr3.address_of_page_directory << PAGE_SHIFT;
-
-	pml4e_64* pml4 = (pml4e_64*)(info->MmGetVirtualForPhysicalFn(physical_address));
-
-	if (!info->MmIsAddressValidFn(pml4) || !pml4)
-		return 0;
-
-	
-	for (int pml4_index = 256; pml4_index < 512; pml4_index++)
-	{
-
-		physical_address = pml4[pml4_index].page_frame_number << PAGE_SHIFT;
-		if (!pml4[pml4_index].present)
-		{
-			continue;
-		}
-	
-		pdpte_64* pdpt = (pdpte_64*)(info->MmGetVirtualForPhysicalFn(physical_address));
-		if (!info->MmIsAddressValidFn(pdpt) || !pdpt)
-			continue;
-
-		for (int pdpt_index = 0; pdpt_index < 512; pdpt_index++)
-		{
-
-			physical_address = pdpt[pdpt_index].page_frame_number << PAGE_SHIFT;
-			if (!pdpt[pdpt_index].present)
-			{
-				continue;
-			}
-
-			pde_64* pde = (pde_64*)(info->MmGetVirtualForPhysicalFn(physical_address));
-			if (!info->MmIsAddressValidFn(pde) || !pde)
-				continue;
-
-			//
-			// 1gb
-			//
-			if (pdpt[pdpt_index].large_page)
-			{
-				//
-				// we dont need 1gb pages
-				//
-				continue;
-			}
-
-
-
-			DWORD page_count=0;
-			QWORD previous_address=0;
-			for (int pde_index = 0; pde_index < 512; pde_index++) {
-				physical_address = pde[pde_index].page_frame_number << PAGE_SHIFT;
-
-				if (!pde[pde_index].present)
-				{
-					continue;
-				}
-
-				pte_64* pte = (pte_64*)(info->MmGetVirtualForPhysicalFn(physical_address));
-				if (!info->MmIsAddressValidFn(pte) || !pte)
-					continue;
-
-
-				//
-				// 2mb page
-				//
-				
-				if (pde[pde_index].large_page)
-				{
-					//
-					// we dont need 2mb pages
-					//
-					continue;
-				}
-				
-
-	
-				for (int pte_index = 0; pte_index < 512; pte_index++)
-				{
-					physical_address = pte[pte_index].page_frame_number << PAGE_SHIFT;
-					if (!pte[pte_index].present)
-					{
-						continue;
-					}
-					
-					if (pte[pte_index].execute_disable)
-					{
-						continue;
-					}
-					
-					if (info->MmGetVirtualForPhysicalFn(physical_address) != 0)
-					{
-						continue;
-					}
-
-					if ((physical_address - previous_address) == PAGE_SIZE)
-					{
-						page_count++;
-					}
-					else
-					{
-						if (page_count > 4 && *info->total_count > index)
-						{
-							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * PAGE_SIZE);
-							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count;
-							index++;
-						}
-						page_count = 0;
-					}
-					previous_address = physical_address;
-				}
-			}
-		}
-	}
-	*info->total_count = index;
-	return 1;
-}
-
-
-std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
-{
-	std::vector<EFI_PAGE_INFO> ret;
-
-	QWORD page_address[1000], page_count[1000];
-	DWORD address_count = 1000;
-
-	EFI_RT_PAGES info{};
-	*(QWORD*)&info.MmGetPhysicalAddressFn = MmGetPhysicalAddress;
-	*(QWORD*)&info.MmGetVirtualForPhysicalFn = MmGetVirtualForPhysical;
-	*(QWORD*)&info.MmIsAddressValidFn = MmIsAddressValid;
-
-	info.page_address_buffer = (PVOID)page_address;
-	info.page_count_buffer   = (PVOID)page_count;
-	info.total_count         = &address_count;
-
-	QWORD status = km::call_shellcode((PVOID)__get_efi_runtime_pages, (QWORD)&info);
-	if (status == 0)
-	{
-		return {};
-	}
-
-	for (DWORD i = 0; i < address_count; i++)
-	{
-		ret.push_back( {page_address[i], (DWORD)page_count[i]} );
-	}
-
-	return ret;
-}
-*/
-
-typedef struct
-{
-	QWORD virtual_address;
-	QWORD physical_address;
-	DWORD page_count;
-} EFI_PAGE_ENTRY ;
-
-BOOL get_first_efi_page(EFI_PAGE_ENTRY *entry)
+BOOL get_first_efi_page(EFI_PAGE_INFO *entry)
 {
 
 	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
@@ -2157,26 +1974,26 @@ BOOL get_first_efi_page(EFI_PAGE_ENTRY *entry)
 	return 1;
 }
 
-BOOL get_next_efi_page(EFI_PAGE_ENTRY *entry)
+BOOL get_next_efi_page(EFI_PAGE_INFO *entry)
 {
 	if (entry->virtual_address == 0)
 	{
 		return get_first_efi_page(entry);
 	}
 
-	QWORD next_page = (entry->virtual_address + (entry->page_count * PAGE_SIZE));
-	QWORD next_phys = km::call(MmGetPhysicalAddress, next_page);
+	QWORD next_virt = (entry->virtual_address + (entry->page_count * PAGE_SIZE));
+	QWORD next_phys = km::call(MmGetPhysicalAddress, next_virt);
 	if (next_phys == 0)
 	{
 		*entry = {};
 		return 0;
 	}
 
-	entry->virtual_address  = next_page;
+	entry->virtual_address  = next_virt;
 	entry->physical_address = next_phys;
 	DWORD cnt = 1;
 
-	while ((km::call(MmGetPhysicalAddress, next_page + (cnt * PAGE_SIZE)) - next_phys) == (cnt * PAGE_SIZE))
+	while (km::call(MmGetPhysicalAddress, next_virt + (cnt * PAGE_SIZE)) == next_phys + (cnt * PAGE_SIZE))
 		cnt++;
 
 	entry->page_count = cnt;
@@ -2186,10 +2003,10 @@ BOOL get_next_efi_page(EFI_PAGE_ENTRY *entry)
 std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 {
 	std::vector<EFI_PAGE_INFO> ret;
-	EFI_PAGE_ENTRY page{};
+	EFI_PAGE_INFO page{};
 	while (get_next_efi_page(&page))
 	{
-		ret.push_back( {page.physical_address, page.page_count} );
+		ret.push_back( {page.virtual_address, page.physical_address, page.page_count} );
 	}
 	return ret;
 }
@@ -2200,7 +2017,7 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 
 	for (auto &page : get_efi_runtime_pages())
 	{
-		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.address, page.address + (page.page_count * PAGE_SIZE), page.page_count);
+		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.physical_address, page.physical_address + (page.page_count * PAGE_SIZE), page.page_count);
 
 		if (modules.size())
 		{
@@ -2209,7 +2026,7 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 		
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
-			QWORD module_base = page.address + (page_num * PAGE_SIZE);
+			QWORD module_base = page.physical_address + (page_num * PAGE_SIZE);
 			if (km::io::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
 			{
 				QWORD nt = km::io::read<DWORD>(module_base + 0x03C) + module_base;
