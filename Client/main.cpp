@@ -51,13 +51,11 @@ public:
 #define NTOSKRNL_EXPORT(export_name) \
 DLL_EXPORT export_name((QWORD)#export_name);
 
-NTOSKRNL_EXPORT(MmUnmapLockedPages);
-NTOSKRNL_EXPORT(IoFreeMdl);
 NTOSKRNL_EXPORT(IofCompleteRequest);
 NTOSKRNL_EXPORT(MmCopyMemory);
 NTOSKRNL_EXPORT(PsLookupProcessByProcessId);
 NTOSKRNL_EXPORT(ExAllocatePool2);
-NTOSKRNL_EXPORT(ExFreePool2);
+NTOSKRNL_EXPORT(ExFreePool);
 NTOSKRNL_EXPORT(MmCopyVirtualMemory);
 NTOSKRNL_EXPORT(PsGetThreadId);
 NTOSKRNL_EXPORT(PsGetThreadProcess);
@@ -82,6 +80,7 @@ namespace kernel
 	NTOSKRNL_EXPORT(memcpy);
 }
 
+QWORD ntoskrnl_base;
 
 #pragma pack(1)
 typedef struct {
@@ -357,12 +356,12 @@ namespace km
 
 	QWORD allocate_memory(QWORD size)
 	{
-		return call(ExAllocatePool2, 0x0000000000000080UI64, 0x1000 + size, POOLTAG);
+		return call(ExAllocatePool2, 0x0000000000000080UI64, PAGE_SIZE + size, POOLTAG);
 	}
 
 	void free_memory(QWORD address)
 	{
-		call(ExFreePool2, address, POOLTAG, 0, 0);
+		call(ExFreePool, address, POOLTAG, 0, 0);
 	}
 
 	QWORD install_function(PVOID shellcode)
@@ -895,12 +894,12 @@ namespace km
 
 	QWORD allocate_memory(QWORD size)
 	{
-		return call(ExAllocatePool2, 0x0000000000000080UI64, 0x1000 + size, POOLTAG);
+		return call(ExAllocatePool2, 0x0000000000000080UI64, PAGE_SIZE + size, POOLTAG);
 	}
 
 	void free_memory(QWORD address)
 	{
-		call(ExFreePool2, address, POOLTAG, 0, 0);
+		call(ExFreePool, address, POOLTAG, 0, 0);
 	}
 
 	QWORD install_function(PVOID shellcode)
@@ -1895,7 +1894,7 @@ BOOL ResolveHalEfiBase(PVOID fn, QWORD address, QWORD* base, QWORD* size)
 	address = (QWORD)PAGE_ALIGN((QWORD)address);
 	while (1)
 	{
-		address -= 0x1000;
+		address -= PAGE_SIZE;
 		if (((QWORD(*)(QWORD))(fn))(address) == 0)
 		{
 			break;
@@ -1923,6 +1922,7 @@ BOOL ResolveHalEfiBase(PVOID fn, QWORD address, QWORD* base, QWORD* size)
 //
 // bruteforce scan Cr3 and find EFI RT pages
 //
+/*
 #include "ia32.hpp"
 #define PAGE_SHIFT 12l
 
@@ -1986,40 +1986,8 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 			if (pdpt[pdpt_index].large_page)
 			{
 				//
-				// we dont need add 1gb pages, but in case you want add them you can uncomment
+				// we dont need 1gb pages
 				//
-				/*
-				DWORD page_count = 0;
-				for (auto i = 0; i < 0x40000; i++)
-				{
-					
-					if (!pde[i].present)
-					{
-						continue;
-					}
-
-					if (pde[i].execute_disable)
-					{
-						continue;
-					}
-					
-					if (info->MmGetVirtualForPhysicalFn(physical_address + (i * PAGE_SIZE)) != 0)
-					{
-						continue;
-					}
-
-					page_count = (i + 1);
-				}
-				if (page_count)
-				{
-					if (*info->total_count > index)
-					{
-						*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = physical_address;
-						*(QWORD*)((QWORD)info->page_count_buffer + (index * 8))   = page_count;
-						index++;
-					}
-				}
-				*/
 				continue;
 			}
 
@@ -2047,39 +2015,8 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 				if (pde[pde_index].large_page)
 				{
 					//
-					// we dont need add 2mb pages, but in case you want add them you can uncomment
+					// we dont need 2mb pages
 					//
-					/*
-					DWORD page_count = 0;
-					for (auto i = 0; i < 512; i++)
-					{
-						if (!pte[i].present)
-						{
-							continue;
-						}
-
-						if (pte[i].execute_disable)
-						{
-							continue;
-						}
-
-						if (info->MmGetVirtualForPhysicalFn(physical_address + (i * PAGE_SIZE)) != 0)
-						{
-							continue;
-						}
-
-						page_count = (i + 1);
-					}
-					if (page_count)
-					{
-						if (*info->total_count > index)
-						{
-							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = physical_address;
-							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8))   = page_count;
-							index++;
-						}
-					}
-					*/
 					continue;
 				}
 				
@@ -2103,7 +2040,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 						continue;
 					}
 
-					if ((physical_address - previous_address) == 0x1000)
+					if ((physical_address - previous_address) == PAGE_SIZE)
 					{
 						page_count++;
 					}
@@ -2111,7 +2048,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 					{
 						if (page_count > 4 && *info->total_count > index)
 						{
-							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
+							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * PAGE_SIZE);
 							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count;
 							index++;
 						}
@@ -2125,6 +2062,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 	*info->total_count = index;
 	return 1;
 }
+
 
 std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 {
@@ -2155,6 +2093,106 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 
 	return ret;
 }
+*/
+
+typedef struct
+{
+	QWORD virtual_address;
+	QWORD physical_address;
+	DWORD page_count;
+} EFI_PAGE_ENTRY ;
+
+BOOL get_first_efi_page(EFI_PAGE_ENTRY *entry)
+{
+
+	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
+	HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
+	HalEfiRuntimeServicesTableAddr = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);
+
+	//
+	// no table found
+	//
+	if (HalEfiRuntimeServicesTableAddr == 0)
+	{
+		return 0;
+	}
+
+	QWORD virtual_address = (QWORD)PAGE_ALIGN(km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr));
+
+	while (1)
+	{
+		QWORD phys = km::call(MmGetPhysicalAddress, virtual_address);
+		if (phys == 0)
+		{
+			virtual_address += PAGE_SIZE;
+			break;
+		}
+		else if (phys == 0x1000)
+		{
+			break;
+		}
+		virtual_address -= PAGE_SIZE;
+	}
+
+	DWORD page_count = 1;
+	QWORD physical_address = km::call(MmGetPhysicalAddress, virtual_address);
+
+	while (1)
+	{
+		QWORD phys = km::call(MmGetPhysicalAddress, virtual_address + (page_count * PAGE_SIZE));
+		if ((phys - physical_address) == (page_count * PAGE_SIZE))
+		{
+			page_count++;
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	entry->virtual_address  = virtual_address;
+	entry->physical_address = physical_address;
+	entry->page_count       = page_count;
+
+	return 1;
+}
+
+BOOL get_next_efi_page(EFI_PAGE_ENTRY *entry)
+{
+	if (entry->virtual_address == 0)
+	{
+		return get_first_efi_page(entry);
+	}
+
+	QWORD next_page = (entry->virtual_address + (entry->page_count * PAGE_SIZE));
+	QWORD next_phys = km::call(MmGetPhysicalAddress, next_page);
+	if (next_phys == 0)
+	{
+		*entry = {};
+		return 0;
+	}
+
+	entry->virtual_address  = next_page;
+	entry->physical_address = next_phys;
+	DWORD cnt = 1;
+
+	while ((km::call(MmGetPhysicalAddress, next_page + (cnt * PAGE_SIZE)) - next_phys) == (cnt * PAGE_SIZE))
+		cnt++;
+
+	entry->page_count = cnt;
+	return 1;
+}
+
+std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
+{
+	std::vector<EFI_PAGE_INFO> ret;
+	EFI_PAGE_ENTRY page{};
+	while (get_next_efi_page(&page))
+	{
+		ret.push_back( {page.physical_address, page.page_count} );
+	}
+	return ret;
+}
 
 std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 {
@@ -2171,13 +2209,10 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 		
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
-			WORD mz = km::io::read<WORD>(page.address + (page_num * PAGE_SIZE));
-
-			if (mz == IMAGE_DOS_SIGNATURE)
+			QWORD module_base = page.address + (page_num * PAGE_SIZE);
+			if (km::io::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
 			{
-				QWORD module_base = page.address + (page_num * PAGE_SIZE);
 				QWORD nt = km::io::read<DWORD>(module_base + 0x03C) + module_base;
-
 				if (km::io::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
 				{
 					continue;
@@ -2210,15 +2245,11 @@ void scan_efi(void)
 
 	QWORD HalEfiRuntimeServicesTable[9];
 	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
-
-
-
-	auto module_list = get_efi_module_list();
-
 	
+	std::vector<EFI_MODULE_INFO> module_list = get_efi_module_list();
+
 	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase);
-
-	
+		
 	for (int i = 0; i < 9; i++)
 	{
 		QWORD rt_func = HalEfiRuntimeServicesTable[i];
@@ -2288,13 +2319,10 @@ void scan_efi(void)
 		// to-do: verify image integrity
 		//
 	}
-	
 }
 
 int main(int argc, char **argv)
 {
-	QWORD ntoskrnl_base = 0;
-
 	for (auto &drv : get_kernel_modules())
 	{
 		if (!_strcmpi(drv.name.c_str(), "ntoskrnl.exe"))
