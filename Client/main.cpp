@@ -51,6 +51,7 @@ public:
 #define NTOSKRNL_EXPORT(export_name) \
 DLL_EXPORT export_name((QWORD)#export_name);
 
+NTOSKRNL_EXPORT(MmUnlockPreChargedPagedPool);
 NTOSKRNL_EXPORT(IofCompleteRequest);
 NTOSKRNL_EXPORT(MmCopyMemory);
 NTOSKRNL_EXPORT(PsLookupProcessByProcessId);
@@ -1991,12 +1992,12 @@ BOOL get_next_efi_page(EFI_PAGE_INFO *entry)
 
 	entry->virtual_address  = next_virt;
 	entry->physical_address = next_phys;
-	DWORD cnt = 1;
+	DWORD count = 1;
 
-	while (km::call(MmGetPhysicalAddress, next_virt + (cnt * PAGE_SIZE)) == next_phys + (cnt * PAGE_SIZE))
-		cnt++;
+	while (km::call(MmGetPhysicalAddress, next_virt + (count * PAGE_SIZE)) == next_phys + (count * PAGE_SIZE))
+		count++;
 
-	entry->page_count = cnt;
+	entry->page_count = count;
 	return 1;
 }
 
@@ -2006,6 +2007,22 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 	EFI_PAGE_INFO page{};
 	while (get_next_efi_page(&page))
 	{
+		if (page.page_count < 4)
+		{
+			continue;
+		}
+
+		static QWORD MiGetPteAddress = (QWORD)(km::vm::read<INT>(0, MmUnlockPreChargedPagedPool + 8) + MmUnlockPreChargedPagedPool + 12);
+		QWORD pte_address = km::call(MiGetPteAddress, page.virtual_address);
+		if (pte_address)
+		{
+			QWORD info = km::vm::read<QWORD>(0, pte_address);
+			if ((info&8)!=0 && (info&0x10)!=0)
+			{
+				continue;
+			}
+		}
+
 		ret.push_back( {page.virtual_address, page.physical_address, page.page_count} );
 	}
 	return ret;
