@@ -479,6 +479,7 @@ namespace km
 			goto DRV_OBJECT_ERROR;
 		}
 
+
 		//
 		// allocate pool chain
 		//
@@ -526,6 +527,7 @@ namespace km
 			goto RETURN_ERROR;
 		}
 
+
 		unsigned char payload[] = {
 			0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x40, 0x48, 0x8B, 0x82, 0xB8, 0x00, 0x00, 0x00, 0x48, 0x8B, 0xFA, 0x48, 0x8B,
 			0x4A, 0x18, 0x48, 0x85, 0xC0, 0x75, 0x08, 0x21, 0x42, 0x30, 0xE9, 0xF1, 0x00, 0x00, 0x00, 0x8B, 0x40, 0x18, 0x3D, 0x00, 0xAC, 0xEC,
@@ -568,7 +570,7 @@ namespace km
 				uninstall_function(pool.address);
 			}
 		}
-
+		
 
 		FreeLibrary(lib);
 
@@ -2301,7 +2303,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 		{
 			continue;
 		}
-		
+		/*
 		static QWORD MiGetPteAddress = (QWORD)(km::vm::read<INT>(0, MmUnlockPreChargedPagedPool + 8) + MmUnlockPreChargedPagedPool + 12);
 		QWORD pte_address = km::call(MiGetPteAddress, page.virtual_address);
 		if (pte_address)
@@ -2312,7 +2314,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 				continue;
 			}
 		}
-		
+		*/
 		ret.push_back( {page.virtual_address, page.physical_address, page.page_count} );
 	}
 	return ret;
@@ -2333,16 +2335,16 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 		
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
-			QWORD module_base = page.virtual_address + (page_num * PAGE_SIZE);
-			if (km::vm::read<WORD>(0, module_base) == IMAGE_DOS_SIGNATURE)
+			QWORD module_base = page.physical_address + (page_num * PAGE_SIZE);
+			if (km::io::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
 			{
-				QWORD nt = km::vm::read<DWORD>(0, module_base + 0x03C) + module_base;
-				if (km::vm::read<WORD>(0, nt) != IMAGE_NT_SIGNATURE)
+				QWORD nt = km::io::read<DWORD>(module_base + 0x03C) + module_base;
+				if (km::io::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
 				{
 					continue;
 				}
-				QWORD module_base_phys = page.physical_address + (page_num * PAGE_SIZE);
-				modules.push_back({module_base, module_base_phys, km::vm::read<DWORD>(0, nt + 0x050)});
+				QWORD module_base_virt = page.virtual_address + (page_num * PAGE_SIZE);
+				modules.push_back({module_base_virt, module_base, km::io::read<DWORD>(nt + 0x050)});
 			}
 		}
 		
