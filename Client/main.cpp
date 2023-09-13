@@ -10,10 +10,12 @@
 #include <intrin.h>
 
 
-//
-// if defined, we use NVIDIA driver instead of intel
-//
-#define USE_NVIDIA 1
+#define NVIDIA 1
+#define INTEL 2
+#define SUBGETVARIABLE 3
+
+
+#define ACTIVE_DRIVER NVIDIA
 
 
 #define IOCTL_INTEL 0x80862007
@@ -172,7 +174,7 @@ QWORD get_function_size(QWORD function_address)
 	return (function_address - begin) + 1;
 }
 
-#ifdef USE_NVIDIA
+#if ACTIVE_DRIVER == NVIDIA
 //
 // nvidia vulnerability taken from https://github.com/zer0condition/NVDrv
 //
@@ -759,7 +761,7 @@ namespace km
 	}
 }
 
-#else
+#elif ACTIVE_DRIVER == INTEL
 
 namespace km
 {
@@ -1220,6 +1222,332 @@ namespace km
 	}
 }
 
+#elif ACTIVE_DRIVER == SUBGETVARIABLE
+
+typedef struct _UNICODE_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR  Buffer;
+} UNICODE_STRING;
+typedef UNICODE_STRING *PUNICODE_STRING;
+typedef const UNICODE_STRING *PCUNICODE_STRING;
+
+extern "C" VOID NTAPI RtlInitUnicodeString (PUNICODE_STRING, PCWSTR);
+extern "C" NTSTATUS NTAPI RtlAdjustPrivilege(ULONG, BOOLEAN, BOOLEAN, PBOOLEAN);
+extern "C" NTSTATUS NTAPI NtQuerySystemEnvironmentValueEx(PUNICODE_STRING, LPGUID, PVOID, PULONG, PULONG);
+
+namespace km
+{
+	QWORD call(QWORD kernel_address, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0)
+	{
+		#pragma pack(push,1)
+		typedef struct {
+			QWORD param_1;
+			QWORD param_2;
+			QWORD param_3;
+			QWORD param_4;
+			QWORD param_5;
+			QWORD param_6;
+			QWORD param_7;
+		} PAYLOAD ;
+		#pragma pack(pop)
+
+		PAYLOAD parameters;
+		parameters.param_1 = r1;
+		parameters.param_2 = r2;
+		parameters.param_3 = r3;
+		parameters.param_4 = r4;
+		parameters.param_5 = r5;
+		parameters.param_6 = r6;
+		parameters.param_7 = r7;
+
+		QWORD peb = __readgsqword(0x60);
+		peb = *(QWORD*)(peb + 0x18);
+		peb = *(QWORD*)(peb + 0x20);
+
+		*(QWORD*)(peb + 0x18) = kernel_address;
+		*(QWORD*)(peb + 0x10) = (QWORD)&parameters;
+
+		UNICODE_STRING string;
+		RtlInitUnicodeString(&string, L"SecureBoot");
+
+		ULONG ret = 0;
+		ULONG ret_len = 1;
+		ULONG attributes = 0;
+
+		GUID gEfiGlobalVariableGuid         = { 0x8BE4DF61, 0x93CA, 0x11D2, { 0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C }};
+		NTSTATUS status = NtQuerySystemEnvironmentValueEx(&string,
+							&gEfiGlobalVariableGuid,
+							&ret,
+							&ret_len,
+							&attributes);
+
+		QWORD result = *(QWORD*)(peb + 0x18);
+		*(QWORD*)(peb + 0x18) = 0;
+		*(QWORD*)(peb + 0x10) = 0;
+
+		if (status == 0)
+			return 0;
+
+		return result;
+	}
+
+	QWORD allocate_memory(QWORD size)
+	{
+		return call(ExAllocatePool2, 0x0000000000000080UI64, PAGE_SIZE + size, POOLTAG);
+	}
+
+	void free_memory(QWORD address)
+	{
+		call(ExFreePool, address, POOLTAG, 0, 0);
+	}
+
+	QWORD install_function(PVOID shellcode)
+	{
+		QWORD size = get_function_size((QWORD)shellcode);
+		QWORD mem  = allocate_memory(size);
+		if (mem == 0)
+		{
+			return 0;
+		}
+		call(kernel::memcpy, mem, (QWORD)shellcode, size );
+		return mem;
+	}
+
+	void uninstall_function(QWORD shellcode_function)
+	{
+		free_memory(shellcode_function);
+	}
+
+	QWORD call_shellcode(PVOID shellcode, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0)
+	{
+		QWORD func = install_function(shellcode);
+		if (func == 0)
+		{
+			return 0;
+		}
+		QWORD ret = call(func, r1, r2, r3, r4, r5, r6, r7);
+		uninstall_function(func);
+		return ret;
+	}
+
+	BOOL initialize(void)
+	{
+		static BOOL done = 0;
+
+		if (done)
+			return 1;
+
+		BOOLEAN privs=1;
+		if (RtlAdjustPrivilege(22, 1, 0, &privs) != 0l)
+		{
+			LOG("run as admin\n");
+			return 0;
+		}
+
+		//
+		// uninstall old shellcodes to avoid memory leaks
+		//
+		for (auto &pool : get_kernel_allocations())
+		{
+			if (pool.tag == POOLTAG)
+			{
+				uninstall_function(pool.address);
+			}
+		}
+
+		done = 1;
+
+		return 1;
+	}
+
+	namespace vm
+	{
+		BOOL read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
+		{
+			BOOL ret = 0;
+
+			if (!km::initialize())
+			{
+				return ret;
+			}
+
+			if (pid == 4)
+			{
+				
+				QWORD alloc_buffer = (QWORD)allocate_memory(length);
+
+				if (alloc_buffer == 0)
+					return 0;
+
+				QWORD res = 0;
+				QWORD status = call(MmCopyMemory, (QWORD)alloc_buffer, address, length, 0x02, (QWORD)&res);
+				if (status == 0)
+				{
+					call(kernel::memcpy, (QWORD)buffer, alloc_buffer, res );
+					ret = 1;
+				}
+				free_memory(alloc_buffer);
+			}
+			else if (pid == 0)
+			{
+				ret = km::call(kernel::memcpy, (QWORD)buffer, address, length) != 0;
+			} else {
+				QWORD target_process = 0, current_process = 0;
+				if (call(PsLookupProcessByProcessId, pid, (QWORD)&target_process) != 0)
+				{
+					return 0;
+				}
+				if (call(PsLookupProcessByProcessId, GetCurrentProcessId(), (QWORD)&current_process) != 0)
+				{
+					return 0;
+				}		
+				ret = call(MmCopyVirtualMemory, target_process, address, current_process, (QWORD)buffer, length, 0, (QWORD)&length) == 0;
+			}
+			return ret;
+		}
+
+		template <typename t>
+		t read(DWORD pid, QWORD address)
+		{
+			t b;
+			if (!read(pid, address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
+
+		QWORD read_i64(DWORD pid, QWORD address)
+		{
+			QWORD b;
+			if (!read(pid, address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
+
+		DWORD read_i32(DWORD pid, QWORD address)
+		{
+			DWORD b;
+			if (!read(pid, address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
+
+		QWORD get_relative_address(DWORD pid, QWORD instruction, DWORD offset, DWORD instruction_size)
+		{
+			INT32 rip_address = read_i32(pid, instruction + offset);
+			return (QWORD)(instruction + instruction_size + rip_address);
+		}
+	}
+	
+	namespace pm
+	{
+		BOOL read(QWORD address, PVOID buffer, QWORD length)
+		{	
+			BOOL ret = 0;
+			QWORD alloc_buffer = (QWORD)allocate_memory(length);
+
+			if (alloc_buffer == 0)
+				return ret;
+
+			QWORD res = 0;
+			QWORD status = call(MmCopyMemory, (QWORD)alloc_buffer, address, length, 0x01, (QWORD)&res);
+			if (status == 0)
+			{
+				call(kernel::memcpy, (QWORD)buffer, alloc_buffer, res );
+				ret = 1;
+			}
+			free_memory(alloc_buffer);
+			return ret;
+		}
+
+		template <typename t>
+		t read(ULONG_PTR address)
+		{
+			t b;
+			if (!read(address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
+	}
+
+	namespace io
+	{
+		BOOL read(QWORD address, PVOID buffer, QWORD length)
+		{
+			if (!km::initialize())
+			{
+				return 0;
+			}
+			QWORD alloc = call(MmMapIoSpace, address, length);
+			if (alloc)
+			{
+				call(kernel::memcpy, (QWORD)buffer, alloc, length);
+				call(MmUnmapIoSpace, alloc, length);
+				return 1;
+			}
+			return 0;
+		}
+
+		BOOL write(QWORD address, PVOID buffer, QWORD length)
+		{
+			if (!km::initialize())
+			{
+				return 0;
+			}
+			QWORD alloc = call(MmMapIoSpace, address, length);
+			if (alloc)
+			{
+				call(kernel::memcpy, alloc, (QWORD)buffer, length);
+				call(MmUnmapIoSpace, alloc, length);
+				return 1;
+			}
+			return 0;
+		}
+
+		template <typename t>
+		t read(QWORD address)
+		{
+			t b;
+			if (!read(address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
+		template <typename t>
+		BOOL write(QWORD address, t value)
+		{
+			return km::io::write(address, &value, sizeof(t));
+		}
+	}
+
+	namespace pci
+	{
+		WORD read_i16_legacy(BYTE bus, BYTE slot, BYTE func, BYTE offset)
+		{
+			// DWORD address = 0x80000000 | bus << 16 | slot << 11 | func <<  8 | offset;
+			// port_write(0xCF8, &address, 4);
+			// port_read(0xCFC, &address, 4);
+			// return (address >> ((offset & 2) * 8)) & 0xFFFF;
+			return 0;
+		}
+
+		void write_i16_legacy(BYTE bus, BYTE slot, BYTE func, BYTE offset, WORD value)
+		{
+			// DWORD address = 0x80000000 | bus << 16 | slot << 11 | func <<  8 | offset;
+			// port_write(0xCF8, &address, 4);
+			// port_write(0xCFC, &value, 2);
+		}
+	}
+}
 #endif
 
 void FontColor(int color=0x07)
@@ -1804,12 +2132,7 @@ void scan_thread(DWORD attachpid, QWORD thread_address, QWORD target_process)
 {	
 	QWORD thread_id = km::call(PsGetThreadId, thread_address);
 	QWORD process = km::call(PsGetThreadProcess, thread_address);
-
-	QWORD process_id = 0;
-	if (process)
-	{
-		process_id = km::call(PsGetProcessId, process);
-	}
+	QWORD process_id = km::call(PsGetProcessId, process);
 
 	if (process_id != 0)
 	{
