@@ -359,6 +359,13 @@ namespace km
 		return io.parameters->R0;
 	}
 
+	template <typename T>
+	T call(QWORD kernel_address, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0)
+	{
+		QWORD ret = call(kernel_address, r1, r2, r3, r4, r5, r6, r7);
+		return *(T*)&ret;
+	}
+
 	QWORD allocate_memory(QWORD size)
 	{
 		return call(ExAllocatePool2, 0x0000000000000080UI64, PAGE_SIZE + size, POOLTAG);
@@ -2214,10 +2221,9 @@ void scan_threads(QWORD curr_thread, DWORD attachpid, QWORD target_process)
 
 BOOL get_first_efi_page(EFI_PAGE_INFO *entry)
 {
-
-	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
-	HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
-	HalEfiRuntimeServicesTableAddr = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);
+	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(0, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
+	HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(0, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
+	HalEfiRuntimeServicesTableAddr = km::vm::read<QWORD>(0, HalEfiRuntimeServicesTableAddr);
 
 	//
 	// no table found
@@ -2227,10 +2233,18 @@ BOOL get_first_efi_page(EFI_PAGE_INFO *entry)
 		return 0;
 	}
 
-	QWORD virtual_address = (QWORD)PAGE_ALIGN(km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr));
+	QWORD virtual_address = (QWORD)PAGE_ALIGN(km::vm::read<QWORD>(0, HalEfiRuntimeServicesTableAddr));
+	if (virtual_address == 0)
+		return 0;
 
 	while (1)
 	{
+		if (km::call<BOOLEAN>(MmIsAddressValid, virtual_address) == 0)
+		{
+			virtual_address += PAGE_SIZE;
+			break;
+		}
+
 		QWORD phys = km::call(MmGetPhysicalAddress, virtual_address);
 		if (phys == 0)
 		{
@@ -2282,6 +2296,12 @@ BOOL get_next_efi_page(EFI_PAGE_INFO *entry)
 		return 0;
 	}
 
+	if (km::call<BOOLEAN>(MmIsAddressValid, next_virt) == 0)
+	{
+		*entry = {};
+		return 0;
+	}
+
 	entry->virtual_address  = next_virt;
 	entry->physical_address = next_phys;
 	DWORD count = 1;
@@ -2303,7 +2323,6 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 		{
 			continue;
 		}
-		/*
 		static QWORD MiGetPteAddress = (QWORD)(km::vm::read<INT>(0, MmUnlockPreChargedPagedPool + 8) + MmUnlockPreChargedPagedPool + 12);
 		QWORD pte_address = km::call(MiGetPteAddress, page.virtual_address);
 		if (pte_address)
@@ -2314,7 +2333,6 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 				continue;
 			}
 		}
-		*/
 		ret.push_back( {page.virtual_address, page.physical_address, page.page_count} );
 	}
 	return ret;
@@ -2326,7 +2344,8 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 
 	for (auto &page : get_efi_runtime_pages())
 	{
-		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.physical_address, page.physical_address + (page.page_count * PAGE_SIZE), page.page_count);
+		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld, %ld\n", page.physical_address,
+			page.physical_address + (page.page_count * PAGE_SIZE), page.page_count, km::call<BOOLEAN>(MmIsAddressValid, page.physical_address));
 
 		if (modules.size())
 		{
@@ -2335,16 +2354,16 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 		
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
-			QWORD module_base = page.physical_address + (page_num * PAGE_SIZE);
-			if (km::io::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
+			QWORD module_base = page.virtual_address + (page_num * PAGE_SIZE);
+			if (km::vm::read<WORD>(0, module_base) == IMAGE_DOS_SIGNATURE)
 			{
-				QWORD nt = km::io::read<DWORD>(module_base + 0x03C) + module_base;
-				if (km::io::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
+				QWORD nt = km::vm::read<DWORD>(0, module_base + 0x03C) + module_base;
+				if (km::vm::read<WORD>(0, nt) != IMAGE_NT_SIGNATURE)
 				{
 					continue;
 				}
-				QWORD module_base_virt = page.virtual_address + (page_num * PAGE_SIZE);
-				modules.push_back({module_base_virt, module_base, km::io::read<DWORD>(nt + 0x050)});
+				QWORD module_base_phys = page.physical_address + (page_num * PAGE_SIZE);
+				modules.push_back({module_base, module_base_phys, km::vm::read<DWORD>(0, nt + 0x050)});
 			}
 		}
 		
