@@ -125,8 +125,9 @@ typedef struct {
 
 #pragma pack(1)
 typedef struct {
-	QWORD                  address;
-	QWORD                  size;
+	QWORD                  virtual_address;
+	QWORD                  physical_address;
+	DWORD                  size;
 } EFI_MODULE_INFO;
 
 std::vector<FILE_INFO>       get_kernel_modules(void);
@@ -2209,40 +2210,6 @@ void scan_threads(QWORD curr_thread, DWORD attachpid, QWORD target_process)
 	}
 }
 
-BOOL ResolveHalEfiBase(PVOID fn, QWORD address, QWORD* base, QWORD* size)
-{
-	BOOL result = 0;
-	*base = 0;
-	if (size)
-		*size = 0;
-
-	address = (QWORD)PAGE_ALIGN((QWORD)address);
-	while (1)
-	{
-		address -= PAGE_SIZE;
-		if (((QWORD(*)(QWORD))(fn))(address) == 0)
-		{
-			break;
-		}
-
-		if (*(unsigned short*)address == 0x5A4D)
-		{
-			IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)address;
-			IMAGE_NT_HEADERS64* nt = (IMAGE_NT_HEADERS64*)((char*)dos + dos->e_lfanew);
-			if (nt->Signature != 0x00004550)
-				continue;
-
-			*base = address;
-			if (size)
-				*size = nt->OptionalHeader.SizeOfImage;
-
-			result = 1;
-			break;
-		}
-	}
-	return result;
-}
-
 BOOL get_first_efi_page(EFI_PAGE_INFO *entry)
 {
 
@@ -2334,7 +2301,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 		{
 			continue;
 		}
-
+		
 		static QWORD MiGetPteAddress = (QWORD)(km::vm::read<INT>(0, MmUnlockPreChargedPagedPool + 8) + MmUnlockPreChargedPagedPool + 12);
 		QWORD pte_address = km::call(MiGetPteAddress, page.virtual_address);
 		if (pte_address)
@@ -2345,7 +2312,7 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 				continue;
 			}
 		}
-
+		
 		ret.push_back( {page.virtual_address, page.physical_address, page.page_count} );
 	}
 	return ret;
@@ -2366,18 +2333,19 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 		
 		for (DWORD page_num = 0; page_num < page.page_count; page_num++)
 		{
-			QWORD module_base = page.physical_address + (page_num * PAGE_SIZE);
-			if (km::io::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
+			QWORD module_base = page.virtual_address + (page_num * PAGE_SIZE);
+			if (km::vm::read<WORD>(0, module_base) == IMAGE_DOS_SIGNATURE)
 			{
-				QWORD nt = km::io::read<DWORD>(module_base + 0x03C) + module_base;
-				if (km::io::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
+				QWORD nt = km::vm::read<DWORD>(0, module_base + 0x03C) + module_base;
+				if (km::vm::read<WORD>(0, nt) != IMAGE_NT_SIGNATURE)
 				{
 					continue;
 				}
-				modules.push_back({module_base, km::io::read<DWORD>(nt + 0x050)});
+				QWORD module_base_phys = page.physical_address + (page_num * PAGE_SIZE);
+				modules.push_back({module_base, module_base_phys, km::vm::read<DWORD>(0, nt + 0x050)});
 			}
 		}
-
+		
 		if (modules.size() < 4)
 		{
 			modules.clear();
@@ -2405,25 +2373,10 @@ void scan_efi(void)
 	
 	std::vector<EFI_MODULE_INFO> module_list = get_efi_module_list();
 
-	QWORD resolve_base_fn = km::install_function((PVOID)ResolveHalEfiBase);
 		
 	for (int i = 0; i < 9; i++)
 	{
 		QWORD rt_func = HalEfiRuntimeServicesTable[i];
-		//
-		// resolve hal efi base, size
-		//
-		QWORD base,size;
-		if (!km::call(resolve_base_fn, MmGetPhysicalAddress, rt_func, (QWORD)&base, (QWORD)&size))
-		{
-			continue;
-		}
-
-		if (rt_func < base || rt_func > (base + size))
-		{
-			LOG_RED("EFI Runtime service [%d] is not pointing at original Image: %llx\n", i, rt_func);
-		}
-
 
 		DWORD begin = km::vm::read<DWORD>(0, rt_func);
 
@@ -2450,11 +2403,12 @@ void scan_efi(void)
 			continue;
 		}
 
+		
 		QWORD physical_address = km::call(MmGetPhysicalAddress, rt_func);
 		BOOL found = 0;
 		for (auto &base : module_list)
 		{
-			if (physical_address >= (QWORD)base.address && physical_address <= (QWORD)((QWORD)base.address + base.size))
+			if (physical_address >= (QWORD)base.physical_address && physical_address <= (QWORD)((QWORD)base.physical_address + base.size))
 			{
 				found = 1;
 				break;
@@ -2463,19 +2417,20 @@ void scan_efi(void)
 
 		if (!found)
 		{
-			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx\n", i, rt_func);
+			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx, %llx\n", i, rt_func, physical_address);
 		}
-
+		
 	}
-	km::uninstall_function(resolve_base_fn);
-
+	
+	
 	for (auto &base : module_list)
 	{
-		LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.address, base.address + base.size);
+		LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.physical_address, base.physical_address + base.size);
 		//
 		// to-do: verify image integrity
 		//
 	}
+	
 }
 
 int main(int argc, char **argv)
