@@ -2371,6 +2371,16 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 		{
 			modules.clear();
 		}
+		else
+		{
+			for (auto &base : modules)
+			{
+				LOG("[%llx] EFI runtime image found: [0x%llx - 0x%llx]\n", page.physical_address, base.physical_address, base.physical_address + base.size);
+				//
+				// to-do: verify image integrity
+				//
+			}
+		}
 	}
 	return modules;
 }
@@ -2398,32 +2408,11 @@ void scan_efi(void)
 	for (int i = 0; i < 9; i++)
 	{
 		QWORD rt_func = HalEfiRuntimeServicesTable[i];
-
-		DWORD begin = km::vm::read<DWORD>(0, rt_func);
-
-		
-		if (begin == 0xfa1e0ff3)
-		{
-			LOG_RED("EFI Runtime service [%d] is hooked with efi-memory: %llx\n", i, rt_func);
-			//
-			// 
-			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
-			//
-			//
-			continue;
-		}
-		
-		if (((WORD*)&begin)[0] == 0x25ff)
+		if (km::vm::read<WORD>(0, rt_func) == 0x25ff)
 		{
 			LOG_RED("EFI Runtime service [%d] is hooked with byte patch: %llx\n", i, rt_func);
-			//
-			// 
-			// QWORD dump_efi = vm_dump_module_ex(0, base, 1);
-			//
-			//
 			continue;
 		}
-
 		
 		QWORD physical_address = km::call(MmGetPhysicalAddress, rt_func);
 		BOOL found = 0;
@@ -2440,22 +2429,12 @@ void scan_efi(void)
 		{
 			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx, %llx\n", i, rt_func, physical_address);
 		}
-		
 	}
-	
-	
-	for (auto &base : module_list)
-	{
-		LOG("EFI runtime image found: [0x%llx - 0x%llx]\n", base.physical_address, base.physical_address + base.size);
-		//
-		// to-do: verify image integrity
-		//
-	}
-	
 }
 
 int main(int argc, char **argv)
 {
+
 	for (auto &drv : get_kernel_modules())
 	{
 		if (!_strcmpi(drv.name.c_str(), "ntoskrnl.exe"))
