@@ -1814,7 +1814,7 @@ QWORD __get_efi_runtime_pages(EFI_RT_PAGES *info)
 					}
 					else
 					{
-						if (page_count > 4 && *info->total_count > index)
+						if (page_count > 3 && *info->total_count > index)
 						{
 							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
 							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count;
@@ -1986,8 +1986,7 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list2(void)
 
 	for (auto &page : get_efi_runtime_pages2())
 	{
-		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld, %ld\n", page.physical_address,
-			page.physical_address + (page.page_count * PAGE_SIZE), page.page_count, km::call<BOOLEAN>(MmIsAddressValid, page.physical_address));
+		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.physical_address, page.physical_address + (page.page_count * PAGE_SIZE), page.page_count);
 
 		if (modules.size())
 		{
@@ -2029,8 +2028,7 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 
 	for (auto &page : get_efi_runtime_pages())
 	{
-		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld, %ld\n", page.physical_address,
-			page.physical_address + (page.page_count * PAGE_SIZE), page.page_count, km::call<BOOLEAN>(MmIsAddressValid, page.physical_address));
+		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.physical_address, page.physical_address + (page.page_count * PAGE_SIZE), page.page_count);
 
 		if (modules.size())
 		{
@@ -2087,6 +2085,10 @@ void scan_efi(void)
 	QWORD HalEfiRuntimeServicesTable[9];
 	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
 	
+
+	//
+	// you can also test get_efi_module_list2();
+	//
 	std::vector<EFI_MODULE_INFO> module_list = get_efi_module_list();
 	for (int i = 0; i < 9; i++)
 	{
