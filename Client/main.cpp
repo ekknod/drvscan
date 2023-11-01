@@ -1369,7 +1369,7 @@ int scan_efi(void)
 			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx, %llx\n", i, rt_func, physical_address);
 		}
 	}
-	return getchar();
+	return 0;
 }
 
 int save_cache(void)
@@ -1394,7 +1394,7 @@ int save_cache(void)
 	{
 		dump_module_to_file(pid, mod);
 	}
-	return getchar();
+	return 0;
 }
 
 int scan_memory(void)
@@ -1420,13 +1420,13 @@ int scan_memory(void)
 		module_name = "";
 	}
 
-	int use_cache = 0;
-	std::cout << "usecache (0/1): ";
-	std::cin  >> use_cache;
-
 	int diff = 0;
 	std::cout << "diff: ";
 	std::cin  >> diff;
+
+	int use_cache = 0;
+	std::cout << "usecache (0/1): ";
+	std::cin  >> use_cache;
 
 	std::vector<FILE_INFO> modules;
 	if (pid == 4 || pid == 0)
@@ -1451,9 +1451,7 @@ int scan_memory(void)
 		scan_image(pid, mod, diff, use_cache);
 	}
 	LOG("scan is complete\n");
-
-
-	return getchar();
+	return 0;
 }
 
 int main(void)
@@ -1491,25 +1489,40 @@ int main(void)
 		return getchar();
 	}
 
-	std::cout << "1.                    scan target process memory changes\n";
-	std::cout << "2.                    dump target process modules to disk, these can be used later with (1.)\n";
-	std::cout << "3.                    scan pcileech-fpga cards from the system (4.11 and lower)\n";
-	std::cout << "4.                    scan efi runtime services\n\n";
 
 	int operation=0;
 
-	std::cout << "operation: ";
-	std::cin >> operation;
 
-	switch (operation)
+	while (1)
 	{
-	case 1: return scan_memory();
-	case 2: return save_cache();
-	case 3: return scan_pci();
-	case 4: return scan_efi();
-	default:
-		LOG("no operation selected\n");
-		return getchar();
+		std::cout << "1.                    scan target process memory changes\n";
+		std::cout << "2.                    dump target process modules to disk, these can be used later with (1.)\n";
+		std::cout << "3.                    scan pcileech-fpga cards from the system (4.11 and lower)\n";
+		std::cout << "4.                    scan efi runtime services\n";
+		std::cout << "5.                    exit\n\n";
+		std::cout << "operation: ";
+		std::cin >> operation;
+
+		switch (operation)
+		{
+		case 1: scan_memory();
+			break;
+		case 2: save_cache();
+			break;
+		case 3: scan_pci();
+			break;
+		case 4: scan_efi();
+			break;
+		case 5:
+			exit(0);
+			break;
+		default:
+			LOG("no operation selected\n");
+			break;
+		}
+
+		printf("\n");
+
 	}
 }
 
