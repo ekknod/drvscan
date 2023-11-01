@@ -629,34 +629,38 @@ void scan_section(DWORD diff, CHAR *section_name, QWORD local_image, QWORD runti
 			}
 			if (found == 0)
 			{
-				int failed_to_read=0;
+				//
+				// skip zero pages
+				//
+				int read_success=0;
 				for (DWORD j = 0; j < cnt; j++)
 				{
-					if (((unsigned char*)runtime_image)[i + j] == 0)
+					if (((unsigned char*)runtime_image)[i + j] != 0)
 					{
-						failed_to_read=1;
+						read_success=1;
+						break;
 					}
 				}
 
-				if (!failed_to_read)
+				if (read_success)
 				{
 
-				printf("%s:0x%llx is modified (%ld bytes): ", section_name, section_address + i, cnt);
-				FontColor(2);
-				for (DWORD j = 0; j < cnt; j++)
-				{
-					printf("%02X ", ((unsigned char*)local_image)[i + j]);
-				}
-				FontColor(7);
-				printf("-> ");
+					printf("%s:0x%llx is modified (%ld bytes): ", section_name, section_address + i, cnt);
+					FontColor(2);
+					for (DWORD j = 0; j < cnt; j++)
+					{
+						printf("%02X ", ((unsigned char*)local_image)[i + j]);
+					}
+					FontColor(7);
+					printf("-> ");
 
-				FontColor(4);
-				for (DWORD j = 0; j < cnt; j++)
-				{
-					printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
-				}
-				FontColor(7);
-				printf("\n");
+					FontColor(4);
+					for (DWORD j = 0; j < cnt; j++)
+					{
+						printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
+					}
+					FontColor(7);
+					printf("\n");
 
 				}
 			}
@@ -879,6 +883,11 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 			{
 				continue;
 			}
+
+			if (!strcmp((const char*)section_name, "PAGE_DD"))
+			{
+				continue;
+			}
 		
 			auto temp = get_whitelisted_addresses(
 				(QWORD)((BYTE*)dll + section_raw_address),
@@ -936,6 +945,11 @@ void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff, std::v
 			// skip Warbird page
 			//
 			if (!strcmp((const char*)section_name, "PAGEwx3"))
+			{
+				continue;
+			}
+
+			if (!strcmp((const char*)section_name, "PAGE_DD"))
 			{
 				continue;
 			}
