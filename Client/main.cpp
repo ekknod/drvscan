@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <TlHelp32.h>
 #include <intrin.h>
+#include <iostream>
 
 
 #define PAGE_SIZE 0x1000
@@ -1072,7 +1073,7 @@ const char *blkinfo(unsigned char info)
 }
 
 #define GET_BIT(data, bit) ((data >> bit) & 1)
-void scan_pci(void)
+int scan_pci(void)
 {
 	typedef struct {
 		
@@ -1168,6 +1169,7 @@ void scan_pci(void)
 			LOG("device [%02X:%02X:%02X] [%04X:%04X]\n", dev.bus, dev.slot, 0, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
 		}
 	}
+	return 0;
 }
 
 BOOL get_first_efi_page(EFI_PAGE_INFO *entry)
@@ -1320,7 +1322,7 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 	return modules;
 }
 
-void scan_efi(void)
+int scan_efi(void)
 {
 	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
 	HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
@@ -1331,7 +1333,7 @@ void scan_efi(void)
 	//
 	if (HalEfiRuntimeServicesTableAddr == 0)
 	{
-		return;
+		return 0;
 	}
 
 	QWORD HalEfiRuntimeServicesTable[9];
@@ -1367,9 +1369,94 @@ void scan_efi(void)
 			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx, %llx\n", i, rt_func, physical_address);
 		}
 	}
+	return getchar();
 }
 
-int main(int argc, char **argv)
+int save_cache(void)
+{
+	int pid = 0;
+
+	std::cout << "process id: ";
+	std::cin  >> pid;
+
+	std::vector<FILE_INFO> modules;
+
+	if (pid == 4 || pid == 0)
+	{
+		modules = get_kernel_modules();
+	}
+	else
+	{
+		modules = get_user_modules(pid);
+	}
+
+	for (auto &mod : modules)
+	{
+		dump_module_to_file(pid, mod);
+	}
+	return getchar();
+}
+
+int scan_memory(void)
+{
+	printf(
+		"[pid]                 target process id\n"
+		"[modulename]          (optional) name of the image e.g. explorer.exe\n"
+		"[diff]                (optional) the amount of bytes that have to be different before logging the patch\n"
+		"[usecache]            (optional) if option is selected, we use local dumps instead of original disk files\n\n");
+
+
+	int pid = 0;
+
+	std::cout << "pid: ";
+	std::cin  >> pid;
+
+	std::string module_name;
+	std::cout << "modulename: ";
+	std::cin  >> module_name;
+
+	if (!_strcmpi(module_name.c_str(), "0")||!_strcmpi(module_name.c_str(), " "))
+	{
+		module_name = "";
+	}
+
+	int use_cache = 0;
+	std::cout << "usecache (0/1): ";
+	std::cin  >> use_cache;
+
+	int diff = 0;
+	std::cout << "diff: ";
+	std::cin  >> diff;
+
+	std::vector<FILE_INFO> modules;
+	if (pid == 4 || pid == 0)
+	{
+		modules = get_kernel_modules();
+	}
+	else
+	{
+		modules = get_user_modules(pid);
+	}
+
+	LOG("\nscanning modules\n");
+	for (auto mod : modules)
+	{
+		if (module_name.length() > 1)
+		{
+			if (_strcmpi(mod.name.c_str(), module_name.c_str()))
+			{
+				continue;
+			}
+		}
+		scan_image(pid, mod, diff, use_cache);
+	}
+	LOG("scan is complete\n");
+
+
+	return getchar();
+}
+
+int main(void)
 {
 	for (auto &drv : get_kernel_modules())
 	{
@@ -1383,6 +1470,7 @@ int main(int argc, char **argv)
 	if (ntoskrnl_base == 0)
 	{
 		LOG_RED("ntoskrnl.exe base address not found\n");
+		return getchar();
 	}
 
 	for (auto &i : global_export_list)
@@ -1393,145 +1481,36 @@ int main(int argc, char **argv)
 		if (*(QWORD*)i == 0)
 		{
 			LOG_RED("export %s not found\n", (PCSTR)temp);
-			return 0;
+			return getchar();
 		}
 	}
 
 	if (!km::initialize())
 	{
 		LOG_RED("failed to initialize driver\n");
-		return 0;
-	}
-
-	if (argc < 2)
-	{
-		LOG("--help\n");
 		return getchar();
 	}
 
-	BOOL scan=0, pid = 4, cache = 0, scanpci = 0, diff = 0, use_cache = 0, scanefi=0;
+	std::cout << "1.                    scan target process memory changes\n";
+	std::cout << "2.                    dump target process modules to disk, these can be used later with (1.)\n";
+	std::cout << "3.                    scan pcileech-fpga cards from the system (4.11 and lower)\n";
+	std::cout << "4.                    scan efi runtime services\n\n";
 
-	for (int i = 1; i < argc; i++)
+	int operation=0;
+
+	std::cout << "operation: ";
+	std::cin >> operation;
+
+	switch (operation)
 	{
-		if (!strcmp(argv[i], "--help"))
-		{
-			printf(
-				"\n\n"
-
-				"--scan                    scan target process memory changes\n"
-				"   --diff      (optional) the amount of bytes that have to be different before logging the patch\n"
-				"   --usecache  (optional) if option is selected, we use local dumps instead of original disk files\n"
-				"   --savecache (optional) dump target process modules to disk, these can be used later with --usecache\n"
-				"   --pid       (optional) target process id\n\n"
-				"--scanpci                 scan pcileech-fpga cards from the system (4.11 and lower)\n\n"
-				"--scanefi                 scan efi runtime services\n\n\n"
-			);
-
-
-			printf("\nExample (verifying modules integrity by using cache):\n"
-				"1.			making sure Windows is not infected\n"
-				"1.			ecac.exe --savecache --pid 4\n"
-				"2.			reboot the computer\n"
-				"3.			load malware what is potentially modifying modules\n"
-				"4.			ecac.exe --scan --usecache --pid 4\n"
-				"all malware patches should be now visible\n\n"
-			);
-			
-		}
-
-		else if (!strcmp(argv[i], "--scan"))
-		{
-			scan = 1;
-		}
-
-		else if (!strcmp(argv[i], "--diff"))
-		{
-			diff = atoi(argv[i + 1]);
-		}
-
-		else if (!strcmp(argv[i], "--pid"))
-		{
-			pid = atoi(argv[i + 1]);
-		}
-
-		else if (!strcmp(argv[i], "--savecache"))
-		{
-			cache = 1;
-		}
-
-		else if (!strcmp(argv[i], "--scanpci"))
-		{
-			scanpci = 1;
-		}
-
-		else if (!strcmp(argv[i], "--usecache"))
-		{
-			use_cache = 1;
-		}
-
-		else if (!strcmp(argv[i], "--scanefi"))
-		{
-			scanefi = 1;
-		}
+	case 1: return scan_memory();
+	case 2: return save_cache();
+	case 3: return scan_pci();
+	case 4: return scan_efi();
+	default:
+		LOG("no operation selected\n");
+		return getchar();
 	}
-
-	if (scanefi)
-	{
-		LOG("scanning EFI runtime memory\n");
-		scan_efi();
-		LOG("EFI runtime memory scan is complete\n");
-	}
-
-	if (scanpci)
-	{
-		LOG("scanning PCIe devices\n");
-		scan_pci();
-		LOG("PCIe scan is complete\n");
-	}
-
-	if (scan)
-	{
-		std::vector<FILE_INFO> modules;
-
-		if (pid == 4)
-		{
-			modules = get_kernel_modules();
-		}
-		else
-		{
-			modules = get_user_modules(pid);
-		}
-
-		LOG("\nscanning modules\n");
-		for (auto mod : modules)
-		{
-			scan_image(pid, mod, diff, use_cache);
-		}
-
-		LOG("scan is complete\n");
-	}
-
-	if (cache)
-	{
-		std::vector<FILE_INFO> modules;
-
-		if (pid == 4 || pid == 0)
-		{
-			modules = get_kernel_modules();
-		}
-		else
-		{
-			modules = get_user_modules(pid);
-		}
-
-		for (auto &mod : modules)
-		{
-			dump_module_to_file(pid, mod);
-		}
-	
-	}
-
-	return 0;
 }
 
 #pragma pack(push, 8)
@@ -1656,8 +1635,8 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 
 	QWORD nt_header = km::vm::read<DWORD>(pid, (QWORD)module_entry.modBaseAddr + 0x03C) + (QWORD)module_entry.modBaseAddr;
 	BOOL  wow64_process = km::vm::read<WORD>(pid, nt_header + 0x4) == 0x8664 ? 0 : 1;
-	
-	while (Module32Next(snp, &module_entry))
+
+	do
 	{
 		if (wow64_process)
 		{
@@ -1684,8 +1663,10 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 		temp.name = std::string(module_entry.szModule);
 
 		info.push_back(temp);
-	}
+	} while (Module32Next(snp, &module_entry));
+
 	CloseHandle(snp);
+
 	return info;
 }
 
