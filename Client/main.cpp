@@ -165,6 +165,18 @@ namespace km
 			char unk_data[0x138 - 0x40 - 56];
 		} PAYLOAD ;
 
+		if (virtual_address < 0)
+		{
+			LOG("get_physical_address: should not happen: %llx\n", virtual_address);
+			return 0;
+		}
+
+		if (virtual_address > 0xffffff0000000000)
+		{
+			LOG("get_physical_address: should not happen: %llx\n", virtual_address);
+			return 0;
+		}
+
 		PAYLOAD Request{};
 		Request.request_id = 0x26;
 		Request.result_addr = 0;
@@ -231,48 +243,72 @@ namespace km
 	{
 		QWORD total_size = length;
 		QWORD offset = 0;
-		QWORD temp_size=0;
+		QWORD bytes_read=0;
+		int   cnt=0;
 
 		while (total_size) {
 			QWORD physical_address = get_physical_address(virtual_address + offset);
-			if (!physical_address)
-			{
-				break;
+			if (!physical_address) {
+				if (total_size >= 0x1000)
+				{
+					bytes_read = 0x1000;
+				}
+				else
+				{
+					bytes_read = total_size;
+				}
+				memset((PVOID)((QWORD)buffer + offset), 0, bytes_read);
+				goto E0;
 			}
+			{
 			QWORD current_size = min(0x1000 - (physical_address & 0xFFF), total_size);
 			if (!nvpm_read(physical_address, (PVOID)((QWORD)buffer + offset), current_size))
 			{
 				break;
 			}
-			temp_size = current_size;
-			total_size -= temp_size;
-			offset += temp_size;
+			cnt++;
+			bytes_read = current_size;
+			}
+		E0:
+			total_size -= bytes_read;
+			offset += bytes_read;
 		}
-		return total_size == 0;
+		return cnt != 0;
 	}
 
 	BOOL nvvm_write(QWORD virtual_address, PVOID buffer, QWORD length)
 	{
 		QWORD total_size = length;
 		QWORD offset = 0;
-		QWORD temp_size=0;
-
+		QWORD bytes_read=0;
+		int   cnt=0;
 		while (total_size) {
 			QWORD physical_address = get_physical_address(virtual_address + offset);
-			if (!physical_address)
-			{
-				break;
+			if (!physical_address) {
+				if (total_size >= 0x1000)
+				{
+					bytes_read = 0x1000;
+				}
+				else
+				{
+					bytes_read = total_size;
+				}
+				goto E0;
 			}
+			{
 			QWORD current_size = min(0x1000 - (physical_address & 0xFFF), total_size);
 			if (!nvpm_write(physical_address, (PVOID)((QWORD)buffer + offset), current_size))
 			{
 				break;
 			}
-			temp_size = current_size;
-			total_size -= temp_size;
-			offset += temp_size;
+			cnt++;
+			bytes_read = current_size;
+			}
+		E0:
+			total_size -= bytes_read;
+			offset += bytes_read;
 		}
-		return total_size == 0;
+		return cnt != 0;
 	}
 
 	namespace vm
@@ -479,18 +515,11 @@ namespace km
 	static QWORD MmPfnDatabase;
 	static QWORD MmPteBase;
 
-
 	BOOL is_efi_address(QWORD physical_address)
 	{
-		DWORD low       = ((DWORD*)&physical_address)[0];
-		ULONG index     = low >> 12;
-		QWORD pfn_entry = (MmPfnDatabase + (index * 0x30));
-		QWORD pte       = vm::read<QWORD>(4, pfn_entry + 0x08);
-		if (pte == 0)
-		{
-			return 1;
-		}
-		return 0;
+		DWORD index = (((DWORD*)&physical_address)[0] >> 12);
+		QWORD pfn   = (MmPfnDatabase + (index * 0x30));
+		return vm::read<QWORD>(4, pfn) == 0;
 	}
 
 	BOOL initialize()
@@ -574,7 +603,7 @@ namespace km
 		HalpPciMcfgTableCount = vm::get_relative_address(4, table_entry + 0x07, 2, 6);
 		HalpPciMcfgTable      = vm::get_relative_address(4, table_entry + 0x11, 3, 7);
 
-		MmPfnDatabase         = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x0E + 0x02) - 0x08;
+		MmPfnDatabase         = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x0E + 0x02);
 		MmPteBase             = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x20 + 0x02);
 
 		return 1;
@@ -839,7 +868,9 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 
 	if (target_base == 0 || *(WORD*)target_base != IMAGE_DOS_SIGNATURE)
 	{
-		vm_free_module(target_base);
+		LOG_RED("failed to dump %s\n", file.name.c_str());
+		if (target_base != 0)
+			vm_free_module(target_base);
 		return FALSE;
 	}
 
@@ -847,7 +878,9 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 	// write dump file to /dumps/drivername
 	//
 	if (write_dump_file (file.name.c_str(), (PVOID)target_base, *(QWORD*)(target_base - 24 + 8)))
-		LOG("driver: %s is succesfully dumped\n", file.name.c_str());
+	{
+		LOG("module: %s is succesfully dumped\n", file.name.c_str());
+	}
 
 	HMODULE dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
 	if (!dll)
@@ -881,11 +914,6 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 			// skip Warbird page
 			//
 			if (!strcmp((const char*)section_name, "PAGEwx3"))
-			{
-				continue;
-			}
-
-			if (!strcmp((const char*)section_name, "PAGE_DD"))
 			{
 				continue;
 			}
@@ -946,11 +974,6 @@ void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff, std::v
 			// skip Warbird page
 			//
 			if (!strcmp((const char*)section_name, "PAGEwx3"))
-			{
-				continue;
-			}
-
-			if (!strcmp((const char*)section_name, "PAGE_DD"))
 			{
 				continue;
 			}
@@ -1016,8 +1039,14 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 
 		if (runtime_image == 0 || *(WORD*)runtime_image != IMAGE_DOS_SIGNATURE)
 		{
+			FontColor(14);
+			LOG("skippin image: %s\n", file.path.c_str());
+			FontColor(7);
 			FreeFileEx(local_image);
-			vm_free_module(runtime_image);
+			if (runtime_image != 0)
+			{
+				vm_free_module(runtime_image);
+			}
 			return;
 		}
 
@@ -1116,7 +1145,7 @@ int scan_pci(void)
 	//
 	// test shadow cfg (pcileech-fpga 4.11 and lower)
 	//
-	for (auto & dev : devices)
+	for (auto &dev : devices)
 	{
 		DWORD tick = GetTickCount();
 		km::pci::write<WORD>(dev.bus, dev.slot, 0xA0, *(WORD*)(dev.cfg + 0xA0));
@@ -1138,7 +1167,7 @@ int scan_pci(void)
 	//
 	// check configuration space
 	//
-	for (auto & dev : devices)
+	for (auto &dev : devices)
 	{
 		//
 		// device was already blocked
@@ -1372,13 +1401,8 @@ int scan_efi(void)
 	return 0;
 }
 
-int save_cache(void)
+void dump_module(int pid, std::string module_name)
 {
-	int pid = 0;
-
-	std::cout << "process id: ";
-	std::cin  >> pid;
-
 	std::vector<FILE_INFO> modules;
 
 	if (pid == 4 || pid == 0)
@@ -1392,44 +1416,21 @@ int save_cache(void)
 
 	for (auto &mod : modules)
 	{
+		if (module_name.length() > 1)
+		{
+			if (_strcmpi(mod.name.c_str(), module_name.c_str()))
+			{
+				continue;
+			}
+		}
 		dump_module_to_file(pid, mod);
 	}
-	return 0;
 }
 
-int scan_memory(void)
+void scan_module(int pid, std::string module_name, int diff, int use_cache)
 {
-	printf(
-		"[pid]                 target process id\n"
-		"[modulename]          (optional) name of the image e.g. explorer.exe\n"
-		"[diff]                (optional) the amount of bytes that have to be different before logging the patch\n"
-		"[usecache]            (optional) if option is selected, we use local dumps instead of original disk files\n\n");
-
-
-	int pid = 0;
-
-	std::cout << "pid: ";
-	std::cin  >> pid;
-
-	std::string module_name;
-	std::cout << "modulename: ";
-	std::cin  >> module_name;
-
-	if (!_strcmpi(module_name.c_str(), "0")||!_strcmpi(module_name.c_str(), " "))
-	{
-		module_name = "";
-	}
-
-	int diff = 0;
-	std::cout << "diff: ";
-	std::cin  >> diff;
-
-	int use_cache = 0;
-	std::cout << "usecache (0/1): ";
-	std::cin  >> use_cache;
-
 	std::vector<FILE_INFO> modules;
-	if (pid == 4 || pid == 0)
+	if (pid == 4)
 	{
 		modules = get_kernel_modules();
 	}
@@ -1451,6 +1452,82 @@ int scan_memory(void)
 		scan_image(pid, mod, diff, use_cache);
 	}
 	LOG("scan is complete\n");
+}
+
+int scan_memory(void)
+{
+	printf("\n");
+
+	int pid = 4;
+	std::string module_name;
+	int diff = 0;
+	int use_cache = 0;
+
+	while (1)
+	{
+		printf(
+			"1.  [%d] target process id\n"
+			"2.  [%s] (optional) name of the image e.g. explorer.exe\n"
+			"3.  [%d] the amount of bytes that have to be different before logging the patch\n"
+			"4.  [%d] if option is selected, we use local dumps instead of original disk files\n"
+			"5.  dump\n"
+			"6.  scan\n"
+			"7.  back\n",
+
+			pid,
+			module_name.size() < 4 ? "0" : module_name.c_str(),
+			diff,
+			use_cache
+		);
+
+		int operation=0;
+
+		std::cout << "operation: ";
+		std::cin >> operation;
+
+		switch (operation)
+		{
+		case 1:
+			std::cout << "pid(int): ";
+			std::cin  >> pid;
+			if (pid == 0)
+			{
+				pid = 4;
+			}
+			break;
+		case 2:
+			std::cout << "modulename(string): ";
+			std::cin  >> module_name;
+			if (module_name.size() < 4)
+			{
+				module_name = "";
+			}
+			break;
+		case 3:
+			std::cout << "diff(int): ";
+			std::cin  >> diff;
+			break;
+		case 4:
+			std::cout << "usecache(0/1): ";
+			std::cin  >> use_cache;
+			break;
+		case 5:
+			dump_module(pid, module_name);
+			break;
+		case 6:
+			scan_module(pid, module_name, diff, use_cache);
+			break;
+		case 7:
+			return 0;
+		default:
+			LOG("no operation selected\n");
+			operation = 0;
+			break;
+		}
+
+		printf("\n");
+
+	}
 	return 0;
 }
 
@@ -1495,11 +1572,10 @@ int main(void)
 
 	while (1)
 	{
-		std::cout << "1.                    scan target process memory changes\n";
-		std::cout << "2.                    dump target process modules to disk, these can be used later with (1.)\n";
-		std::cout << "3.                    scan pcileech-fpga cards from the system (4.11 and lower)\n";
-		std::cout << "4.                    scan efi runtime services\n";
-		std::cout << "5.                    exit\n\n";
+		std::cout << "1.  scan memory\n";
+		std::cout << "2.  scan PCIe\n";
+		std::cout << "3.  scan UEFI\n";
+		std::cout << "4.  exit drvscan\n";
 		std::cout << "operation: ";
 		std::cin >> operation;
 
@@ -1507,13 +1583,11 @@ int main(void)
 		{
 		case 1: scan_memory();
 			break;
-		case 2: save_cache();
+		case 2: scan_pci();
 			break;
-		case 3: scan_pci();
+		case 3: scan_efi();
 			break;
-		case 4: scan_efi();
-			break;
-		case 5:
+		case 4:
 			exit(0);
 			break;
 		default:
