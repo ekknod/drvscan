@@ -453,6 +453,16 @@ namespace km
 			return vm::read<QWORD>(4, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
 		}
 
+		QWORD get_physical_address2(ULONG bus, ULONG slot, ULONG func)
+		{
+			QWORD physical_address = get_physical_address(bus, slot);
+
+			if (physical_address == 0)
+				return 0;
+
+			return physical_address + (func << 12);
+		}
+
 		BOOL read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 		{
 			QWORD device = get_physical_address(bus, slot);
@@ -569,7 +579,6 @@ namespace km
 		// KTHREAD used by vm::read/vm::write
 		//
 		thread_object = get_current_thread();
-
 
 		//
 		// resolve HalpPciMcfgTableCount/HalpPciMcfgTable addresses
@@ -918,7 +927,7 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 				continue;
 			}
 		
-			auto temp = get_whitelisted_addresses(
+			std::vector<DWORD> temp = get_whitelisted_addresses(
 				(QWORD)((BYTE*)dll + section_raw_address),
 				(QWORD)(target_base + section_raw_address),
 				section_virtual_size,
@@ -1097,16 +1106,120 @@ const char *blkinfo(unsigned char info)
 	{
 	case 1: return "pcileech";
 	case 2: return "BME off";
+	case 3: return "xilinx";
+	case 4: return "invalid bridge";
+	}
+	return "OK";
+}
+
+void PrintPcieConfiguration(unsigned char *cfg)
+{
+	printf("\n     00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F\n\n");
+	int line_counter=0;
+	for (int i = 0; i < 256; i++)
+	{
+		if (line_counter == 0)
+		{
+			printf("%02X   ", i);
+		}
+		line_counter++;
+		printf("%02X ", cfg[i]);
+		if (line_counter == 16)
+		{
+			printf("\n");
+			line_counter=0;
+		}	
+	}
+	printf("\n");
+}
+
+typedef struct _PCI_CAPABILITIES_HEADER {
+  UCHAR CapabilityID;
+  UCHAR Next;
+} PCI_CAPABILITIES_HEADER, *PPCI_CAPABILITIES_HEADER;
+
+typedef union _PCI_EXPRESS_CAPABILITIES_REGISTER {
+	struct {
+	USHORT CapabilityVersion  :4;
+	USHORT DeviceType  :4;
+	USHORT SlotImplemented  :1;
+	USHORT InterruptMessageNumber  :5;
+	USHORT Rsvd  :2;
+	};
+	USHORT AsUSHORT;
+} PCI_EXPRESS_CAPABILITIES_REGISTER, *PPCI_EXPRESS_CAPABILITIES_REGISTER;
+
+typedef struct _PCI_EXPRESS_CAPABILITY {
+	PCI_CAPABILITIES_HEADER                    Header;
+	PCI_EXPRESS_CAPABILITIES_REGISTER          ExpressCapabilities;
+} PCI_EXPRESS_CAPABILITY, *PPCI_EXPRESS_CAPABILITY;
+
+typedef enum {
+
+    PciExpressEndpoint = 0,
+    PciExpressLegacyEndpoint,
+    PciExpressRootPort = 4,
+    PciExpressUpstreamSwitchPort,
+    PciExpressDownstreamSwitchPort,
+    PciExpressToPciXBridge,
+    PciXToExpressBridge,
+    PciExpressRootComplexIntegratedEndpoint,
+    PciExpressRootComplexEventCollector
+} PCI_EXPRESS_DEVICE_TYPE;
+
+DWORD get_port_type(unsigned char *cfg)
+{
+	BYTE cap = *(BYTE*)(cfg + 0x34);
+	if (cap == 0) return 0;
+
+	unsigned char *pm = cfg + cap;
+	if (pm[1] == 0) return 0;
+
+	unsigned char *msi = cfg + pm[1];
+	if (msi[1] == 0) return 0;
+
+	return ((PPCI_EXPRESS_CAPABILITY)(cfg + msi[1]))->ExpressCapabilities.DeviceType;
+}
+
+#define GET_BIT(data, bit) ((data >> bit) & 1)
+#define GET_BITS(data, high, low) ((data >> low) & ((1 << (high - low + 1)) - 1))
+
+BOOL heuristic_detection(unsigned char *cfg)
+{
+	unsigned char *a0 = cfg + *(BYTE*)(cfg + 0x34);
+	if (a0[1] == 0)
+		return 0;
+
+	a0 = cfg + a0[1];
+	if (a0[1] == 0)
+		return 0;
+	DWORD a1 = *(DWORD*)(cfg + a0[1] + 0x0C);
+	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
+}
+
+PCSTR get_port_type_str(unsigned char *cfg)
+{
+	switch (get_port_type(cfg))
+	{
+		case PciExpressEndpoint: return "PciExpressEndpoint";
+		case PciExpressLegacyEndpoint: return "PciExpressLegacyEndpoint";
+		case 2: return "nvme";
+		case PciExpressRootPort: return "PciExpressRootPort";
+		case PciExpressUpstreamSwitchPort: return "PciExpressUpstreamSwitchPort";
+		case PciExpressDownstreamSwitchPort: return "PciExpressDownstreamSwitchPort";
+		case PciExpressToPciXBridge: return "PciExpressToPciXBridge";
+		case PciXToExpressBridge: return "PciXToExpressBridge";
+		case PciExpressRootComplexIntegratedEndpoint: return "PciExpressRootComplexIntegratedEndpoint";
+		case PciExpressRootComplexEventCollector: return "PciExpressRootComplexEventCollector";
 	}
 	return "";
 }
 
-#define GET_BIT(data, bit) ((data >> bit) & 1)
 int scan_pci(void)
 {
 	typedef struct {
 		
-		unsigned char  bus, slot, cfg[0x100];
+		unsigned char  bus, slot, func, cfg[0x100];
 		unsigned char  blk;
 		unsigned char  info;
 	} DEVICE_INFO;
@@ -1117,30 +1230,40 @@ int scan_pci(void)
 	{
 		for (unsigned char slot = 0; slot < 32; slot++)
 		{
-			QWORD physical_address = km::pci::get_physical_address(bus, slot);
-			if (physical_address == 0)
+			for (unsigned char func = 0; func < 8; func++)
 			{
-				continue;
-			}
+				QWORD physical_address = km::pci::get_physical_address2(bus, slot, func);
+				if (physical_address == 0)
+				{
+					continue;
+				}
 
-			WORD device_control = km::pm::read<WORD>(physical_address + 0x04);
-			if (device_control == 0xFFFF)
-			{
-				continue;
-			}
+				WORD device_control = km::pm::read<WORD>(physical_address + 0x04);
+				if (device_control == 0xFFFF)
+				{
+					continue;
+				}
 
-			DEVICE_INFO device;
-			device.bus = bus;
-			device.slot = slot;
-			device.blk = 0;
-			device.info = 0;
-			for (int i = 0; i < 0x100; i+=2)
-			{
-				*(WORD*)&device.cfg[i] = km::pm::read<WORD>(physical_address + i);
+				if (km::pm::read<WORD>(physical_address + 0x00) == 0)
+				{
+					continue;
+				}
+
+				DEVICE_INFO device;
+				device.bus = bus;
+				device.slot = slot;
+				device.func = func;
+				device.blk = 0;
+				device.info = 0;
+				for (int i = 0; i < 0x100; i+=2)
+				{
+					*(WORD*)&device.cfg[i] = km::pm::read<WORD>(physical_address + i);
+				}
+				devices.push_back(device);
 			}
-			devices.push_back(device);
 		}
 	}
+
 
 	//
 	// test shadow cfg (pcileech-fpga 4.11 and lower)
@@ -1181,22 +1304,39 @@ int scan_pci(void)
 		{
 			dev.blk = 1;
 			dev.info = 2;
+			continue;
+		}
+
+		if (heuristic_detection(dev.cfg))
+		{
+			dev.blk = 1;
+			dev.info = 3;
+			continue;
+		}
+
+		if (get_port_type(dev.cfg) == 8)
+		{
+			if (dev.func == 0)
+			{
+				dev.blk = 1;
+				dev.info = 4;
+			}
 		}
 	}
 
 	for (auto &dev : devices)
-	{	
+	{
 		if (dev.blk)
 		{
 			FontColor(14);
-			LOG("device [%02X:%02X:%02X] [%04X:%04X] is not allowed device [%s]\n",
-				dev.bus, dev.slot, 0, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
+		} else {
 			FontColor(7);
 		}
-		else
-		{
-			LOG("device [%02X:%02X:%02X] [%04X:%04X]\n", dev.bus, dev.slot, 0, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
-		}
+
+		LOG("[%s] [%02X:%02X:%02X] [%04X:%04X] [%s]\n",
+			get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
+
+		FontColor(7);
 	}
 	return 0;
 }
@@ -1373,6 +1513,7 @@ int scan_efi(void)
 	// you can also test get_efi_module_list2();
 	//
 	std::vector<EFI_MODULE_INFO> module_list = get_efi_module_list();
+
 	for (int i = 0; i < 9; i++)
 	{
 		QWORD rt_func = HalEfiRuntimeServicesTable[i];
@@ -1392,6 +1533,8 @@ int scan_efi(void)
 				break;
 			}
 		}
+
+		LOG("EFI Runtime service [%d] [%llx]\n", i, physical_address);
 
 		if (!found)
 		{
