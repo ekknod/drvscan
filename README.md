@@ -1,27 +1,19 @@
 # drvscan
-handy tool for scanning memory changes in executable pages
 <pre>
---scan                    scan target process memory changes
-   --diff      (optional) the amount of bytes that have to be different before logging the patch
-   --usecache  (optional) if option is selected, we use local dumps instead of original disk files
-   --savecache (optional) dump target process modules to disk, these can be used later with --usecache
-   --pid       (optional) target process id
+1.  scan memory
+2.  scan PCIe
+3.  scan UEFI
+4.  exit drvscan
+operation: 1
 
---pcileech                scan pcileech-fpga cards from the system (4.11 and lower)
-
---scanthreads             scan system threads
-   --attachpid (optional) check if thread is attached to target process id
-
---scanefi                 scan efi runtime services
+1.  [4] target process id
+2.  [ntoskrnl.exe] (optional) name of the image e.g. explorer.exe
+3.  [0] the amount of bytes that have to be different before logging the patch
+4.  [0] if option is selected, we use local dumps instead of original disk files
+5.  dump
+6.  scan
+7.  back
+operation: 
 </pre>
 
-Example (verifying module integrity by using cache):
-<pre>
-- make sure Windows is not infected
-- drvscan.exe --savecache --pid 4
-- reboot your computer
-- load malware
-- drvscan.exe --scan --usecache --pid 4
 
-all malware patches should be now visible at your selected process
-</pre>
