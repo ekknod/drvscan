@@ -453,16 +453,6 @@ namespace km
 			return vm::read<QWORD>(4, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
 		}
 
-		QWORD get_physical_address2(ULONG bus, ULONG slot, ULONG func)
-		{
-			QWORD physical_address = get_physical_address(bus, slot);
-
-			if (physical_address == 0)
-				return 0;
-
-			return physical_address + (func << 12);
-		}
-
 		BOOL read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 		{
 			QWORD device = get_physical_address(bus, slot);
@@ -1230,13 +1220,15 @@ int scan_pci(void)
 	{
 		for (unsigned char slot = 0; slot < 32; slot++)
 		{
+			QWORD physical_address = km::pci::get_physical_address(bus, slot);
+			if (physical_address == 0)
+			{
+				continue;
+			}
+
 			for (unsigned char func = 0; func < 8; func++)
 			{
-				QWORD physical_address = km::pci::get_physical_address2(bus, slot, func);
-				if (physical_address == 0)
-				{
-					continue;
-				}
+				physical_address = physical_address + (func << 12);
 
 				WORD device_control = km::pm::read<WORD>(physical_address + 0x04);
 				if (device_control == 0xFFFF)
