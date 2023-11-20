@@ -52,9 +52,9 @@ QWORD ntoskrnl_base;
 
 
 #define DEBUG
-#define LOG(...) printf("[ecac.exe] "  __VA_ARGS__)
+#define LOG(...) printf("[drvscan.exe] "  __VA_ARGS__)
 #ifdef DEBUG
-#define DEBUG_LOG(...) printf("[ecac.exe] " __VA_ARGS__)
+#define DEBUG_LOG(...) printf("[drvscan.exe] " __VA_ARGS__)
 #else
 #define DEBUG_LOG(...) // __VA_ARGS__
 #endif
@@ -1247,10 +1247,7 @@ int scan_pci(void)
 				device.func = func;
 				device.blk = 0;
 				device.info = 0;
-				for (int i = 0; i < 0x100; i+=2)
-				{
-					*(WORD*)&device.cfg[i] = km::pm::read<WORD>(physical_address + i);
-				}
+				km::pm::read(physical_address, device.cfg, sizeof(device.cfg));
 				devices.push_back(device);
 			}
 		}
