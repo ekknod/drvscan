@@ -990,7 +990,7 @@ void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff, std::v
 	}
 }
 
-void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
+void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 {
 	//
 	// try to use existing memory dumps
@@ -1026,7 +1026,22 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 		if (sub_str)
 		{
 			std::string sub_name = sub_str + 6;
-			file.path = "C:\\Windows\\System32\\Drivers\\" + sub_name;
+			std::string resolved_path;
+
+			for (auto &lookup : modules)
+			{
+				if (!_strcmpi(lookup.name.c_str(), sub_name.c_str()))
+				{
+					resolved_path = lookup.path;
+				}
+			}
+
+			if (resolved_path.size() < 1)
+			{
+				resolved_path = "C:\\Windows\\System32\\Drivers\\" + sub_name;
+			}
+
+			file.path = resolved_path;
 		}
 
 		local_image = (HMODULE)LoadFileEx(file.path.c_str(), 0);
@@ -1039,7 +1054,7 @@ void scan_image(DWORD pid, FILE_INFO file, DWORD diff, BOOL use_cache)
 		if (runtime_image == 0 || *(WORD*)runtime_image != IMAGE_DOS_SIGNATURE)
 		{
 			FontColor(14);
-			LOG("skippin image: %s\n", file.path.c_str());
+			LOG("skipping image: %s\n", file.path.c_str());
 			FontColor(7);
 			FreeFileEx(local_image);
 			if (runtime_image != 0)
@@ -1581,7 +1596,7 @@ void scan_module(int pid, std::string module_name, int diff, int use_cache)
 				continue;
 			}
 		}
-		scan_image(pid, mod, diff, use_cache);
+		scan_image(modules, pid, mod, diff, use_cache);
 	}
 	LOG("scan is complete\n");
 }
