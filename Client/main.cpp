@@ -61,7 +61,7 @@ QWORD ntoskrnl_base;
 
 
 #define LOG_RED(...) \
-printf("[ecac.exe] "); \
+printf("[drvscan.exe] "); \
 FontColor(4); \
 printf(__VA_ARGS__); \
 FontColor(7); \
@@ -1113,6 +1113,7 @@ const char *blkinfo(unsigned char info)
 	case 2: return "BME off";
 	case 3: return "xilinx";
 	case 4: return "invalid bridge";
+	case 5: return "Hidden";
 	}
 	return "OK";
 }
@@ -1208,7 +1209,7 @@ PCSTR get_port_type_str(unsigned char *cfg)
 	{
 		case PciExpressEndpoint: return "PciExpressEndpoint";
 		case PciExpressLegacyEndpoint: return "PciExpressLegacyEndpoint";
-		case 2: return "nvme";
+		case 2: return "NVME";
 		case PciExpressRootPort: return "PciExpressRootPort";
 		case PciExpressUpstreamSwitchPort: return "PciExpressUpstreamSwitchPort";
 		case PciExpressDownstreamSwitchPort: return "PciExpressDownstreamSwitchPort";
@@ -1231,7 +1232,7 @@ int scan_pci(void)
 
 	std::vector<DEVICE_INFO> devices;
 
-	for (unsigned char bus = 0; bus < 32; bus++)
+	for (unsigned char bus = 0; bus < 255; bus++)
 	{
 		for (unsigned char slot = 0; slot < 32; slot++)
 		{
@@ -1245,13 +1246,9 @@ int scan_pci(void)
 			{
 				physical_address = physical_address + (func << 12);
 
-				WORD device_control = km::pm::read<WORD>(physical_address + 0x04);
-				if (device_control == 0xFFFF)
-				{
-					continue;
-				}
+				QWORD device_control = km::pm::read<QWORD>(physical_address + 0x04);
 
-				if (km::pm::read<WORD>(physical_address + 0x00) == 0)
+				if (device_control == 0xFFFFFFFFFFFFFFFF)
 				{
 					continue;
 				}
@@ -1313,7 +1310,7 @@ int scan_pci(void)
 
 		if (heuristic_detection(dev.cfg))
 		{
-			dev.blk = 1;
+			dev.blk = 2;
 			dev.info = 3;
 			continue;
 		}
@@ -1322,25 +1319,48 @@ int scan_pci(void)
 		{
 			if (dev.func == 0)
 			{
-				dev.blk = 1;
+				dev.blk = 2;
 				dev.info = 4;
+				continue;
 			}
+		}
+
+		if (*(WORD*)(dev.cfg) == 0xFFFF || *(WORD*)(dev.cfg + 0x02) == 0xFFFF)
+		{
+			dev.blk  = 2;
+			dev.info = 5;
 		}
 	}
 
 	for (auto &dev : devices)
 	{
-		if (dev.blk)
+		if (!dev.blk)
+		{
+			LOG("[%s] [%02X:%02X:%02X] [%04X:%04X] [%s]\n",
+				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
+		}
+	}
+
+	for (auto &dev : devices)
+	{
+		if (dev.blk == 1)
 		{
 			FontColor(14);
-		} else {
+			LOG("[%s] [%02X:%02X:%02X] [%04X:%04X] [%s]\n",
+				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
 			FontColor(7);
 		}
+	}
 
-		LOG("[%s] [%02X:%02X:%02X] [%04X:%04X] [%s]\n",
-			get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
-
-		FontColor(7);
+	for (auto &dev : devices)
+	{
+		if (dev.blk == 2)
+		{
+			FontColor(4);
+			LOG("[%s] [%02X:%02X:%02X] [%04X:%04X] [%s]\n",
+				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
+			FontColor(7);
+		}
 	}
 	return 0;
 }
