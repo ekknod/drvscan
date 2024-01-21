@@ -1118,15 +1118,18 @@ const char *blkinfo(unsigned char info)
 	return "OK";
 }
 
-void PrintPcieConfiguration(unsigned char *cfg)
+void PrintPcieConfiguration(unsigned char *cfg, int size)
 {
-	printf("\n     00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F\n\n");
+	printf("\n>    00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F\n\n");
 	int line_counter=0;
-	for (int i = 0; i < 256; i++)
+	for (int i = 0; i < size; i++)
 	{
 		if (line_counter == 0)
 		{
-			printf("%02X   ", i);
+			if (i < 0xFF)
+				printf("%02X   ", i);
+			else
+				printf("%02X  ", i);
 		}
 		line_counter++;
 		printf("%02X ", cfg[i]);
@@ -1221,17 +1224,17 @@ PCSTR get_port_type_str(unsigned char *cfg)
 	return "";
 }
 
-int scan_pci(void)
-{
-	typedef struct {
+
+typedef struct {
 		
-		unsigned char  bus, slot, func, cfg[0x100];
-		unsigned char  blk;
-		unsigned char  info;
-	} DEVICE_INFO;
+	unsigned char  bus, slot, func, cfg[0x200];
+	unsigned char  blk;
+	unsigned char  info;
+} DEVICE_INFO;
 
+std::vector<DEVICE_INFO> get_pci_device_list(void)
+{
 	std::vector<DEVICE_INFO> devices;
-
 	for (unsigned char bus = 0; bus < 255; bus++)
 	{
 		for (unsigned char slot = 0; slot < 32; slot++)
@@ -1264,8 +1267,11 @@ int scan_pci(void)
 			}
 		}
 	}
+	return devices;
+}
 
-
+void test_devices(std::vector<DEVICE_INFO> &devices)
+{
 	//
 	// test shadow cfg (pcileech-fpga 4.11 and lower)
 	//
@@ -1361,6 +1367,49 @@ int scan_pci(void)
 				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
 			FontColor(7);
 		}
+	}
+}
+
+int scan_pci(void)
+{
+	std::vector<DEVICE_INFO> devices = get_pci_device_list();
+
+	while (1)
+	{
+		printf(
+			"1.  scan devices\n"
+			"2.  dump cfg\n"
+			"3.  back\n"
+		);
+
+		int operation=0;
+
+		std::cout << "operation: ";
+		std::cin >> operation;
+
+		switch (operation)
+		{
+		case 1:
+			test_devices(devices);
+			break;
+		case 2:
+			for (auto &dev : devices)
+			{
+				printf("[%d:%d:%d] [%02X:%02X]", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
+				PrintPcieConfiguration(dev.cfg, sizeof(dev.cfg));
+				printf("\n");
+			}
+			break;
+		case 3:
+			return 0;
+		default:
+			LOG("no operation selected\n");
+			operation = 0;
+			break;
+		}
+
+		printf("\n");
+
 	}
 	return 0;
 }
