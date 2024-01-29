@@ -734,72 +734,7 @@ std::vector<DWORD> get_whitelisted_addresses(QWORD local_image, QWORD runtime_im
 	return whitelist_addresses;
 }
 
-QWORD vm_dump_rt_module_ex(DWORD pid, QWORD base, BOOL code_only)
-{
-	QWORD a0, a1, a2, a3 = 0;
-	char *a4;
-
-	a0 = base;
-	if (a0 == 0)
-		return 0;
-
-	a1 = km::vm::read<DWORD>(pid, a0 + 0x03C) + a0;
-	if (a1 == a0)
-	{
-		return 0;
-	}
-
-	a2 = km::vm::read<DWORD>(pid, a1 + 0x050);
-	if (a2 < 8)
-		return 0;
-
-	a4 = (char *)malloc(a2+24);
-
-
-	*(QWORD*)(a4)=base;
-	*(QWORD*)(a4 + 8)=a2;
-	*(QWORD*)(a4 + 16)=a3;
-
-	a4 += 24;
-
-
-	QWORD image_dos_header = base;
-	QWORD image_nt_header = km::vm::read<DWORD>(pid, image_dos_header + 0x03C) + image_dos_header;
-
-	DWORD headers_size = km::vm::read<DWORD>(pid, image_nt_header + 0x54);
-	km::vm::read(pid, image_dos_header, a4, headers_size);
-
-	unsigned short machine = km::vm::read<WORD>(pid, image_nt_header + 0x4);
-
-	QWORD section_header = machine == 0x8664 ?
-		image_nt_header + 0x0108 :
-		image_nt_header + 0x00F8;
-
-	
-	for (WORD i = 0; i < km::vm::read<WORD>(pid, image_nt_header + 0x06); i++) {
-
-		QWORD section = section_header + (i * 40);
-		DWORD section_characteristics = km::vm::read<DWORD>(pid, section + 0x24);
-
-
-		if (code_only)
-		{
-			if (!(section_characteristics & 0x00000020))
-				continue;
-		}
-
-		if ((section_characteristics & 0x02000000))
-			continue;
-
-		QWORD local_virtual_address = base + km::vm::read<DWORD>(pid, section + 0x0C);
-		DWORD local_virtual_size = km::vm::read<DWORD>(pid, section + 0x08);
-		QWORD target_virtual_address = (QWORD)a4 + km::vm::read<DWORD>(pid, section + 0x0C);
-		km::vm::read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size);
-	}
-	return (QWORD)a4;
-}
-
-QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
+QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only, BOOL rt)
 {
 	QWORD a0, a1, a2, a3 = 0;
 	char *a4;
@@ -858,9 +793,11 @@ QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 
 		QWORD local_virtual_address = base + km::vm::read<DWORD>(pid, section + 0x0c);
 		DWORD local_virtual_size = km::vm::read<DWORD>(pid, section + 0x08);
-		QWORD target_virtual_address = (QWORD)a4 + km::vm::read<DWORD>(pid, section + 0x14);
+		QWORD target_virtual_address = (QWORD)a4 + km::vm::read<DWORD>(pid, section + (rt ? 0x0c : 0x14));
 		km::vm::read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size);
-		*(DWORD*)((QWORD)a4 + (section - image_dos_header) + 0x10) = local_virtual_size;
+
+		if (!rt)
+			*(DWORD*)((QWORD)a4 + (section - image_dos_header) + 0x10) = local_virtual_size;
 	}
 	return (QWORD)a4;
 }
@@ -1075,7 +1012,7 @@ BOOL write_dump_file(std::string name, PVOID buffer, QWORD size)
 BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 {
 
-	QWORD target_base = vm_dump_module_ex(pid, file.base, 0);
+	QWORD target_base = vm_dump_module_ex(pid, file.base, 0, 0);
 
 	if (target_base == 0 || *(WORD*)target_base != IMAGE_DOS_SIGNATURE)
 	{
@@ -1260,7 +1197,7 @@ void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, DWORD
 
 	if (local_image)
 	{
-		QWORD runtime_image = vm_dump_rt_module_ex(pid, file.base, 1);
+		QWORD runtime_image = vm_dump_module_ex(pid, file.base, 1, 1);
 
 		if (runtime_image == 0 || *(WORD*)runtime_image != IMAGE_DOS_SIGNATURE)
 		{
