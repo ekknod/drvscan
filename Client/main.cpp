@@ -734,6 +734,71 @@ std::vector<DWORD> get_whitelisted_addresses(QWORD local_image, QWORD runtime_im
 	return whitelist_addresses;
 }
 
+QWORD vm_dump_rt_module_ex(DWORD pid, QWORD base, BOOL code_only)
+{
+	QWORD a0, a1, a2, a3 = 0;
+	char *a4;
+
+	a0 = base;
+	if (a0 == 0)
+		return 0;
+
+	a1 = km::vm::read<DWORD>(pid, a0 + 0x03C) + a0;
+	if (a1 == a0)
+	{
+		return 0;
+	}
+
+	a2 = km::vm::read<DWORD>(pid, a1 + 0x050);
+	if (a2 < 8)
+		return 0;
+
+	a4 = (char *)malloc(a2+24);
+
+
+	*(QWORD*)(a4)=base;
+	*(QWORD*)(a4 + 8)=a2;
+	*(QWORD*)(a4 + 16)=a3;
+
+	a4 += 24;
+
+
+	QWORD image_dos_header = base;
+	QWORD image_nt_header = km::vm::read<DWORD>(pid, image_dos_header + 0x03C) + image_dos_header;
+
+	DWORD headers_size = km::vm::read<DWORD>(pid, image_nt_header + 0x54);
+	km::vm::read(pid, image_dos_header, a4, headers_size);
+
+	unsigned short machine = km::vm::read<WORD>(pid, image_nt_header + 0x4);
+
+	QWORD section_header = machine == 0x8664 ?
+		image_nt_header + 0x0108 :
+		image_nt_header + 0x00F8;
+
+	
+	for (WORD i = 0; i < km::vm::read<WORD>(pid, image_nt_header + 0x06); i++) {
+
+		QWORD section = section_header + (i * 40);
+		DWORD section_characteristics = km::vm::read<DWORD>(pid, section + 0x24);
+
+
+		if (code_only)
+		{
+			if (!(section_characteristics & 0x00000020))
+				continue;
+		}
+
+		if ((section_characteristics & 0x02000000))
+			continue;
+
+		QWORD local_virtual_address = base + km::vm::read<DWORD>(pid, section + 0x0C);
+		DWORD local_virtual_size = km::vm::read<DWORD>(pid, section + 0x08);
+		QWORD target_virtual_address = (QWORD)a4 + km::vm::read<DWORD>(pid, section + 0x0C);
+		km::vm::read(pid, local_virtual_address, (PVOID)target_virtual_address, local_virtual_size);
+	}
+	return (QWORD)a4;
+}
+
 QWORD vm_dump_module_ex(DWORD pid, QWORD base, BOOL code_only)
 {
 	QWORD a0, a1, a2, a3 = 0;
@@ -806,6 +871,72 @@ void vm_free_module(QWORD dumped_module)
 	free((void *)dumped_module);
 }
 
+
+namespace pe
+{
+	QWORD get_nt_headers(QWORD image)
+	{
+		return *(DWORD*)(image + 0x03C) + image;
+	}
+
+	namespace nt
+	{
+		DWORD get_size(QWORD nt)
+		{
+			return *(DWORD*)(nt + 0x50);
+		}
+
+		DWORD get_headers_size(QWORD nt)
+		{
+			return *(DWORD*)(nt + 0x54);
+		}
+
+		WORD get_section_count(QWORD nt)
+		{
+			return *(WORD*)(nt + 0x06);
+		}
+
+		BOOL is_wow64(QWORD nt)
+		{
+			return *(WORD*)(nt + 0x4) == 0x014c;
+		}
+
+		PIMAGE_SECTION_HEADER get_image_sections(QWORD nt)
+		{
+			return is_wow64(nt) ? (PIMAGE_SECTION_HEADER)(nt + 0x00F8) :
+				(PIMAGE_SECTION_HEADER)(nt + 0x0108);
+		}
+
+		QWORD get_optional_header(QWORD nt)
+		{
+			return nt + 0x18;
+		}
+	}
+
+
+	namespace optional
+	{
+		QWORD get_image_base(QWORD opt)
+		{
+			QWORD nt = opt - 0x18;
+			return nt::is_wow64(nt) ? *(DWORD*)(opt + 0x1C) : *(QWORD*)(opt + 0x18);
+		}
+
+		IMAGE_DATA_DIRECTORY *get_data_directory(QWORD opt, int index)
+		{
+			QWORD nt = opt - 0x18;
+			return nt::is_wow64(nt) ?
+				(IMAGE_DATA_DIRECTORY*)(opt + 0x60 + (index * sizeof(IMAGE_DATA_DIRECTORY))) :
+				(IMAGE_DATA_DIRECTORY*)(opt + 0x70 + (index * sizeof(IMAGE_DATA_DIRECTORY)));
+		}
+	}
+}
+
+
+
+#define RELOC_FLAG64(RelInfo) ((RelInfo >> 0x0C) == IMAGE_REL_BASED_DIR64)
+#define RELOC_FLAG32(RelInfo) ((RelInfo >> 0x0C) == IMAGE_REL_BASED_HIGHLOW)
+
 PVOID LoadFileEx(PCSTR path, DWORD *out_len)
 {
 	VOID *ret = 0;
@@ -833,6 +964,87 @@ PVOID LoadFileEx(PCSTR path, DWORD *out_len)
 	}
 
 	return (PVOID)ret;
+}
+
+PVOID LoadImageEx(PCSTR path, QWORD current_base, DWORD *out_len)
+{
+	VOID *ret = LoadFileEx(path, out_len);
+
+	if (ret == 0)
+		return 0;
+
+	QWORD nt = pe::get_nt_headers((QWORD)ret);
+
+	DWORD image_size = pe::nt::get_size(nt);
+
+	QWORD local_base = pe::optional::get_image_base(pe::nt::get_optional_header(nt));
+
+	VOID *new_image = malloc(image_size);
+
+	memcpy(
+		new_image,
+		ret,
+		pe::nt::get_headers_size(nt)
+		);
+
+	PIMAGE_SECTION_HEADER section = pe::nt::get_image_sections(nt);
+
+	for (WORD i = 0; i < pe::nt::get_section_count(nt); i++)
+	{
+		if (section[i].SizeOfRawData)
+		{
+			memcpy (
+				(void *)((QWORD)new_image + section[i].VirtualAddress),
+				(void *)((QWORD)ret       + section[i].PointerToRawData),
+				section[i].SizeOfRawData
+			);
+		}
+	}
+
+	free( ret ) ;
+
+
+	nt = pe::get_nt_headers((QWORD)new_image);
+
+
+	QWORD opt = pe::nt::get_optional_header(nt);
+
+	BYTE *delta = (BYTE*)current_base - (QWORD)local_base;
+
+	if (!delta)
+		return new_image;
+
+	
+	
+	IMAGE_DATA_DIRECTORY *relocation = pe::optional::get_data_directory(opt, 5);
+
+	if (!relocation->Size)
+		return new_image;
+
+	
+	IMAGE_BASE_RELOCATION* pRelocData = (IMAGE_BASE_RELOCATION*)((QWORD)new_image + relocation->VirtualAddress);
+	const IMAGE_BASE_RELOCATION* pRelocEnd = (IMAGE_BASE_RELOCATION*)((QWORD)(pRelocData) + relocation->Size);
+	while (pRelocData < pRelocEnd && pRelocData->SizeOfBlock)
+	{
+		QWORD count = (pRelocData->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(UINT16);
+		UINT16* pRelativeInfo = (UINT16*)(pRelocData + 1);
+		for (QWORD i = 0; i != count; ++i, ++pRelativeInfo)
+		{
+			if (RELOC_FLAG64(*pRelativeInfo))
+			{
+				QWORD* pPatch = (QWORD*)((BYTE*)new_image + pRelocData->VirtualAddress + ((*pRelativeInfo) & 0xFFF));
+				*pPatch += (QWORD)(delta);
+			}
+			else if (RELOC_FLAG32(*pRelativeInfo))
+			{
+				DWORD* pPatch = (DWORD*)((BYTE*)new_image + pRelocData->VirtualAddress + ((*pRelativeInfo) & 0xFFF));
+				*pPatch += (DWORD)(QWORD)(delta);
+			}
+		}
+		pRelocData = (IMAGE_BASE_RELOCATION*)((BYTE*)(pRelocData) + pRelocData->SizeOfBlock);
+	}
+
+	return new_image;
 }
 
 void FreeFileEx(PVOID hMod)
@@ -881,7 +1093,7 @@ BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 		LOG("module: %s is succesfully dumped\n", file.name.c_str());
 	}
 
-	HMODULE dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+	HMODULE dll = (HMODULE)LoadImageEx(file.path.c_str(), file.base, 0);
 	if (!dll)
 	{
 		vm_free_module(target_base);
@@ -964,7 +1176,6 @@ void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff, std::v
 
 		UCHAR *section_name = (UCHAR*)(section + 0x00);
 		ULONG section_virtual_address = *(ULONG*)(section + 0x0C);
-		ULONG section_raw_address = *(ULONG*)(section + 0x14);
 		ULONG section_virtual_size = *(ULONG*)(section + 0x08);
 
 		if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
@@ -980,8 +1191,8 @@ void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff, std::v
 			scan_section(
 				diff,
 				(CHAR*)section_name,
-				(QWORD)((BYTE*)local_image + section_raw_address),
-				(QWORD)(runtime_image + section_raw_address),
+				(QWORD)((BYTE*)local_image + section_virtual_address),
+				(QWORD)(runtime_image + section_virtual_address),
 				section_virtual_size,
 				section_virtual_address,
 				whitelist_addresses
@@ -1001,10 +1212,10 @@ void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, DWORD
 
 	if (use_cache)
 	{
-		local_image = (HMODULE)LoadFileEx(("./dumps/" + file.name).c_str(), 0);
+		local_image = (HMODULE)LoadImageEx(("./dumps/" + file.name).c_str(), file.base, 0);
 		if (local_image == 0)
 		{
-			local_image = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+			local_image = (HMODULE)LoadImageEx(file.path.c_str(), file.base, 0);
 		}
 
 	
@@ -1044,12 +1255,12 @@ void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, DWORD
 			file.path = resolved_path;
 		}
 
-		local_image = (HMODULE)LoadFileEx(file.path.c_str(), 0);
+		local_image = (HMODULE)LoadImageEx(file.path.c_str(), file.base, 0);
 	}
 
 	if (local_image)
 	{
-		QWORD runtime_image = vm_dump_module_ex(pid, file.base, 1);
+		QWORD runtime_image = vm_dump_rt_module_ex(pid, file.base, 1);
 
 		if (runtime_image == 0 || *(WORD*)runtime_image != IMAGE_DOS_SIGNATURE)
 		{
