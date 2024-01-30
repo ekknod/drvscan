@@ -1829,7 +1829,7 @@ QWORD find_table_by_function(QWORD win32k, QWORD win32k_dmp, QWORD Win32kApiSetT
 }
 
 //
-// scans only ext_ms_win_core_win32k_fulluser_l1_table
+// scans only ext_ms_win_core_win32k_fulluser_l1_table/ext_ms_win_core_win32k_fullgdi_l1_table
 // because i just wanted to show how it could be done
 //
 int scan_w32k(void)
@@ -1867,7 +1867,6 @@ int scan_w32k(void)
 	LOG("scanning win32k hooks\n");
 
 	int index=0;
-
 	while (1)
 	{
 		if (table0[index] == lastadr)
@@ -1887,6 +1886,34 @@ int scan_w32k(void)
 
 		index++;
 	}
+
+	LOG("ext_ms_win_moderncore_win32k_base_sysentry_l1_table total entries: %ld\n", index);
+
+	index   = 0;
+	table0  = (QWORD*)get_dump_export((PVOID)win32kfull_dmp, "ext_ms_win_core_win32k_fullgdi_l1_table");
+	table1  = (QWORD*)find_table_by_function(win32k.base, win32k_dmp, Win32kApiSetTable, *(QWORD*)table0);
+	lastadr = (QWORD)table0 + win32kfull.base - (QWORD)win32kfull_dmp;
+	while (1)
+	{
+		if (table0[index] == lastadr)
+		{
+			break;
+		}
+
+		if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
+		{
+			LOG("ptr swap detected [%d] [%llX]\n", index, table1[index]);
+		}
+
+		if (table0[index] != table1[index])
+		{
+			LOG("ptr swap detected [%d] [%llX]\n", index, table1[index]);
+		}
+
+		index++;
+	}
+
+	LOG("ext_ms_win_core_win32k_fullgdi_l1_table total entries: %ld\n", index);
 
 	vm_free_module(win32k_dmp);
 	vm_free_module(win32kfull_dmp);
