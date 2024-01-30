@@ -1765,6 +1765,132 @@ int scan_efi(void)
 	return 0;
 }
 
+QWORD get_dump_export(PVOID dumped_module, PCSTR export_name)
+{
+	QWORD a0;
+	DWORD a1[4]{};
+
+
+	QWORD base = (QWORD)dumped_module;
+
+
+	a0 = base + *(WORD*)(base + 0x3C);
+	if (a0 == base)
+	{
+		return 0;
+	}
+
+	DWORD wow64_off = *(WORD*)(a0 + 0x4) == 0x8664 ? 0x88 : 0x78;
+
+	a0 = base + (QWORD)*(DWORD*)(a0 + wow64_off);
+	if (a0 == base)
+	{
+		return 0;
+	}
+
+	static int cnt=0;
+	cnt++;
+
+	memcpy(&a1, (const void *)(a0 + 0x18), sizeof(a1));
+	while (a1[0]--)
+	{
+		a0 = (QWORD)*(DWORD*)(base + a1[2] + ((QWORD)a1[0] * 4));
+		if (a0 == 0)
+		{
+			continue;
+		}
+
+		if (!_strcmpi((const char*)(base + a0), export_name))
+		{
+			a0 = *(WORD*)(base + a1[3] + ((QWORD)a1[0] * 2)) * 4;
+			a0 = *(DWORD*)(base + a1[1] + a0);
+			return (QWORD)((QWORD)dumped_module + a0);
+		}
+	}
+	return 0;
+}
+
+QWORD find_table_by_function(QWORD win32k, QWORD win32k_dmp, QWORD Win32kApiSetTable, QWORD func)
+{
+	for (int i = 0; i < 60; i++)
+	{
+		QWORD table = *(QWORD*)(Win32kApiSetTable + (i * sizeof(QWORD)));
+		if (table == 0)
+			continue;
+
+		table = table - win32k;
+		table = table + win32k_dmp;
+		if (*(QWORD*)table == func)
+		{
+			return table;
+		}
+	}
+	return 0;
+}
+
+//
+// scans only ext_ms_win_moderncore_win32k_base_sysentry_l1_table
+// because i just wanted to show how it could be done
+//
+int scan_w32k(void)
+{
+	FILE_INFO win32k{};
+	FILE_INFO win32kfull{};
+
+	for (auto &drv : get_kernel_modules())
+	{
+		if (!_strcmpi(drv.name.c_str(), "win32k.sys"))
+		{
+			win32k = drv;
+		}
+		else if (!_strcmpi(drv.name.c_str(), "win32kfull.sys"))
+		{
+			win32kfull = drv;
+		}
+	}
+
+	if (win32k.base == 0 || win32kfull.base == 0)
+	{
+		return 0;
+	}
+
+	QWORD win32k_dmp = vm_dump_module_ex(4, win32k.base, 0, 1);
+	QWORD Win32kApiSetTable = get_dump_export((PVOID)win32k_dmp, "ext_ms_win_moderncore_win32k_base_sysentry_l1_table");
+	Win32kApiSetTable =  Win32kApiSetTable + 0x70;
+
+	QWORD win32kfull_dmp = vm_dump_module_ex(4, win32kfull.base, 0, 1);
+	QWORD *table0  = (QWORD*)get_dump_export((PVOID)win32kfull_dmp, "ext_ms_win_core_win32k_fulluser_l1_table");
+	QWORD *table1  = (QWORD*)find_table_by_function(win32k.base, win32k_dmp, Win32kApiSetTable, *(QWORD*)table0);
+	QWORD lastadr = (QWORD)table0 + win32kfull.base - (QWORD)win32kfull_dmp;
+
+
+	LOG("scanning win32k hooks\n");
+
+	int index=0;
+
+	while (1)
+	{
+		if (table0[index] == lastadr)
+		{
+			break;
+		}
+
+		if (table0[index] != table1[index])
+		{
+			LOG("ptr swap detected [%d] [%llX]\n", index, table0[index]);
+		}
+
+		index++;
+	}
+
+	vm_free_module(win32k_dmp);
+	vm_free_module(win32kfull_dmp);
+
+	LOG("scan is complete\n");
+
+	return 0;
+}
+
 void dump_module(int pid, std::string module_name)
 {
 	std::vector<FILE_INFO> modules;
@@ -1939,7 +2065,8 @@ int main(void)
 		std::cout << "1.  scan memory\n";
 		std::cout << "2.  scan PCIe\n";
 		std::cout << "3.  scan UEFI\n";
-		std::cout << "4.  exit drvscan\n";
+		std::cout << "4.  scan win32k hooks\n";
+		std::cout << "5.  exit drvscan\n";
 		std::cout << "operation: ";
 		std::cin >> operation;
 
@@ -1951,7 +2078,9 @@ int main(void)
 			break;
 		case 3: scan_efi();
 			break;
-		case 4:
+		case 4: scan_w32k();
+			break;
+		case 5:
 			exit(0);
 			break;
 		default:
