@@ -1829,7 +1829,7 @@ QWORD find_table_by_function(QWORD win32k, QWORD win32k_dmp, QWORD Win32kApiSetT
 }
 
 //
-// scans only ext_ms_win_moderncore_win32k_base_sysentry_l1_table
+// scans only ext_ms_win_core_win32k_fulluser_l1_table
 // because i just wanted to show how it could be done
 //
 int scan_w32k(void)
