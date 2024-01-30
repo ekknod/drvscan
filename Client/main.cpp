@@ -1875,6 +1875,11 @@ int scan_w32k(void)
 			break;
 		}
 
+		if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
+		{
+			LOG("ptr swap detected [%d] [%llX]\n", index, table1[index]);
+		}
+
 		if (table0[index] != table1[index])
 		{
 			LOG("ptr swap detected [%d] [%llX]\n", index, table1[index]);
