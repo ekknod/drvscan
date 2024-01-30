@@ -1669,10 +1669,13 @@ std::vector<EFI_PAGE_INFO> get_efi_runtime_pages(void)
 std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 {
 	std::vector<EFI_MODULE_INFO> modules;
+	QWORD efi_page=0;
+	QWORD efi_page_count=0;
 
 	for (auto &page : get_efi_runtime_pages())
 	{
-		LOG("EFI page found [0x%llx - 0x%llx] page count: %ld\n", page.physical_address, page.physical_address + (page.page_count * PAGE_SIZE), page.page_count);
+		LOG("EFI Page [%llx] [0x%llx - 0x%llx] page count: %ld\n",
+			page.virtual_address, page.physical_address, page.physical_address + (page.page_count * PAGE_SIZE), page.page_count);
 
 		if (modules.size())
 		{
@@ -1700,15 +1703,20 @@ std::vector<EFI_MODULE_INFO> get_efi_module_list(void)
 		}
 		else
 		{
-			for (auto &base : modules)
-			{
-				LOG("[%llx] EFI runtime image found: [0x%llx - 0x%llx]\n", page.physical_address, base.physical_address, base.physical_address + base.size);
-				//
-				// to-do: verify image integrity
-				//
-			}
+			efi_page = page.physical_address;
+			efi_page_count = page.page_count;
 		}
 	}
+	printf("\n");
+	if (efi_page)
+	{
+		LOG("EFI DXE range: [0x%llx - 0x%llx]\n\n", efi_page, efi_page + (efi_page_count * PAGE_SIZE));
+		for (auto &base : modules)
+		{
+			LOG("EFI Runtime image [0x%llx - 0x%llx]\n", base.physical_address, base.physical_address + base.size);
+		}
+	}
+	printf("\n");
 	return modules;
 }
 
@@ -1887,7 +1895,7 @@ int scan_w32k(void)
 		index++;
 	}
 
-	LOG("ext_ms_win_moderncore_win32k_base_sysentry_l1_table total entries: %ld\n", index);
+	LOG("ext_ms_win_core_win32k_fulluser_l1_table total entries: %ld\n", index);
 
 	index   = 0;
 	table0  = (QWORD*)get_dump_export((PVOID)win32kfull_dmp, "ext_ms_win_core_win32k_fullgdi_l1_table");
@@ -1961,7 +1969,7 @@ void scan_module(int pid, std::string module_name, int diff, int use_cache)
 		modules = get_user_modules(pid);
 	}
 
-	LOG("\nscanning modules\n");
+	LOG("scanning modules\n");
 	for (auto mod : modules)
 	{
 		if (module_name.length() > 1)
@@ -1978,8 +1986,6 @@ void scan_module(int pid, std::string module_name, int diff, int use_cache)
 
 int scan_memory(void)
 {
-	printf("\n");
-
 	int pid = 4;
 	std::string module_name;
 	int diff = 0;
@@ -2101,6 +2107,8 @@ int main(void)
 		std::cout << "5.  exit drvscan\n";
 		std::cout << "operation: ";
 		std::cin >> operation;
+
+		printf("\n");
 
 		switch (operation)
 		{
