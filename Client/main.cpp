@@ -1877,7 +1877,7 @@ int scan_w32k(void)
 
 		if (table0[index] != table1[index])
 		{
-			LOG("ptr swap detected [%d] [%llX]\n", index, table0[index]);
+			LOG("ptr swap detected [%d] [%llX]\n", index, table1[index]);
 		}
 
 		index++;
