@@ -1,0 +1,27 @@
+[Version]
+Signature      = "$Windows NT$"
+Class          = "Infrastructure"
+ClassGuid      = {e55fa6f9-128c-4d04-abab-630c74b1453a}
+ 
+[DestinationDirs]
+DefaultDestDir = 12
+DriverFiles    = 12
+ 
+[DefaultInstall]
+CopyFiles      = DriverFiles
+ 
+[DefaultInstall.Services]
+AddService     = %DriverName%,,Service
+ 
+[Service]
+ServiceBinary  = %12%\%DriverName%.sys
+ServiceType    = 2 ; SERVICE_FILE_SYSTEM_DRIVER
+StartType      = 0 ; SERVICE_BOOT_START
+ErrorControl   = 1 ; SERVICE_ERROR_NORMAL
+LoadOrderGroup = "FSFilter Infrastructure"
+ 
+[DriverFiles]
+%DriverName%.sys
+ 
+[Strings]
+DriverName     = "driver"

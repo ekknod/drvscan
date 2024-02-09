@@ -2039,11 +2039,9 @@ int scan_memory(void)
 			std::cout << "usecache(0/1): ";
 			std::cin  >> use_cache;
 			break;
-		case 5:
-			dump_module(pid, module_name);
+		case 5: dump_module(pid, module_name);
 			break;
-		case 6:
-			scan_module(pid, module_name, diff, use_cache);
+		case 6: scan_module(pid, module_name, diff, use_cache);
 			break;
 		case 7:
 			return 0;
@@ -2120,8 +2118,7 @@ int main(void)
 			break;
 		case 4: scan_w32k();
 			break;
-		case 5:
-			exit(0);
+		case 5: exit(0);
 			break;
 		default:
 			LOG("no operation selected\n");
