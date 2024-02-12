@@ -1436,7 +1436,7 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 		tick = GetTickCount() - tick;
 		if (tick > 100)
 		{
-			dev.blk = 1;
+			dev.blk = 2;
 			dev.info = 1;
 			break;
 		}
@@ -1461,6 +1461,22 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 			dev.info = 2;
 			continue;
 		}
+
+		/*
+		int non_zero=0;
+		DWORD *bar = (DWORD*)(dev.cfg + 0x10);
+		for (int i = 0; i < 6; i++)
+		{
+			if (bar[i] != 0)
+			{
+				non_zero = 1;
+			}
+		}
+		if (non_zero == 0)
+		{
+			LOG("[%02d-%02d-%02d]\n", dev.bus, dev.slot, dev.func);
+		}
+		*/
 
 		if (heuristic_detection(dev.cfg))
 		{
