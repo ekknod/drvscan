@@ -1515,7 +1515,7 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 	{
 		if (!dev.blk)
 		{
-			LOG("[%s] [%02X:%02X:%02X] [%04X:%04X] [%s]\n",
+			LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
 				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
 		}
 	}
@@ -1525,7 +1525,7 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 		if (dev.blk == 1)
 		{
 			FontColor(14);
-			LOG("[%s] [%02X:%02X:%02X] [%04X:%04X] [%s]\n",
+			LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
 				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
 			FontColor(7);
 		}
@@ -1536,7 +1536,7 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 		if (dev.blk == 2)
 		{
 			FontColor(4);
-			LOG("[%s] [%02X:%02X:%02X] [%04X:%04X] [%s]\n",
+			LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
 				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
 			FontColor(7);
 		}
