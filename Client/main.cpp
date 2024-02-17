@@ -1290,6 +1290,31 @@ void PrintPcieConfiguration(unsigned char *cfg, int size)
 	printf("\n");
 }
 
+void PrintPcieBarSpace(DWORD bar)
+{
+	int line_counter=0;
+	int row_max_count=0;
+	for (int i = 0; i < 0x1000; i+=4)
+	{
+		unsigned int cfg = km::pm::read<unsigned int>(bar + i);
+		line_counter++;
+		printf("%08X,", cfg);
+		if (line_counter == 4)
+		{
+			printf("\n");
+			line_counter=0;
+		}
+		row_max_count++;
+
+		if (row_max_count == (16*4))
+		{
+			printf("\n");
+			row_max_count=0;
+		}
+	}
+	printf("\n");
+}
+
 typedef struct _PCI_CAPABILITIES_HEADER {
   UCHAR CapabilityID;
   UCHAR Next;
@@ -1462,22 +1487,6 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 			continue;
 		}
 
-		/*
-		int non_zero=0;
-		DWORD *bar = (DWORD*)(dev.cfg + 0x10);
-		for (int i = 0; i < 6; i++)
-		{
-			if (bar[i] != 0)
-			{
-				non_zero = 1;
-			}
-		}
-		if (non_zero == 0)
-		{
-			LOG("[%02d-%02d-%02d]\n", dev.bus, dev.slot, dev.func);
-		}
-		*/
-
 		if (heuristic_detection(dev.cfg))
 		{
 			dev.blk = 2;
@@ -1543,7 +1552,8 @@ int scan_pci(void)
 		printf(
 			"1.  scan devices\n"
 			"2.  dump cfg\n"
-			"3.  back\n"
+			"3.  dump bar\n"
+			"4.  back\n"
 		);
 
 		int operation=0;
@@ -1565,6 +1575,21 @@ int scan_pci(void)
 			}
 			break;
 		case 3:
+			for (auto &dev : devices)
+			{
+				DWORD *bar = (DWORD*)(dev.cfg + 0x10);
+				for (int i = 0; i < 6; i++)
+				{
+					if (bar[i] > 0x10000000)
+					{
+						printf("[%d:%d:%d] [%02X:%02X]\n", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
+						PrintPcieBarSpace(bar[i]);
+						printf("\n\n\n\n");
+					}
+				}
+				
+			}
+		case 4:
 			return 0;
 		default:
 			LOG("no operation selected\n");
