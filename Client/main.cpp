@@ -17,7 +17,7 @@ FontColor(4); \
 printf(__VA_ARGS__); \
 FontColor(7); \
 
-static void scan_efi(void);
+static void scan_efi(BOOL dump);
 static BOOL dump_module_to_file(DWORD pid, FILE_INFO file);
 static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, BOOL use_cache);
 static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar);
@@ -37,7 +37,7 @@ int main(int argc, char **argv)
 		return getchar();
 	}
 
-	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, pcileech=0, dumpcfg=0, dumpbar=0, use_cache = 0, scanefi = 0;
+	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, pcileech=0, dumpcfg=0, dumpbar=0, use_cache = 0, scanefi = 0, dump = 0;
 	for (int i = 1; i < argc; i++)
 	{
 		if (!strcmp(argv[i], "--help"))
@@ -50,6 +50,7 @@ int main(int argc, char **argv)
 				"    --usecache         we use local cache instead of original PE files\n"
 				"    --savecache        dump target process modules to disk, these can be used later with --usecache\n"
 				"--scanefi              scan abnormals from efi memory map\n"
+				"    --dump             dump found abnormal to disk\n"
 				"--scanpci              scan pci cards from the system\n"
 				"    --pcileech         search pcileech-fpga cards\n"
 				"    --dumpcfg          print out every card cfg space\n"
@@ -107,6 +108,11 @@ int main(int argc, char **argv)
 			scanefi = 1;
 		}
 
+		else if (!strcmp(argv[i], "--dump"))
+		{
+			dump = 1;
+		}
+
 		else if (!strcmp(argv[i], "--usecache"))
 		{
 			use_cache = 1;
@@ -154,7 +160,7 @@ int main(int argc, char **argv)
 	if (scanefi)
 	{
 		LOG("scanning efi\n");
-		scan_efi();
+		scan_efi(dump);
 		LOG("scan is complete\n");
 	}
 	return 0;
@@ -874,8 +880,13 @@ static BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 	return TRUE;
 }
 
-static void unlink_detection(std::vector<EFI_PAGE_TABLE_ALLOCATION>& page_table_list, std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map)
+static BOOL unlink_detection(
+	std::vector<EFI_PAGE_TABLE_ALLOCATION>& page_table_list,
+	std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map,
+	EFI_PAGE_TABLE_ALLOCATION *out
+	)
 {
+	BOOL status = 0;
 	for (auto& ptentry : page_table_list)
 	{
 		BOOL found = 0;
@@ -896,12 +907,20 @@ static void unlink_detection(std::vector<EFI_PAGE_TABLE_ALLOCATION>& page_table_
 				ptentry.PhysicalStart,
 				ptentry.PhysicalStart + (ptentry.NumberOfPages * 0x1000)
 			);
+			*out = ptentry;
 		}
 	}
+
+	return status;
 }
 
-static void invalid_range_detection(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map, EFI_PAGE_TABLE_ALLOCATION& dxe_range)
+static BOOL invalid_range_detection(
+	std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map,
+	EFI_PAGE_TABLE_ALLOCATION& dxe_range,
+	EFI_MEMORY_DESCRIPTOR *out
+	)
 {
+	BOOL status=0;
 	for (auto& entry : memory_map)
 	{
 		if (entry.PhysicalStart >= dxe_range.PhysicalStart &&
@@ -925,12 +944,17 @@ static void invalid_range_detection(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_m
 					entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
 					entry.VirtualStart
 				);
+
+				*out   = entry;
+				status = 1;
 			}
 		}
 	}
+
+	return status;
 }
 
-static void scan_efi(void)
+static void scan_efi(BOOL dump)
 {
 	std::vector<EFI_MEMORY_DESCRIPTOR> memory_map = km::efi::get_memory_map();
 	if (!memory_map.size())
@@ -971,8 +995,62 @@ static void scan_efi(void)
 	}
 
 
-	invalid_range_detection(memory_map, dxe_range);
-	unlink_detection(table_allocations, memory_map);
+	EFI_MEMORY_DESCRIPTOR eout_0{};
+	if (invalid_range_detection(memory_map, dxe_range, &eout_0))
+	{
+		//
+		// dump file out
+		//
+		if (dump)
+		{
+			LOG("dumping out: [%llX - %llX]\n", eout_0.PhysicalStart, eout_0.PhysicalStart + (eout_0.NumberOfPages * 0x1000));
+			QWORD size = eout_0.NumberOfPages * 0x1000;
+			PVOID buffer = malloc(size);
+			km::vm::read(0, eout_0.VirtualStart, buffer, size);
+			if (*(WORD*)(buffer) == IMAGE_DOS_SIGNATURE)
+			{
+				QWORD nt = pe::get_nt_headers((QWORD)buffer);
+				PIMAGE_SECTION_HEADER section = pe::nt::get_image_sections(nt);
+				for (WORD i = 0; i < pe::nt::get_section_count(nt); i++)
+				{
+					section[i].PointerToRawData = section[i].VirtualAddress;
+					section[i].SizeOfRawData    = section[i].Misc.VirtualSize;
+				}
+			}
+			FILE *f = fopen("eout_0.bin", "wb");
+			fwrite(buffer, size, 1, f);
+			fclose(f);
+			free(buffer);
+		}
+	}
+	EFI_PAGE_TABLE_ALLOCATION eout_1{};
+	if (unlink_detection(table_allocations, memory_map, &eout_1))
+	{
+		//
+		// dump file out
+		//
+		if (dump)
+		{
+			LOG("dumping out: [%llX - %llX]\n", eout_1.PhysicalStart, eout_1.PhysicalStart + (eout_1.NumberOfPages * 0x1000));
+			QWORD size = eout_1.NumberOfPages * 0x1000;
+			PVOID buffer = malloc(size);
+			km::io::read(eout_1.PhysicalStart, buffer, size);
+			if (*(WORD*)(buffer) == IMAGE_DOS_SIGNATURE)
+			{
+				QWORD nt = pe::get_nt_headers((QWORD)buffer);
+				PIMAGE_SECTION_HEADER section = pe::nt::get_image_sections(nt);
+				for (WORD i = 0; i < pe::nt::get_section_count(nt); i++)
+				{
+					section[i].PointerToRawData = section[i].VirtualAddress;
+					section[i].SizeOfRawData    = section[i].Misc.VirtualSize;
+				}
+			}
+			FILE *f = fopen("eout_1.bin", "wb");
+			fwrite(buffer, size, 1, f);
+			fclose(f);
+			free(buffer);
+		}
+	}
 
 	//
 	// later runtime checks
