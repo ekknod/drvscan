@@ -908,6 +908,7 @@ static BOOL unlink_detection(
 				ptentry.PhysicalStart + (ptentry.NumberOfPages * 0x1000)
 			);
 			*out = ptentry;
+			status = 1;
 		}
 	}
 
@@ -931,23 +932,18 @@ static BOOL invalid_range_detection(
 			continue;
 		}
 
-		if (entry.Type == 5 || entry.Type == 6 || entry.Attribute == 0x800000000000000f)
+		if ((entry.Type == 5 || entry.Type == 6) && entry.Attribute == 0x800000000000000f &&
+			entry.PhysicalStart > dxe_range.PhysicalStart)
 		{
-			//
-			// vmware
-			//
-			if (entry.PhysicalStart != 0x1000)
-			{
-				printf("\n");
-				LOG("DXE is found from invalid range!!! [%llx - %llx] 0x%llx\n",
-					entry.PhysicalStart,
-					entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
-					entry.VirtualStart
-				);
+			printf("\n");
+			LOG("DXE is found from invalid range!!! [%llx - %llx] 0x%llx\n",
+				entry.PhysicalStart,
+				entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
+				entry.VirtualStart
+			);
 
-				*out   = entry;
-				status = 1;
-			}
+			*out   = entry;
+			status = 1;
 		}
 	}
 
