@@ -1,4 +1,5 @@
 #pragma warning (disable: 4201)
+#pragma warning (disable: 4996)
 
 #include <ntifs.h>
 #include <intrin.h>
@@ -13,8 +14,11 @@ typedef ULONG DWORD;
 
 #define IOCTL_READMEMORY 0xECAC00
 #define IOCTL_IO_READ 0xECAC02
+#define IOCTL_IO_WRITE 0xECAC12
 #define IOCTL_REQUEST_MMAP 0xECAC04
 #define IOCTL_REQUEST_PAGES 0xECAC06
+#define IOCTL_READMEMORY_PROCESS 0xECAC08
+#define IOCTL_GET_PHYSICAL 0xECAC10
 
 #pragma pack(push, 1)
 typedef struct {
@@ -31,12 +35,38 @@ typedef struct {
 } DRIVER_REQUEST_MAP;
 #pragma pack(pop)
 
+#pragma pack(push, 1)
+typedef struct {
+	PVOID src;
+	PVOID dst;
+	ULONG_PTR length;
+	ULONG pid;
+} DRIVER_READMEMORY_PROCESS;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct {
+	PVOID InOutPhysical;
+} DRIVER_GET_PHYSICAL;
+#pragma pack(pop)
 
 typedef struct {
 	PVOID page_address_buffer;
 	PVOID page_count_buffer;
 	DWORD *total_count;
 } EFI_MEMORY_PAGES ;
+
+extern "C" NTSTATUS NTAPI MmCopyVirtualMemory
+(
+	PEPROCESS SourceProcess,
+	PVOID SourceAddress,
+	PEPROCESS TargetProcess,
+	PVOID TargetAddress,
+	SIZE_T BufferSize,
+	KPROCESSOR_MODE PreviousMode,
+	PSIZE_T ReturnSize
+);
+
 
 BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info);
 
@@ -82,9 +112,21 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 	if (ioctl_code == IOCTL_READMEMORY)
 	{
 		DRIVER_READMEMORY *mem = (DRIVER_READMEMORY*)buffer;
-		irp->IoStatus.Status = STATUS_SUCCESS;
+
+
+
+		PVOID virtual_buffer = ExAllocatePoolWithTag(NonPagedPoolNx, mem->length, POOLTAG);
+
+
 		__try {
-			memcpy( mem->buffer, mem->address, mem->length );
+			// MM_COPY_ADDRESS virtual_address;
+			// virtual_address.VirtualAddress = mem->address;
+			// irp->IoStatus.Status = MmCopyMemory( virtual_buffer, virtual_address, mem->length, MM_COPY_MEMORY_VIRTUAL, &mem->length);
+
+
+			memcpy( virtual_buffer, mem->address, mem->length );
+			irp->IoStatus.Status = STATUS_SUCCESS;
+
 		} __except (1)
 		{
 			//
@@ -92,6 +134,14 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 			//
 			irp->IoStatus.Status = STATUS_INVALID_ADDRESS;
 		}
+
+		if (irp->IoStatus.Status == STATUS_SUCCESS)
+		{
+			memcpy(mem->buffer, virtual_buffer, mem->length);
+		}
+
+		ExFreePool(virtual_buffer);
+
 		irp->IoStatus.Information = sizeof(DRIVER_READMEMORY);
 	}
 
@@ -102,6 +152,21 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 		if (io)
 		{
 			memcpy(mem->buffer, io, mem->length);
+			MmUnmapIoSpace(io, mem->length);
+			irp->IoStatus.Status = STATUS_SUCCESS;
+		} else {
+			irp->IoStatus.Status = STATUS_INVALID_ADDRESS;
+		}
+		irp->IoStatus.Information = sizeof(DRIVER_READMEMORY);
+	}
+
+	else if (ioctl_code == IOCTL_IO_WRITE)
+	{
+		DRIVER_READMEMORY *mem = (DRIVER_READMEMORY*)buffer;
+		PVOID io = MmMapIoSpace(*(PHYSICAL_ADDRESS*)&mem->address, mem->length, MmNonCached);
+		if (io)
+		{
+			memcpy(io, mem->buffer, mem->length);
 			MmUnmapIoSpace(io, mem->length);
 			irp->IoStatus.Status = STATUS_SUCCESS;
 		} else {
@@ -163,6 +228,40 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 		}
 		irp->IoStatus.Information = sizeof(DRIVER_REQUEST_MAP);
 	}
+
+	else if (ioctl_code == IOCTL_READMEMORY_PROCESS)
+	{
+		DRIVER_READMEMORY_PROCESS *mem = (DRIVER_READMEMORY_PROCESS*)buffer;
+
+		__try {
+			PEPROCESS eprocess;
+			irp->IoStatus.Status = PsLookupProcessByProcessId((HANDLE)mem->pid, &eprocess);
+			if (irp->IoStatus.Status == 0)
+			{
+				irp->IoStatus.Status = MmCopyVirtualMemory( eprocess, mem->src, PsGetCurrentProcess(), mem->dst, mem->length, KernelMode, &mem->length);
+			}
+		} __except (1)
+		{
+			//
+			// do nothing
+			//
+			irp->IoStatus.Status = STATUS_INVALID_ADDRESS;
+		}
+
+		irp->IoStatus.Information = sizeof(DRIVER_READMEMORY_PROCESS);
+	}
+
+	else if (ioctl_code == IOCTL_GET_PHYSICAL)
+	{
+		DRIVER_GET_PHYSICAL *mem = (DRIVER_GET_PHYSICAL*)buffer;
+
+		QWORD physical = *(QWORD*)mem->InOutPhysical;
+		*(QWORD*)mem->InOutPhysical = (QWORD)MmGetPhysicalAddress(  (PVOID)physical  ).QuadPart;
+
+		irp->IoStatus.Status = STATUS_SUCCESS;
+
+		irp->IoStatus.Information = sizeof(DRIVER_GET_PHYSICAL);
+	}
 E0:
 	IoCompleteRequest(irp, IO_NO_INCREMENT);
 	return STATUS_SUCCESS;
@@ -207,6 +306,7 @@ extern "C" NTSTATUS DriverEntry(
 {
 	UNREFERENCED_PARAMETER(RegistryPath);
 
+
 	//
 	// resolve KeLoaderBlock address
 	//
@@ -220,7 +320,32 @@ extern "C" NTSTATUS DriverEntry(
 
 		return STATUS_FAILED_DRIVER_ENTRY;
 	}
-		
+
+
+	//
+	// setup driver comms
+	//
+	RtlInitUnicodeString(&gDeviceName, L"\\Device\\drvscan");
+	if (!NT_SUCCESS(IoCreateDevice(DriverObject, 0, &gDeviceName, FILE_DEVICE_UNKNOWN, FILE_DEVICE_SECURE_OPEN, FALSE, &gDeviceObject)))
+	{
+		//
+		// driver is already installed
+		//
+		return STATUS_ENTRYPOINT_NOT_FOUND;
+	}
+
+
+	RtlInitUnicodeString(&gDosDeviceName, L"\\DosDevices\\drvscan");
+	IoCreateSymbolicLink(&gDosDeviceName, &gDeviceName);
+	SetFlag(gDeviceObject->Flags, DO_BUFFERED_IO);
+	for (int i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
+	{
+		DriverObject->MajorFunction[i] = dummy_io;
+	}
+	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = IoControl;
+	DriverObject->DriverUnload = DriverUnload;
+	ClearFlag(gDeviceObject->Flags, DO_DEVICE_INITIALIZING);
+	
 
 	//
 	// copy all efi memory pages from page tables
@@ -248,24 +373,6 @@ extern "C" NTSTATUS DriverEntry(
 	gEfiMemoryMap     = ExAllocatePool2(POOL_FLAG_NON_PAGED, EfiMemoryMapSize, POOLTAG);
 	gEfiMemoryMapSize = EfiMemoryMapSize;
 	memcpy(gEfiMemoryMap, (const void *)EfiMemoryMap, EfiMemoryMapSize);
-	
-
-	//
-	// setup driver comms
-	//
-	RtlInitUnicodeString(&gDeviceName, L"\\Device\\acdriver");
-	IoCreateDevice(DriverObject, 0, &gDeviceName, FILE_DEVICE_UNKNOWN, FILE_DEVICE_SECURE_OPEN, FALSE, &gDeviceObject);
-	RtlInitUnicodeString(&gDosDeviceName, L"\\DosDevices\\acdriver");
-	IoCreateSymbolicLink(&gDosDeviceName, &gDeviceName);
-
-	SetFlag(gDeviceObject->Flags, DO_BUFFERED_IO);
-	for (int i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
-	{
-		DriverObject->MajorFunction[i] = dummy_io;
-	}
-	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = IoControl;
-	DriverObject->DriverUnload = DriverUnload;
-	ClearFlag(gDeviceObject->Flags, DO_DEVICE_INITIALIZING);
 
 	return STATUS_SUCCESS;
 }
