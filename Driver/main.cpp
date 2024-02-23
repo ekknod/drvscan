@@ -140,7 +140,7 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 			memcpy(mem->buffer, virtual_buffer, mem->length);
 		}
 
-		ExFreePool(virtual_buffer);
+		ExFreePoolWithTag(virtual_buffer, POOLTAG);
 
 		irp->IoStatus.Information = sizeof(DRIVER_READMEMORY);
 	}
