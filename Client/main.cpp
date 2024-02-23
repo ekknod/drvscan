@@ -716,7 +716,7 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 			// if we dont have whitelisted patches available,
 			// we have to use min difference [9]
 			//
-			if (!whitelist_addresses.size())
+			if (!use_cache)
 			{
 				min_difference = 9;
 			}
