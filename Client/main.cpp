@@ -713,7 +713,7 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 		QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
 		unsigned short machine = *(WORD*)(image_nt_header + 0x4);
 
-		DWORD min_difference = 0;
+		DWORD min_difference = 1;
 
 		if (pid == 4)
 		{
