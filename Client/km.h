@@ -37,6 +37,7 @@ namespace km
 	namespace vm
 	{
 		BOOL  read(DWORD pid, QWORD address, PVOID buffer, QWORD length);
+		QWORD get_physical_address(QWORD virtual_address);
 		PVOID dump_module(DWORD pid, QWORD base, DWORD dmp_type);
 		void  free_module(PVOID dumped_module);
 
@@ -131,6 +132,11 @@ namespace km
 			EFI_MODULE_INFO module,
 			std::vector<EFI_PAGE_TABLE_ALLOCATION> &page_table_list
 			);
+
+		//
+		// get list of efi runtime functions
+		//
+		std::vector<QWORD> get_runtime_table(void);
 	}
 }
 

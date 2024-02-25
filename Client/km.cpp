@@ -258,6 +258,15 @@ BOOL km::vm::read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
 	return 0;
 }
 
+QWORD km::vm::get_physical_address(QWORD virtual_address)
+{
+	DRIVER_GET_PHYSICAL io{};
+	io.InOutPhysical = (PVOID)&virtual_address;
+	if (!DeviceIoControl(hDriver, IOCTL_GET_PHYSICAL, &io, sizeof(io), &io, sizeof(io), 0, 0))
+		return 0;
+	return virtual_address;
+}
+
 PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 {
 	if (base == 0)
@@ -578,5 +587,25 @@ EFI_PAGE_TABLE_ALLOCATION km::efi::get_dxe_range(
 		}
 	}
 	return {};
+}
+
+std::vector<QWORD> km::efi::get_runtime_table(void)
+{
+	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
+	HalEfiRuntimeServicesTableAddr       = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
+	HalEfiRuntimeServicesTableAddr       = km::vm::read<QWORD>(HalEfiRuntimeServicesTableAddr);
+	if (!HalEfiRuntimeServicesTableAddr)
+	{
+		return {};
+	}
+
+	QWORD HalEfiRuntimeServicesTable[9];
+	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
+
+	std::vector<QWORD> table{};
+	for (int i = 9; i--;)
+		table.push_back(HalEfiRuntimeServicesTable[i]);
+
+	return table;
 }
 

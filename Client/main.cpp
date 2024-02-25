@@ -159,7 +159,7 @@ int main(int argc, char **argv)
 
 	if (scanefi)
 	{
-		LOG("scanning efi\n");
+		LOG("scanning EFI\n");
 		scan_efi(dump);
 		LOG("scan is complete\n");
 	}
@@ -950,6 +950,62 @@ static BOOL invalid_range_detection(
 	return status;
 }
 
+static void scan_runtime(std::vector<EFI_MODULE_INFO> &dxe_modules)
+{
+	std::vector<QWORD> HalEfiRuntimeServicesTable = km::efi::get_runtime_table();
+	if (!HalEfiRuntimeServicesTable.size())
+	{
+		return;
+	}
+
+	for (int i = 0; i < HalEfiRuntimeServicesTable.size(); i++)
+	{
+		QWORD rt_func = HalEfiRuntimeServicesTable[i];
+		if (km::vm::read<WORD>(rt_func) == 0x25ff)
+		{
+			LOG_RED("EFI Runtime service [%d] is hooked with byte patch: %llx\n", i, rt_func);
+			continue;
+		}
+
+		QWORD physical_address = km::vm::get_physical_address(rt_func);
+		BOOL found = 0;
+		for (auto& base : dxe_modules)
+		{
+			if (physical_address >= (QWORD)base.physical_address && physical_address <= (QWORD)((QWORD)base.physical_address + base.size))
+			{
+				found = 1;
+				break;
+			}
+		}
+
+		if (!found)
+		{
+			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx, %llx\n", i, rt_func, physical_address);
+		}
+	}
+}
+
+static void dump_to_file(PCSTR filename, QWORD physical_address, QWORD size)
+{
+	LOG("dumping out: [%llX - %llX]\n", physical_address, physical_address + size);
+	PVOID buffer = malloc(size);
+	km::io::read(physical_address, buffer, size);
+	if (*(WORD*)(buffer) == IMAGE_DOS_SIGNATURE)
+	{
+		QWORD nt = pe::get_nt_headers((QWORD)buffer);
+		PIMAGE_SECTION_HEADER section = pe::nt::get_image_sections(nt);
+		for (WORD i = 0; i < pe::nt::get_section_count(nt); i++)
+		{
+			section[i].PointerToRawData = section[i].VirtualAddress;
+			section[i].SizeOfRawData    = section[i].Misc.VirtualSize;
+		}
+	}
+	FILE *f = fopen(filename, "wb");
+	fwrite(buffer, size, 1, f);
+	fclose(f);
+	free(buffer);
+}
+
 static void scan_efi(BOOL dump)
 {
 	std::vector<EFI_MEMORY_DESCRIPTOR> memory_map = km::efi::get_memory_map();
@@ -990,62 +1046,17 @@ static void scan_efi(BOOL dump)
 		);
 	}
 
+	scan_runtime(dxe_modules);
 
 	EFI_MEMORY_DESCRIPTOR eout_0{};
-	if (invalid_range_detection(memory_map, dxe_range, &eout_0))
+	if (invalid_range_detection(memory_map, dxe_range, &eout_0) && dump)
 	{
-		//
-		// dump file out
-		//
-		if (dump)
-		{
-			LOG("dumping out: [%llX - %llX]\n", eout_0.PhysicalStart, eout_0.PhysicalStart + (eout_0.NumberOfPages * 0x1000));
-			QWORD size = eout_0.NumberOfPages * 0x1000;
-			PVOID buffer = malloc(size);
-			km::vm::read(0, eout_0.VirtualStart, buffer, size);
-			if (*(WORD*)(buffer) == IMAGE_DOS_SIGNATURE)
-			{
-				QWORD nt = pe::get_nt_headers((QWORD)buffer);
-				PIMAGE_SECTION_HEADER section = pe::nt::get_image_sections(nt);
-				for (WORD i = 0; i < pe::nt::get_section_count(nt); i++)
-				{
-					section[i].PointerToRawData = section[i].VirtualAddress;
-					section[i].SizeOfRawData    = section[i].Misc.VirtualSize;
-				}
-			}
-			FILE *f = fopen("eout_0.bin", "wb");
-			fwrite(buffer, size, 1, f);
-			fclose(f);
-			free(buffer);
-		}
+		dump_to_file("eout_0.bin", eout_0.PhysicalStart, eout_0.NumberOfPages*0x1000);
 	}
 	EFI_PAGE_TABLE_ALLOCATION eout_1{};
-	if (unlink_detection(table_allocations, memory_map, &eout_1))
+	if (unlink_detection(table_allocations, memory_map, &eout_1) && dump)
 	{
-		//
-		// dump file out
-		//
-		if (dump)
-		{
-			LOG("dumping out: [%llX - %llX]\n", eout_1.PhysicalStart, eout_1.PhysicalStart + (eout_1.NumberOfPages * 0x1000));
-			QWORD size = eout_1.NumberOfPages * 0x1000;
-			PVOID buffer = malloc(size);
-			km::io::read(eout_1.PhysicalStart, buffer, size);
-			if (*(WORD*)(buffer) == IMAGE_DOS_SIGNATURE)
-			{
-				QWORD nt = pe::get_nt_headers((QWORD)buffer);
-				PIMAGE_SECTION_HEADER section = pe::nt::get_image_sections(nt);
-				for (WORD i = 0; i < pe::nt::get_section_count(nt); i++)
-				{
-					section[i].PointerToRawData = section[i].VirtualAddress;
-					section[i].SizeOfRawData    = section[i].Misc.VirtualSize;
-				}
-			}
-			FILE *f = fopen("eout_1.bin", "wb");
-			fwrite(buffer, size, 1, f);
-			fclose(f);
-			free(buffer);
-		}
+		dump_to_file("eout_1.bin", eout_1.PhysicalStart, eout_1.NumberOfPages*0x1000);
 	}
 
 	//
