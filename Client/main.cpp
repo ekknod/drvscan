@@ -17,6 +17,22 @@ FontColor(4); \
 printf(__VA_ARGS__); \
 FontColor(7); \
 
+#define LOG_YELLOW(...) \
+printf("[drvscan] "); \
+FontColor(14); \
+printf(__VA_ARGS__); \
+FontColor(7); \
+
+#define PRINT_RED(...) \
+FontColor(4); \
+printf(__VA_ARGS__); \
+FontColor(7); \
+
+#define PRINT_GREEN(...) \
+FontColor(2); \
+printf(__VA_ARGS__); \
+FontColor(7); \
+
 static void scan_efi(BOOL dump);
 static BOOL dump_module_to_file(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file);
 static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, BOOL use_cache);
@@ -444,10 +460,8 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 	{
 		if (dev.blk == 1)
 		{
-			FontColor(14);
-			LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
+			LOG_YELLOW("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
 				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
-			FontColor(7);
 		}
 	}
 
@@ -455,10 +469,8 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 	{
 		if (dev.blk == 2)
 		{
-			FontColor(4);
-			LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
+			LOG_RED("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
 				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
-			FontColor(7);
 		}
 	}
 }
@@ -535,43 +547,19 @@ static void scan_section(DWORD diff, CHAR *section_name, QWORD local_image, QWOR
 
 			cnt++;
 		}
-
 		if (cnt >= diff)
 		{
-			//
-			// skip zero pages
-			//
-			int read_success=0;
+			printf("%s:0x%llx is modified (%ld bytes): ", section_name, section_address + i, cnt);
 			for (DWORD j = 0; j < cnt; j++)
 			{
-				if (((unsigned char*)runtime_image)[i + j] != 0)
-				{
-					read_success=1;
-					break;
-				}
+				PRINT_GREEN("%02X ", ((unsigned char*)local_image)[i + j]);
 			}
-
-			if (read_success)
+			printf("-> ");
+			for (DWORD j = 0; j < cnt; j++)
 			{
-
-				printf("%s:0x%llx is modified (%ld bytes): ", section_name, section_address + i, cnt);
-				FontColor(2);
-				for (DWORD j = 0; j < cnt; j++)
-				{
-					printf("%02X ", ((unsigned char*)local_image)[i + j]);
-				}
-				FontColor(7);
-				printf("-> ");
-
-				FontColor(4);
-				for (DWORD j = 0; j < cnt; j++)
-				{
-					printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
-				}
-				FontColor(7);
-				printf("\n");
-
+				PRINT_RED("%02X ", ((unsigned char*)runtime_image)[i + j]);
 			}
+			printf("\n");
 		}
 		i += cnt;
 	}
