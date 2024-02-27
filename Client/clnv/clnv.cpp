@@ -14,6 +14,14 @@
 
 #define PAGE_ALIGN(Va) ((PVOID)((ULONG_PTR)(Va) & ~(0x1000 - 1)))
 
+static void unsupported_error(void)
+{
+	printf(
+		"NV connector is not supported,\n"
+		"please launch driver or change your target process\n"
+	);
+}
+
 BOOL cl::clnv::initialize(void)
 {
 	if (hDriver != 0)
@@ -52,50 +60,13 @@ BOOL cl::clnv::initialize(void)
 	return hDriver != 0;
 }
 
-static BOOL nvvm_read(cl::clnv *driver, QWORD virtual_address, PVOID buffer, QWORD length)
-{
-	QWORD total_size = length;
-	QWORD offset = 0;
-	QWORD bytes_read = 0;
-	int   cnt = 0;
-
-	while (total_size) {
-		QWORD physical_address = driver->get_physical_address(virtual_address + offset);
-		if (!physical_address) {
-			if (total_size >= 0x1000)
-			{
-				bytes_read = 0x1000;
-			}
-			else
-			{
-				bytes_read = total_size;
-			}
-			memset((PVOID)((QWORD)buffer + offset), 0, bytes_read);
-			goto E0;
-		}
-		{
-			QWORD current_size = min(0x1000 - (physical_address & 0xFFF), total_size);
-			if (!driver->read_mmio(physical_address, (PVOID)((QWORD)buffer + offset), current_size))
-			{
-				break;
-			}
-			cnt++;
-			bytes_read = current_size;
-		}
-	E0:
-		total_size -= bytes_read;
-		offset += bytes_read;
-	}
-	return cnt != 0;
-}
-
 BOOL cl::clnv::read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length)
 {
 	if (pid == 4 || pid == 0)
 	{
-		return nvvm_read(this, address, buffer, length);
+		unsupported_error();
+		return 0;
 	}
-
 
 	HANDLE process_handle = OpenProcess(PROCESS_VM_READ, 0, pid);
 
@@ -204,12 +175,14 @@ QWORD cl::clnv::get_physical_address(QWORD virtual_address)
 PVOID cl::clnv::__get_memory_map(QWORD* size)
 {
 	UNREFERENCED_PARAMETER(size);
+	unsupported_error();
 	return 0;
 }
 
 PVOID cl::clnv::__get_memory_pages(QWORD* size)
 {
 	UNREFERENCED_PARAMETER(size);
+	unsupported_error();
 	return 0;
 }
 

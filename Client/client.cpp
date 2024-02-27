@@ -4,7 +4,7 @@
 #include "clum/clum.h"
 
 typedef ULONG_PTR QWORD;
-std::vector<QWORD> global_export_list;
+static std::vector<QWORD> global_export_list;
 
 class DLL_EXPORT
 {
