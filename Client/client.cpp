@@ -1,5 +1,6 @@
 #include "client.h"
 #include "clkm/clkm.h"
+#include "clnv/clnv.h"
 #include "clum/clum.h"
 
 typedef ULONG_PTR QWORD;
@@ -152,6 +153,7 @@ BOOL cl::initialize(void)
 	}
 	
 	clkm *km = new clkm();
+	clnv *nv = new clnv();
 	clum *um = new clum();
 	if (controller == 0 && km->initialize())
 	{
@@ -160,6 +162,15 @@ BOOL cl::initialize(void)
 	else
 	{
 		delete km; km = 0;
+	}
+
+	if (controller == 0 && nv->initialize())
+	{
+		controller = nv;
+	}
+	else
+	{
+		delete nv; nv = 0;
 	}
 
 	if (controller == 0 && um->initialize())
@@ -171,7 +182,7 @@ BOOL cl::initialize(void)
 		delete um; um = 0;
 	}
 	
-	if (km)
+	if ((km || nv))
 	{
 		//
 		// resolve HalpPciMcfgTableCount/HalpPciMcfgTable addresses

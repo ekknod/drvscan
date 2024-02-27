@@ -40,6 +40,12 @@ static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar);
 
 int main(int argc, char **argv)
 {
+	//
+	// reset font
+	//
+	FontColor(7);
+
+
 	if (!cl::initialize())
 	{
 		LOG("driver is not running\n");

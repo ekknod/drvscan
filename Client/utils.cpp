@@ -490,10 +490,16 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 		pRelocData = (IMAGE_BASE_RELOCATION*)((BYTE*)(pRelocData)+pRelocData->SizeOfBlock);
 	}
 
-
 	//
 	// https://denuvosoftwaresolutions.github.io/DVRT/dvrt.html
 	//
+
+	//
+	// validate target module
+	//
+	if (!pe::nt::get_image_section(nt, "GFIDS"))
+		return new_image;
+
 	IMAGE_DATA_DIRECTORY* data_dir = (IMAGE_DATA_DIRECTORY*)pe::optional::get_data_directory(opt, 10);
 	if (data_dir->VirtualAddress == 0)
 		return new_image;
@@ -501,12 +507,10 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 	if (data_dir->Size == 0)
 		return new_image;
 
-	if (data_dir->Size != 0x140)
-	{
-		return new_image;
-	}
+
 
 	IMAGE_LOAD_CONFIG_DIRECTORY* dir = (IMAGE_LOAD_CONFIG_DIRECTORY*)((QWORD)new_image + data_dir->VirtualAddress);
+
 
 	if (dir->DynamicValueRelocTableOffset == 0)
 		return new_image;

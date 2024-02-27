@@ -30,6 +30,9 @@
     <ClCompile Include="clum\clum.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="clnv\clnv.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="utils.h">
@@ -42,6 +45,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="clum\clum.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="clnv\clnv.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

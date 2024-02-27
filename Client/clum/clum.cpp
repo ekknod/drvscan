@@ -39,7 +39,7 @@ BOOL cl::clum::read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length
 	BOOL status = ReadProcessMemory(process_handle, (LPCVOID)address, buffer, length, 0);
 
 	//
-	// close proces object and return read status
+	// close process object and return read status
 	//
 	CloseHandle(process_handle);
 	return status;
