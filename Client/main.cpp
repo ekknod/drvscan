@@ -715,13 +715,43 @@ static BOOL write_dump_file(std::string name, PVOID buffer, QWORD size)
 
 static BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 {
-	QWORD target_base = (QWORD)km::vm::dump_module(pid, file.base, DMP_FULL | DMP_RAW);
+	PVOID disk_base = (PVOID)LoadFileEx(file.path.c_str(), 0);
+	if (disk_base == 0)
+	{
+		return 0;
+	}
 
+	QWORD target_base = (QWORD)km::vm::dump_module(pid, file.base, DMP_FULL | DMP_RAW);
 	if (target_base == 0)
 	{
-		km::vm::free_module((PVOID)target_base);
+		free(disk_base);
 		return FALSE;
 	}
+
+	//
+	// copy discardable sections from disk
+	//
+	QWORD disk_nt = (QWORD)pe::get_nt_headers((QWORD)disk_base);
+	PIMAGE_SECTION_HEADER section_disk = pe::nt::get_image_sections(disk_nt);
+	for (WORD i = 0; i < pe::nt::get_section_count(disk_nt); i++)
+	{
+		if (section_disk[i].SizeOfRawData)
+		{
+			if ((section_disk[i].Characteristics & 0x02000000))
+			{
+				memcpy(
+					(void*)(target_base + section_disk[i].PointerToRawData),
+					(void*)((QWORD)disk_base + section_disk[i].PointerToRawData),
+					section_disk[i].SizeOfRawData
+				);
+			}
+		}
+	}
+
+	//
+	// free disk base
+	//
+	free(disk_base);
 
 	//
 	// write dump file to /dumps/modulename

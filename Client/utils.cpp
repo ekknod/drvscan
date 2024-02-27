@@ -419,8 +419,6 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 
 	VOID* new_image = malloc(image_size);
 
-
-
 	memcpy(
 		new_image,
 		file_pe,
@@ -503,6 +501,11 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 	if (data_dir->Size == 0)
 		return new_image;
 
+	if (data_dir->Size != 0x140)
+	{
+		return new_image;
+	}
+
 	IMAGE_LOAD_CONFIG_DIRECTORY* dir = (IMAGE_LOAD_CONFIG_DIRECTORY*)((QWORD)new_image + data_dir->VirtualAddress);
 
 	if (dir->DynamicValueRelocTableOffset == 0)
@@ -584,7 +587,6 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 		else if (reloc_data->symbol == 7)
 		{
 		}
-
 		else if (reloc_data->symbol == 5)
 		{
 			PEBaseRelocation* base_reloc = (PEBaseRelocation*)(reloc_data + 1);

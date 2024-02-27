@@ -298,6 +298,7 @@ PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 	*(QWORD*)(new_base + 0) = base;
 	*(QWORD*)(new_base + 8) = image_size;
 	new_base += 16;
+	memset(new_base, 0, image_size);
 
 	DWORD headers_size = read<DWORD>(nt_header + 0x54, pid);
 	vm::read(pid, base, new_base, headers_size);
