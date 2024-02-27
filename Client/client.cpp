@@ -1,4 +1,6 @@
-#include "km.h"
+#include "client.h"
+#include "clkm/clkm.h"
+#include "clum/clum.h"
 
 typedef ULONG_PTR QWORD;
 std::vector<QWORD> global_export_list;
@@ -16,7 +18,7 @@ public:
 };
 
 //
-// NTOSKRNL_EXPORT define variables are automatically resolved in km::initialize
+// NTOSKRNL_EXPORT define variables are automatically resolved in cl::initialize
 //
 #define NTOSKRNL_EXPORT(export_name) \
 DLL_EXPORT export_name((QWORD)#export_name);
@@ -30,9 +32,9 @@ NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
 
 QWORD ntoskrnl_base;
 
-namespace km
+namespace cl
 {
-	HANDLE hDriver = 0;
+	client *controller;
 
 	QWORD HalpPciMcfgTableCount;
 	QWORD HalpPciMcfgTable;
@@ -116,9 +118,9 @@ cleanup:
 	return export_address;
 }
 
-BOOL km::initialize(void)
+BOOL cl::initialize(void)
 {
-	if (hDriver != 0)
+	if (controller != 0)
 	{
 		return 1;
 	}
@@ -148,15 +150,28 @@ BOOL km::initialize(void)
 			return 0;
 		}
 	}
-
-	hDriver = CreateFileA("\\\\.\\drvscan", GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-
-	if (hDriver == INVALID_HANDLE_VALUE)
+	
+	clkm *km = new clkm();
+	clum *um = new clum();
+	if (controller == 0 && km->initialize())
 	{
-		hDriver = 0;
+		controller = km;
+	}
+	else
+	{
+		delete km; km = 0;
 	}
 
-	if (hDriver != 0)
+	if (controller == 0 && um->initialize())
+	{
+		controller = um;
+	}
+	else
+	{
+		delete um; um = 0;
+	}
+	
+	if (km)
 	{
 		//
 		// resolve HalpPciMcfgTableCount/HalpPciMcfgTable addresses
@@ -193,81 +208,20 @@ BOOL km::initialize(void)
 		MmPfnDatabase         = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x0E + 0x02);
 		MmPteBase             = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x20 + 0x02);
 	}
-
-	return hDriver != 0;
+	return 1;
 }
 
-QWORD km::get_physical_address(QWORD virtual_address)
+QWORD cl::get_physical_address(QWORD virtual_address)
 {
-	DRIVER_GET_PHYSICAL io{};
-	io.InOutPhysical = (PVOID)&virtual_address;
-	if (!DeviceIoControl(hDriver, IOCTL_GET_PHYSICAL, &io, sizeof(io), &io, sizeof(io), 0, 0))
-		return 0;
-	return virtual_address;
+	return controller->get_physical_address(virtual_address);
 }
 
-BOOL km::vm::read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
+BOOL cl::vm::read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
 {
-	if (!km::initialize())
-	{
-		return 0;
-	}
-
-	if (pid == 4 || pid == 0)
-	{
-		DRIVER_READMEMORY io{};
-		io.address = (PVOID)address;
-
-		PVOID tmp_buffer = (PVOID)malloc(length);
-
-		io.buffer = tmp_buffer;
-		io.length = length;
-
-		BOOL status = DeviceIoControl(hDriver, IOCTL_READMEMORY, &io, sizeof(io), &io, sizeof(io), 0, 0);
-
-		if (status)
-		{
-			memcpy(buffer, tmp_buffer, length);
-		}
-		else
-		{
-			memset(buffer, 0, length);
-		}
-
-		free(tmp_buffer);
-
-		return status;
-	}
-	else
-	{
-		DRIVER_READMEMORY_PROCESS io{};
-		io.src = (PVOID)address;
-
-		PVOID tmp_buffer = (PVOID)malloc(length);
-
-		io.dst = tmp_buffer;
-		io.length = length;
-		io.pid = pid;
-
-		BOOL status = DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
-
-		if (status)
-		{
-			memcpy(buffer, tmp_buffer, length);
-		}
-		else
-		{
-			memset(buffer, 0, length);
-		}
-
-		free(tmp_buffer);
-
-		return status;
-	}
-	return 0;
+	return controller->read_virtual(pid, address, buffer, length);
 }
 
-PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
+PVOID cl::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 {
 	if (base == 0)
 	{
@@ -345,7 +299,7 @@ PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 				continue;
 			}
 		}
-		QWORD target_address = (QWORD)new_base + km::vm::read<DWORD>(pid, section + ((dmp_type & DMP_RAW) ? 0x14 : 0x0c));
+		QWORD target_address = (QWORD)new_base + cl::vm::read<DWORD>(pid, section + ((dmp_type & DMP_RAW) ? 0x14 : 0x0c));
 		QWORD virtual_address = base + (QWORD)read<DWORD>(pid, section + 0x0C);
 		DWORD virtual_size = read<DWORD>(pid, section + 0x08);
 		vm::read(pid, virtual_address, (PVOID)target_address, virtual_size);
@@ -353,7 +307,7 @@ PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 	return (PVOID)new_base;
 }
 
-void km::vm::free_module(PVOID dumped_module)
+void cl::vm::free_module(PVOID dumped_module)
 {
 	if (dumped_module)
 	{
@@ -363,33 +317,17 @@ void km::vm::free_module(PVOID dumped_module)
 	}
 }
 
-BOOL km::io::read(QWORD address, PVOID buffer, QWORD length)
+BOOL cl::io::read(QWORD address, PVOID buffer, QWORD length)
 {
-	if (!km::initialize())
-	{
-		return 0;
-	}
-	DRIVER_READMEMORY io;
-	io.address = (PVOID)address;
-	io.buffer = buffer;
-	io.length = length;
-	return DeviceIoControl(hDriver, IOCTL_IO_READ, &io, sizeof(io), &io, sizeof(io), 0, 0);
+	return controller->read_mmio(address, buffer, length);
 }
 
-BOOL km::io::write(QWORD address, PVOID buffer, QWORD length)
+BOOL cl::io::write(QWORD address, PVOID buffer, QWORD length)
 {
-	if (!km::initialize())
-	{
-		return 0;
-	}
-	DRIVER_READMEMORY io;
-	io.address = (PVOID)address;
-	io.buffer = buffer;
-	io.length = length;
-	return DeviceIoControl(hDriver, IOCTL_IO_WRITE, &io, sizeof(io), &io, sizeof(io), 0, 0);
+	return controller->write_mmio(address, buffer, length);
 }
 
-QWORD km::pci::get_physical_address(ULONG bus, ULONG slot)
+QWORD cl::pci::get_physical_address(ULONG bus, ULONG slot)
 {
 	DWORD v3; // r10d
 	unsigned __int8* i; // r9
@@ -420,7 +358,7 @@ QWORD km::pci::get_physical_address(ULONG bus, ULONG slot)
 	return vm::read<QWORD>(4, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
 }
 
-BOOL km::pci::read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
+BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 {
 	QWORD device = get_physical_address(bus, slot);
 
@@ -430,7 +368,7 @@ BOOL km::pci::read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 	return io::read(device + offset, buffer, size);
 }
 
-BOOL km::pci::write(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
+BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 {
 	QWORD device = get_physical_address(bus, slot);
 
@@ -440,61 +378,23 @@ BOOL km::pci::write(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 	return io::write(device + offset, buffer, size);
 }
 
-static PVOID km::efi::__get_memory_map(QWORD* size)
+static PVOID cl::efi::__get_memory_map(QWORD* size)
 {
-	if (!km::initialize())
-	{
-		return 0;
-	}
-
-	PVOID buffer = 0;
-	QWORD buffer_size = 0;
-	DRIVER_REQUEST_MAP io{};
-
-	io.buffer = (PVOID)&buffer;
-	io.buffer_size = (QWORD)&buffer_size;
-
-	if (!DeviceIoControl(hDriver, IOCTL_REQUEST_MMAP, &io, sizeof(io), &io, sizeof(io), 0, 0))
-	{
-		return 0;
-	}
-
-	*size = buffer_size;
-
-	return buffer;
+	return controller->__get_memory_map(size);
 }
 
-static PVOID km::efi::__get_memory_pages(QWORD* size)
+static PVOID cl::efi::__get_memory_pages(QWORD* size)
 {
-	if (!km::initialize())
-	{
-		return 0;
-	}
-
-	PVOID buffer = 0;
-	QWORD buffer_size = 0;
-	DRIVER_REQUEST_MAP io{};
-
-	io.buffer = (PVOID)&buffer;
-	io.buffer_size = (QWORD)&buffer_size;
-
-	if (!DeviceIoControl(hDriver, IOCTL_REQUEST_PAGES, &io, sizeof(io), &io, sizeof(io), 0, 0))
-	{
-		return 0;
-	}
-
-	*size = buffer_size;
-
-	return buffer;
+	return controller->__get_memory_pages(size);
 }
 
-std::vector<EFI_PAGE_TABLE_ALLOCATION> km::efi::get_page_table_allocations()
+std::vector<EFI_PAGE_TABLE_ALLOCATION> cl::efi::get_page_table_allocations()
 {
 	std::vector<EFI_PAGE_TABLE_ALLOCATION> table;
 
 
 	QWORD efi_page_table_size = 0;
-	PVOID efi_page_tables = km::efi::__get_memory_pages(&efi_page_table_size);
+	PVOID efi_page_tables = cl::efi::__get_memory_pages(&efi_page_table_size);
 
 	for (DWORD i = 0; i < *(DWORD*)efi_page_tables; i++)
 	{
@@ -510,13 +410,13 @@ std::vector<EFI_PAGE_TABLE_ALLOCATION> km::efi::get_page_table_allocations()
 	return table;
 }
 
-std::vector<EFI_MEMORY_DESCRIPTOR> km::efi::get_memory_map()
+std::vector<EFI_MEMORY_DESCRIPTOR> cl::efi::get_memory_map()
 {
 	std::vector<EFI_MEMORY_DESCRIPTOR> table;
 
 
 	QWORD memory_map_size = 0;
-	PVOID memory_map = km::efi::__get_memory_map(&memory_map_size);
+	PVOID memory_map = cl::efi::__get_memory_map(&memory_map_size);
 
 	DWORD descriptor_size = sizeof(EFI_MEMORY_DESCRIPTOR) + 0x08;
 	QWORD descriptor_count = memory_map_size / descriptor_size;
@@ -534,7 +434,7 @@ std::vector<EFI_MEMORY_DESCRIPTOR> km::efi::get_memory_map()
 	return table;
 }
 
-std::vector<EFI_MODULE_INFO> km::efi::get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map)
+std::vector<EFI_MODULE_INFO> cl::efi::get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map)
 {
 	std::vector<EFI_MODULE_INFO> modules;
 
@@ -574,7 +474,7 @@ std::vector<EFI_MODULE_INFO> km::efi::get_dxe_modules(std::vector<EFI_MEMORY_DES
 	return modules;
 }
 
-EFI_PAGE_TABLE_ALLOCATION km::efi::get_dxe_range(
+EFI_PAGE_TABLE_ALLOCATION cl::efi::get_dxe_range(
 	EFI_MODULE_INFO module,
 	std::vector<EFI_PAGE_TABLE_ALLOCATION>& page_table_list
 )
@@ -590,18 +490,18 @@ EFI_PAGE_TABLE_ALLOCATION km::efi::get_dxe_range(
 	return {};
 }
 
-std::vector<QWORD> km::efi::get_runtime_table(void)
+std::vector<QWORD> cl::efi::get_runtime_table(void)
 {
-	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
-	HalEfiRuntimeServicesTableAddr       = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
-	HalEfiRuntimeServicesTableAddr       = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);
+	QWORD HalEfiRuntimeServicesTableAddr = cl::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
+	HalEfiRuntimeServicesTableAddr       = cl::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
+	HalEfiRuntimeServicesTableAddr       = cl::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);
 	if (!HalEfiRuntimeServicesTableAddr)
 	{
 		return {};
 	}
 
 	QWORD HalEfiRuntimeServicesTable[9];
-	km::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
+	cl::vm::read(4, HalEfiRuntimeServicesTableAddr, &HalEfiRuntimeServicesTable, sizeof(HalEfiRuntimeServicesTable));
 
 	std::vector<QWORD> table{};
 	for (int i = 9; i--;)

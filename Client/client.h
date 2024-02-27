@@ -3,6 +3,24 @@
 
 #include "utils.h"
 
+namespace cl
+{
+	class client
+	{
+	public:
+		//
+		// initialize object
+		//
+		virtual BOOL  initialize(void) = 0;
+		virtual BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length) = 0;
+		virtual BOOL  read_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
+		virtual BOOL  write_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
+		virtual QWORD get_physical_address(QWORD virtual_address) = 0;
+		virtual PVOID __get_memory_map(QWORD* size) = 0;
+		virtual PVOID __get_memory_pages(QWORD* size) = 0;
+	};
+}
+
 typedef struct {
   QWORD                 Type;
   QWORD                 PhysicalStart;
@@ -30,7 +48,7 @@ typedef struct {
 #define DMP_RAW      0x0008
 #define DMP_RUNTIME  0x0010
 
-namespace km
+namespace cl
 {
 	BOOL initialize(void);
 

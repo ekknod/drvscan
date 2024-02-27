@@ -1,5 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS
-#include "km.h"
+#include "client.h"
 
 #define DEBUG
 #define LOG(...) printf("[drvscan] "  __VA_ARGS__)
@@ -40,7 +40,7 @@ static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar);
 
 int main(int argc, char **argv)
 {
-	if (!km::initialize())
+	if (!cl::initialize())
 	{
 		LOG("driver is not running\n");
 		printf("Press any key to continue . . .");
@@ -52,7 +52,7 @@ int main(int argc, char **argv)
 		LOG("--help\n");
 		return getchar();
 	}
-
+	
 	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, pcileech=0, dumpcfg=0, dumpbar=0, use_cache = 0, scanefi = 0, dump = 0;
 	for (int i = 1; i < argc; i++)
 	{
@@ -224,7 +224,7 @@ void PrintPcieBarSpace(DWORD bar)
 	int row_max_count=0;
 	for (int i = 0; i < 0x1000; i+=4)
 	{
-		unsigned int cfg = km::io::read<unsigned int>(bar + i);
+		unsigned int cfg = cl::io::read<unsigned int>(bar + i);
 		line_counter++;
 		printf("%08X,", cfg);
 		if (line_counter == 4)
@@ -339,7 +339,7 @@ std::vector<DEVICE_INFO> get_pci_device_list(void)
 	{
 		for (unsigned char slot = 0; slot < 32; slot++)
 		{
-			QWORD physical_address = km::pci::get_physical_address(bus, slot);
+			QWORD physical_address = cl::pci::get_physical_address(bus, slot);
 			if (physical_address == 0)
 			{
 				continue;
@@ -349,7 +349,7 @@ std::vector<DEVICE_INFO> get_pci_device_list(void)
 			{
 				physical_address = physical_address + (func << 12);
 
-				QWORD device_control = km::io::read<QWORD>(physical_address + 0x04);
+				QWORD device_control = cl::io::read<QWORD>(physical_address + 0x04);
 
 				if (device_control == 0xFFFFFFFFFFFFFFFF)
 				{
@@ -369,9 +369,9 @@ std::vector<DEVICE_INFO> get_pci_device_list(void)
 				//
 				for (int i = 0; i < 0x200; i+= 8)
 				{
-					*(QWORD*)((char*)device.cfg + i) = km::io::read<QWORD>(physical_address + i);
+					*(QWORD*)((char*)device.cfg + i) = cl::io::read<QWORD>(physical_address + i);
 				}
-				// km::io::read(physical_address, device.cfg, sizeof(device.cfg));
+				// cl::io::read(physical_address, device.cfg, sizeof(device.cfg));
 				devices.push_back(device);
 			}
 		}
@@ -387,13 +387,13 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 	for (auto &dev : devices)
 	{
 		DWORD tick = GetTickCount();
-		km::pci::write<WORD>(dev.bus, dev.slot, 0xA0, *(WORD*)(dev.cfg + 0xA0));
+		cl::pci::write<WORD>(dev.bus, dev.slot, 0xA0, *(WORD*)(dev.cfg + 0xA0));
 		tick = GetTickCount() - tick;
 		if (tick > 100)
 			continue;
 
 		tick = GetTickCount();
-		km::pci::write<WORD>(dev.bus, dev.slot, 0xA8, *(WORD*)(dev.cfg + 0xA8));
+		cl::pci::write<WORD>(dev.bus, dev.slot, 0xA8, *(WORD*)(dev.cfg + 0xA8));
 		tick = GetTickCount() - tick;
 		if (tick > 100)
 		{
@@ -610,7 +610,7 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 	//
 	// dump image
 	//
-	QWORD runtime_image = (QWORD)km::vm::dump_module(pid, file.base, DMP_FULL | DMP_RUNTIME);
+	QWORD runtime_image = (QWORD)cl::vm::dump_module(pid, file.base, DMP_FULL | DMP_RUNTIME);
 	if (runtime_image == 0)
 	{
 		LOG_RED("failed to scan %s\n", file.path.c_str());
@@ -662,7 +662,7 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 	if (local_image == 0)
 	{
 		LOG_RED("failed to scan %s\n", file.path.c_str());
-		km::vm::free_module((PVOID)runtime_image);
+		cl::vm::free_module((PVOID)runtime_image);
 		return;
 	}
 
@@ -676,7 +676,7 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 
 	compare_sections((QWORD)local_image, runtime_image, min_difference);
 
-	km::vm::free_module((PVOID)runtime_image);
+	cl::vm::free_module((PVOID)runtime_image);
 
 	FreeImageEx((void *)local_image);
 }
@@ -732,7 +732,7 @@ static BOOL dump_module_to_file(std::vector<FILE_INFO> modules, DWORD pid, FILE_
 		return 0;
 	}
 
-	QWORD target_base = (QWORD)km::vm::dump_module(pid, file.base, DMP_FULL | DMP_RAW);
+	QWORD target_base = (QWORD)cl::vm::dump_module(pid, file.base, DMP_FULL | DMP_RAW);
 	if (target_base == 0)
 	{
 		free(disk_base);
@@ -771,7 +771,7 @@ static BOOL dump_module_to_file(std::vector<FILE_INFO> modules, DWORD pid, FILE_
 
 	if (status)
 		LOG("module %s is succesfully cached\n", file.name.c_str());
-	km::vm::free_module((PVOID)target_base);
+	cl::vm::free_module((PVOID)target_base);
 
 	return status;
 }
@@ -848,7 +848,7 @@ static BOOL invalid_range_detection(
 
 static void scan_runtime(std::vector<EFI_MODULE_INFO> &dxe_modules)
 {
-	std::vector<QWORD> HalEfiRuntimeServicesTable = km::efi::get_runtime_table();
+	std::vector<QWORD> HalEfiRuntimeServicesTable = cl::efi::get_runtime_table();
 	if (!HalEfiRuntimeServicesTable.size())
 	{
 		return;
@@ -857,13 +857,13 @@ static void scan_runtime(std::vector<EFI_MODULE_INFO> &dxe_modules)
 	for (int i = 0; i < HalEfiRuntimeServicesTable.size(); i++)
 	{
 		QWORD rt_func = HalEfiRuntimeServicesTable[i];
-		if (km::vm::read<WORD>(4, rt_func) == 0x25ff)
+		if (cl::vm::read<WORD>(4, rt_func) == 0x25ff)
 		{
 			LOG_RED("EFI Runtime service [%d] is hooked with byte patch: %llx\n", i, rt_func);
 			continue;
 		}
 
-		QWORD physical_address = km::get_physical_address(rt_func);
+		QWORD physical_address = cl::get_physical_address(rt_func);
 		BOOL found = 0;
 		for (auto& base : dxe_modules)
 		{
@@ -885,7 +885,7 @@ static void dump_to_file(PCSTR filename, QWORD physical_address, QWORD size)
 {
 	LOG("dumping out: [%llX - %llX]\n", physical_address, physical_address + size);
 	PVOID buffer = malloc(size);
-	km::io::read(physical_address, buffer, size);
+	cl::io::read(physical_address, buffer, size);
 	if (*(WORD*)(buffer) == IMAGE_DOS_SIGNATURE)
 	{
 		QWORD nt = pe::get_nt_headers((QWORD)buffer);
@@ -904,25 +904,25 @@ static void dump_to_file(PCSTR filename, QWORD physical_address, QWORD size)
 
 static void scan_efi(BOOL dump)
 {
-	std::vector<EFI_MEMORY_DESCRIPTOR> memory_map = km::efi::get_memory_map();
+	std::vector<EFI_MEMORY_DESCRIPTOR> memory_map = cl::efi::get_memory_map();
 	if (!memory_map.size())
 	{
 		return;
 	}
 
-	std::vector<EFI_MODULE_INFO> dxe_modules = km::efi::get_dxe_modules(memory_map);
+	std::vector<EFI_MODULE_INFO> dxe_modules = cl::efi::get_dxe_modules(memory_map);
 	if (!dxe_modules.size())
 	{
 		return;
 	}
 
-	std::vector<EFI_PAGE_TABLE_ALLOCATION> table_allocations = km::efi::get_page_table_allocations();
+	std::vector<EFI_PAGE_TABLE_ALLOCATION> table_allocations = cl::efi::get_page_table_allocations();
 	if (!table_allocations.size())
 	{
 		return;
 	}
 
-	EFI_PAGE_TABLE_ALLOCATION dxe_range = km::efi::get_dxe_range(dxe_modules[0], table_allocations) ;
+	EFI_PAGE_TABLE_ALLOCATION dxe_range = cl::efi::get_dxe_range(dxe_modules[0], table_allocations) ;
 	if (dxe_range.PhysicalStart == 0)
 	{
 		return;
