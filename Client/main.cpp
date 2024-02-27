@@ -511,7 +511,7 @@ static BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
 	return res <= cnt;
 }
 
-static void scan_section(DWORD diff, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address, std::vector<DWORD> &wla)
+static void scan_section(DWORD diff, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address)
 {
 	for (QWORD i = 0; i < size; i++)
 	{
@@ -539,62 +539,46 @@ static void scan_section(DWORD diff, CHAR *section_name, QWORD local_image, QWOR
 
 		if (cnt >= diff)
 		{
-			BOOL found = 0;
-			 
 			//
-			// check if it was allowed change from our earlier clean dump
+			// skip zero pages
 			//
-			for (auto wl : wla)
+			int read_success=0;
+			for (DWORD j = 0; j < cnt; j++)
 			{
-				if (IsAddressEqual(wl, (section_address + i), 8))
+				if (((unsigned char*)runtime_image)[i + j] != 0)
 				{
-					found = 1;
+					read_success=1;
 					break;
 				}
 			}
-			if (found == 0)
+
+			if (read_success)
 			{
-				//
-				// skip zero pages
-				//
-				int read_success=0;
+
+				printf("%s:0x%llx is modified (%ld bytes): ", section_name, section_address + i, cnt);
+				FontColor(2);
 				for (DWORD j = 0; j < cnt; j++)
 				{
-					if (((unsigned char*)runtime_image)[i + j] != 0)
-					{
-						read_success=1;
-						break;
-					}
+					printf("%02X ", ((unsigned char*)local_image)[i + j]);
 				}
+				FontColor(7);
+				printf("-> ");
 
-				if (read_success)
+				FontColor(4);
+				for (DWORD j = 0; j < cnt; j++)
 				{
-
-					printf("%s:0x%llx is modified (%ld bytes): ", section_name, section_address + i, cnt);
-					FontColor(2);
-					for (DWORD j = 0; j < cnt; j++)
-					{
-						printf("%02X ", ((unsigned char*)local_image)[i + j]);
-					}
-					FontColor(7);
-					printf("-> ");
-
-					FontColor(4);
-					for (DWORD j = 0; j < cnt; j++)
-					{
-						printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
-					}
-					FontColor(7);
-					printf("\n");
-
+					printf("%02X ", ((unsigned char*)runtime_image)[i + j]);
 				}
+				FontColor(7);
+				printf("\n");
+
 			}
 		}
 		i += cnt;
 	}
 }
 
-static void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff, std::vector<DWORD> &whitelist_addresses)
+static void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff)
 {
 	QWORD image_dos_header = (QWORD)local_image;
 	QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
@@ -628,8 +612,7 @@ static void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff,
 				(QWORD)((BYTE*)local_image + section_virtual_address),
 				(QWORD)(runtime_image + section_virtual_address),
 				section_virtual_size,
-				section_virtual_address,
-				whitelist_addresses
+				section_virtual_address
 			);
 		}
 	}
@@ -651,7 +634,6 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 	// try to use existing memory dumps
 	//
 	HMODULE local_image = 0;
-	std::vector<DWORD> whitelist_addresses;
 
 	if (use_cache)
 	{
@@ -660,18 +642,6 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 		{
 			local_image = (HMODULE)LoadImageEx(file.path.c_str(), 0, file.base, runtime_image);
 		}
-
-	
-		DWORD size;
-		PVOID wt = LoadFileEx(("./dumps/" + file.name + ".wl").c_str(), &size);
-		if (wt)
-		{
-			for (DWORD i = 0; i < size / sizeof(DWORD); i++)
-			{
-				whitelist_addresses.push_back(((DWORD*)wt)[i]);
-			}
-		}
-		free(wt);
 	}
 	else
 	{
@@ -716,48 +686,11 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 
 	LOG("scanning: %s\n", file.path.c_str());
 
-	compare_sections((QWORD)local_image, runtime_image, min_difference, whitelist_addresses);
+	compare_sections((QWORD)local_image, runtime_image, min_difference);
 
 	km::vm::free_module((PVOID)runtime_image);
 
 	FreeImageEx((void *)local_image);
-}
-
-
-std::vector<DWORD> get_whitelisted_addresses(QWORD local_image, QWORD runtime_image, DWORD size, DWORD section_address)
-{
-	std::vector<DWORD> whitelist_addresses;
-
-	for (DWORD i = 0; i < size; i++)
-	{
-		if (((unsigned char*)local_image)[i] == ((unsigned char*)runtime_image)[i])
-		{
-			continue;
-		}
-		DWORD cnt = 0;
-		while (1)
-		{
-
-			if (i + cnt >= size)
-			{
-				break;
-			}
-
-			if (((unsigned char*)local_image)[i + cnt] == ((unsigned char*)runtime_image)[i + cnt])
-			{
-				break;
-			}
-
-			cnt++;
-		}
-		if (cnt >= 1)
-		{
-			whitelist_addresses.push_back((section_address + i));
-		}
-		i += cnt;
-	}
-
-	return whitelist_addresses;
 }
 
 static BOOL write_dump_file(std::string name, PVOID buffer, QWORD size)
@@ -793,74 +726,13 @@ static BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
 	//
 	// write dump file to /dumps/modulename
 	//
-	if (write_dump_file(file.name.c_str(), (PVOID)target_base, *(QWORD*)(target_base - 16 + 8)))
+	BOOL status = write_dump_file(file.name.c_str(), (PVOID)target_base, *(QWORD*)(target_base - 16 + 8));
+
+	if (status)
 		LOG("module %s is succesfully cached\n", file.name.c_str());
-
-	HMODULE dll = (HMODULE)LoadFileEx(file.path.c_str(), 0);
-	if (!dll)
-	{
-		km::vm::free_module((PVOID)target_base);
-		return 0;
-	}
-
-	QWORD image_dos_header = (QWORD)dll;
-	QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
-	unsigned short machine = *(WORD*)(image_nt_header + 0x4);
-
-	QWORD section_header_off = machine == 0x8664 ?
-		image_nt_header + 0x0108 :
-		image_nt_header + 0x00F8;
-
-	std::vector <DWORD> whitelist_addresses;
-
-	for (WORD i = 0; i < *(WORD*)(image_nt_header + 0x06); i++) {
-		QWORD section = section_header_off + (i * 40);
-		ULONG section_characteristics = *(ULONG*)(section + 0x24);
-
-		UCHAR* section_name = (UCHAR*)(section + 0x00);
-		ULONG section_virtual_address = *(ULONG*)(section + 0x0C);
-		ULONG section_raw_address = *(ULONG*)(section + 0x14);
-		ULONG section_virtual_size = *(ULONG*)(section + 0x08);
-
-		if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
-		{
-			//
-			// skip Warbird page
-			//
-			if (!strcmp((const char*)section_name, "PAGEwx3"))
-			{
-				continue;
-			}
-
-			auto temp = get_whitelisted_addresses(
-				(QWORD)((BYTE*)dll + section_raw_address),
-				(QWORD)(target_base + section_raw_address),
-				section_virtual_size,
-				section_virtual_address
-			);
-
-			whitelist_addresses.reserve(whitelist_addresses.size() + temp.size());
-			whitelist_addresses.insert(whitelist_addresses.end(), temp.begin(), temp.end());
-
-		}
-	}
-
-	free((PVOID)dll);
 	km::vm::free_module((PVOID)target_base);
 
-	if (whitelist_addresses.size())
-	{
-		FILE* f = fopen(("./dumps/" + file.name + ".wl").c_str(), "wb+");
-		if (f) {
-			for (auto& wt : whitelist_addresses)
-			{
-				fwrite(&wt, sizeof(wt), 1, f);
-			}
-			fclose(f);
-		}
-	}
-
-	return TRUE;
+	return status;
 }
 
 static BOOL unlink_detection(
