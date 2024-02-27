@@ -394,9 +394,9 @@ PVOID LoadFileEx(PCSTR path, DWORD *out_len)
 	return (PVOID)ret;
 }
 
-PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base)
+PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_image)
 {
-	VOID *file_pe = LoadFileEx(path, out_len);
+	VOID* file_pe = LoadFileEx(path, out_len);
 
 	if (file_pe == 0)
 		return 0;
@@ -407,7 +407,7 @@ PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base)
 		return 0;
 	}
 
-	QWORD nt  = pe::get_nt_headers((QWORD)file_pe);
+	QWORD nt = pe::get_nt_headers((QWORD)file_pe);
 	QWORD opt = pe::nt::get_optional_header(nt);
 
 	DWORD image_size = pe::optional::get_image_size(opt);
@@ -417,7 +417,7 @@ PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base)
 
 	QWORD local_base = pe::optional::get_image_base(pe::nt::get_optional_header(nt));
 
-	VOID *new_image = malloc(image_size);
+	VOID* new_image = malloc(image_size);
 
 
 
@@ -425,7 +425,7 @@ PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base)
 		new_image,
 		file_pe,
 		pe::optional::get_headers_size(opt)
-		);
+	);
 
 	PIMAGE_SECTION_HEADER section = pe::nt::get_image_sections(nt);
 
@@ -433,36 +433,36 @@ PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base)
 	{
 		if (section[i].SizeOfRawData)
 		{
-			memcpy (
-				(void *)((QWORD)new_image + section[i].VirtualAddress),
-				(void *)((QWORD)file_pe   + section[i].PointerToRawData),
+			memcpy(
+				(void*)((QWORD)new_image + section[i].VirtualAddress),
+				(void*)((QWORD)file_pe + section[i].PointerToRawData),
 				section[i].SizeOfRawData
 			);
 		}
 	}
 
-	free( file_pe ) ;
+	free(file_pe);
 
 	nt = pe::get_nt_headers((QWORD)new_image);
 
 
 	opt = pe::nt::get_optional_header(nt);
 
-	BYTE *delta = current_base != 0 ? (BYTE*)current_base - (QWORD)local_base : (BYTE*)(QWORD)new_image - (QWORD)local_base;
+	BYTE* delta = current_base != 0 ? (BYTE*)current_base - (QWORD)local_base : (BYTE*)(QWORD)new_image - (QWORD)local_base;
 
 	if (!delta)
 		return new_image;
 
-	
-	
-	IMAGE_DATA_DIRECTORY *relocation = pe::optional::get_data_directory(opt, 5);
+
+
+	IMAGE_DATA_DIRECTORY* relocation = pe::optional::get_data_directory(opt, 5);
 
 	if (!relocation->Size)
 		return new_image;
 
 	if (!relocation->VirtualAddress)
 		return new_image;
-	
+
 	IMAGE_BASE_RELOCATION* pRelocData = (IMAGE_BASE_RELOCATION*)((QWORD)new_image + relocation->VirtualAddress);
 	if (pRelocData->VirtualAddress == 0xcdcdcdcd)
 		return new_image;
@@ -470,7 +470,7 @@ PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base)
 	if (pRelocData->VirtualAddress == 0)
 		return new_image;
 
-	const IMAGE_BASE_RELOCATION* pRelocEnd = (IMAGE_BASE_RELOCATION*)((QWORD)(pRelocData) + relocation->Size);
+	const IMAGE_BASE_RELOCATION* pRelocEnd = (IMAGE_BASE_RELOCATION*)((QWORD)(pRelocData)+relocation->Size);
 	while (pRelocData < pRelocEnd && pRelocData->SizeOfBlock)
 	{
 		QWORD count = (pRelocData->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(UINT16);
@@ -489,9 +489,201 @@ PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base)
 				*pPatch += (DWORD)(QWORD)(delta);
 			}
 		}
-		pRelocData = (IMAGE_BASE_RELOCATION*)((BYTE*)(pRelocData) + pRelocData->SizeOfBlock);
+		pRelocData = (IMAGE_BASE_RELOCATION*)((BYTE*)(pRelocData)+pRelocData->SizeOfBlock);
 	}
 
+
+	//
+	// https://denuvosoftwaresolutions.github.io/DVRT/dvrt.html
+	//
+	IMAGE_DATA_DIRECTORY* data_dir = (IMAGE_DATA_DIRECTORY*)pe::optional::get_data_directory(opt, 10);
+	if (data_dir->VirtualAddress == 0)
+		return new_image;
+
+	if (data_dir->Size == 0)
+		return new_image;
+
+	IMAGE_LOAD_CONFIG_DIRECTORY* dir = (IMAGE_LOAD_CONFIG_DIRECTORY*)((QWORD)new_image + data_dir->VirtualAddress);
+
+	if (dir->DynamicValueRelocTableOffset == 0)
+		return new_image;
+
+	typedef struct
+	{
+		uint32_t version;
+		uint32_t size;
+	} ImageDynamicRelocationTable;
+
+#pragma pack(push, 1)
+	typedef struct
+	{
+		uint64_t symbol;
+		uint32_t baseRelocSize;
+	} ImageDynamicRelocation;
+#pragma pack(pop)
+
+	typedef struct
+	{
+		uint32_t virtualAddress;
+		uint32_t sizeOfBlock;
+	} PEBaseRelocation;
+
+
+
+	union ImageSwitchtableBranchDynamicRelocation
+	{
+		struct Parts
+		{
+			uint16_t pageRelativeOffset : 12;
+			uint16_t registerNumber : 4;
+		};
+		Parts asParts;
+		uint16_t asNumber;
+	};
+
+	union ImageIndirControlTransferDynamicRelocation
+	{
+		struct Parts
+		{
+			uint16_t pageRelativeOffset : 12;
+			uint16_t isCall : 1;
+			uint16_t rexWPrefix : 1;
+			uint16_t cfgCheck : 1;
+			uint16_t reserved : 1;
+		};
+
+		Parts asParts;
+		uint16_t asNumber;
+	};
+
+	union ImageImportControlTransferDynamicRelocation
+	{
+		struct Parts
+		{
+			uint32_t pageRelativeOffset : 12;
+			uint32_t isCall : 1;
+			uint32_t iatIndex : 19;
+		};
+		Parts asParts;
+		uint32_t asNumber;
+	};
+
+	ImageDynamicRelocationTable* tbl = (ImageDynamicRelocationTable*)(
+		(QWORD)new_image +
+		relocation->VirtualAddress +
+		dir->DynamicValueRelocTableOffset);
+
+	ImageDynamicRelocation* reloc_data = (ImageDynamicRelocation*)(tbl + 1);
+	ImageDynamicRelocation* reloc_data_end = (ImageDynamicRelocation*)((char*)tbl + tbl->size);
+	while (reloc_data < reloc_data_end)
+	{
+		if (reloc_data->symbol == 0)
+		{
+			break;
+		}
+		else if (reloc_data->symbol == 7)
+		{
+		}
+
+		else if (reloc_data->symbol == 5)
+		{
+			PEBaseRelocation* base_reloc = (PEBaseRelocation*)(reloc_data + 1);
+			PEBaseRelocation* base_reloc_end = (PEBaseRelocation*)((char*)base_reloc + reloc_data->baseRelocSize);
+			while (base_reloc < base_reloc_end)
+			{
+				if (base_reloc->virtualAddress == 0)
+					break;
+
+				ImageSwitchtableBranchDynamicRelocation* data =
+					(ImageSwitchtableBranchDynamicRelocation*)(base_reloc + 1);
+
+				ImageSwitchtableBranchDynamicRelocation* data_end =
+					(ImageSwitchtableBranchDynamicRelocation*)((char*)base_reloc + base_reloc->sizeOfBlock);
+
+				while (data < data_end)
+				{
+					QWORD rip = (QWORD)new_image + base_reloc->virtualAddress + data->asParts.pageRelativeOffset;
+					QWORD dva = (QWORD)memory_image + base_reloc->virtualAddress + data->asParts.pageRelativeOffset;
+					memcpy((void*)rip, (const void*)dva, 5);
+					data++;
+				}
+				base_reloc = (PEBaseRelocation*)((char*)base_reloc + base_reloc->sizeOfBlock);
+			}
+		}
+		else if (reloc_data->symbol == 4)
+		{
+			PEBaseRelocation* base_reloc = (PEBaseRelocation*)(reloc_data + 1);
+			PEBaseRelocation* base_reloc_end = (PEBaseRelocation*)((char*)base_reloc + reloc_data->baseRelocSize);
+			while (base_reloc < base_reloc_end)
+			{
+				if (base_reloc->virtualAddress == 0 || base_reloc->sizeOfBlock == 0)
+					break;
+				ImageIndirControlTransferDynamicRelocation* data =
+					(ImageIndirControlTransferDynamicRelocation*)(base_reloc + 1);
+
+				ImageIndirControlTransferDynamicRelocation* data_end =
+					(ImageIndirControlTransferDynamicRelocation*)((char*)base_reloc + base_reloc->sizeOfBlock);
+
+				while (data < data_end)
+				{
+					QWORD rip = (QWORD)new_image + base_reloc->virtualAddress + data->asParts.pageRelativeOffset;
+					QWORD dva = (QWORD)memory_image + base_reloc->virtualAddress + data->asParts.pageRelativeOffset;
+					memcpy((void*)rip, (const void*)dva, 6);
+					data++;
+				}
+				base_reloc = (PEBaseRelocation*)((char*)base_reloc + base_reloc->sizeOfBlock);
+			}
+		}
+		else if (reloc_data->symbol == 3)
+		{
+			PEBaseRelocation* base_reloc = (PEBaseRelocation*)(reloc_data + 1);
+			PEBaseRelocation* base_reloc_end = (PEBaseRelocation*)((char*)base_reloc + reloc_data->baseRelocSize);
+			while (base_reloc < base_reloc_end)
+			{
+				if (base_reloc->virtualAddress == 0 || base_reloc->sizeOfBlock == 0)
+					break;
+				ImageImportControlTransferDynamicRelocation* data =
+					(ImageImportControlTransferDynamicRelocation*)(base_reloc + 1);
+
+				ImageImportControlTransferDynamicRelocation* data_end =
+					(ImageImportControlTransferDynamicRelocation*)((char*)data + base_reloc->sizeOfBlock);
+
+				while (data < data_end)
+				{
+					QWORD rip = (QWORD)new_image + base_reloc->virtualAddress + data->asParts.pageRelativeOffset;
+					QWORD dva = (QWORD)memory_image + base_reloc->virtualAddress + data->asParts.pageRelativeOffset;
+					memcpy((void*)rip, (const void*)dva, 12);
+					data++;
+				}
+				base_reloc = (PEBaseRelocation*)((char*)base_reloc + base_reloc->sizeOfBlock);
+			}
+		}
+		else
+		{
+			PEBaseRelocation* base_reloc = (PEBaseRelocation*)(reloc_data + 1);
+			PEBaseRelocation* base_reloc_end = (PEBaseRelocation*)((char*)base_reloc + reloc_data->baseRelocSize);
+
+			while (base_reloc < base_reloc_end)
+			{
+				if (base_reloc->virtualAddress == 0 || base_reloc->sizeOfBlock == 0)
+					break;
+				WORD* data = (WORD*)(base_reloc + 1);
+				WORD* data_end = (WORD*)((char*)base_reloc + base_reloc->sizeOfBlock);
+				while (data < data_end)
+				{
+					*(QWORD*)((QWORD)new_image + base_reloc->virtualAddress + *data)
+						=
+						*(QWORD*)((QWORD)memory_image + base_reloc->virtualAddress + *data);
+
+					data++;
+				}
+				base_reloc = (PEBaseRelocation*)((char*)base_reloc + base_reloc->sizeOfBlock);
+			}
+		}
+		reloc_data = (ImageDynamicRelocation*)((BYTE*)(reloc_data)+reloc_data->baseRelocSize
+			+ sizeof(ImageDynamicRelocation)
+			);
+	}
 	return new_image;
 }
 

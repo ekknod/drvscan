@@ -73,6 +73,17 @@ namespace pe
 				(PIMAGE_SECTION_HEADER)(nt + 0x0108);
 		}
 
+		inline PIMAGE_SECTION_HEADER get_image_section(QWORD nt, PCSTR name)
+		{
+			PIMAGE_SECTION_HEADER section = get_image_sections(nt);
+			for (WORD i = 0; i < get_section_count(nt); i++)
+			{
+				if (!_strcmpi((const char *)section[i].Name, name))
+					return &section[i];
+			}
+			return 0;
+		}
+
 		inline QWORD get_optional_header(QWORD nt)
 		{
 			return nt + 0x18;
@@ -121,7 +132,7 @@ std::vector<BIGPOOL_INFO> get_kernel_allocations(void);
 std::vector<HANDLE_INFO>  get_system_handle_information(void);
 
 PVOID LoadFileEx(PCSTR path, DWORD *out_len);
-PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base = 0);
+PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base = 0, QWORD memory_image=0);
 void  FreeImageEx(PVOID ImageBase);
 
 #endif /* UTILS_H */

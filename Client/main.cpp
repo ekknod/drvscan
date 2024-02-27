@@ -638,18 +638,27 @@ static void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff,
 static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, BOOL use_cache)
 {
 	//
+	// dump image
+	//
+	QWORD runtime_image = (QWORD)km::vm::dump_module(pid, file.base, DMP_FULL | DMP_RUNTIME);
+	if (runtime_image == 0)
+	{
+		return;
+	}
+
+
+	//
 	// try to use existing memory dumps
 	//
-
 	HMODULE local_image = 0;
 	std::vector<DWORD> whitelist_addresses;
 
 	if (use_cache)
 	{
-		local_image = (HMODULE)LoadImageEx(("./dumps/" + file.name).c_str(), 0, file.base);
+		local_image = (HMODULE)LoadImageEx(("./dumps/" + file.name).c_str(), 0, file.base, runtime_image);
 		if (local_image == 0)
 		{
-			local_image = (HMODULE)LoadImageEx(file.path.c_str(), 0, file.base);
+			local_image = (HMODULE)LoadImageEx(file.path.c_str(), 0, file.base, runtime_image);
 		}
 
 	
@@ -689,55 +698,29 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 			file.path = resolved_path;
 		}
 
-		local_image = (HMODULE)LoadImageEx(file.path.c_str(), 0, file.base);
+		local_image = (HMODULE)LoadImageEx(file.path.c_str(), 0, file.base, runtime_image);
 	}
 
-	if (local_image)
+	if (local_image == 0)
 	{
-		QWORD runtime_image = (QWORD)km::vm::dump_module(pid, file.base, DMP_CODEONLY | DMP_RUNTIME);
-
-		if (runtime_image == 0)
-		{
-			FontColor(14);
-			LOG("skipping image: %s\n", file.path.c_str());
-			FontColor(7);
-			FreeImageEx(local_image);
-			if (runtime_image != 0)
-			{
-				km::vm::free_module((PVOID)runtime_image);
-			}
-			return;
-		}
-
-		QWORD image_dos_header = (QWORD)local_image;
-		QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
-		unsigned short machine = *(WORD*)(image_nt_header + 0x4);
-
-		DWORD min_difference = 1;
-
-		if (pid == 4)
-		{
-			//
-			// ntoskrnl.exe overwrites a lot of addresses
-			// if we dont have whitelisted patches available,
-			// we have to use min difference [9]
-			//
-			if (!use_cache)
-			{
-				min_difference = 9;
-			}
-		}
-
-		LOG("scanning: %s\n", file.path.c_str());
-
-		compare_sections((QWORD)local_image, runtime_image, min_difference, whitelist_addresses);
-
+		LOG_RED("failed to scan %s\n", file.path.c_str());
 		km::vm::free_module((PVOID)runtime_image);
-
-		FreeImageEx((void *)local_image);
-	} else {
-		LOG_RED("failed to open %s\n", file.path.c_str());
+		return;
 	}
+
+	QWORD image_dos_header = (QWORD)local_image;
+	QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
+	unsigned short machine = *(WORD*)(image_nt_header + 0x4);
+
+	DWORD min_difference = 1;
+
+	LOG("scanning: %s\n", file.path.c_str());
+
+	compare_sections((QWORD)local_image, runtime_image, min_difference, whitelist_addresses);
+
+	km::vm::free_module((PVOID)runtime_image);
+
+	FreeImageEx((void *)local_image);
 }
 
 
