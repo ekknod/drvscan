@@ -613,6 +613,7 @@ static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file
 	QWORD runtime_image = (QWORD)km::vm::dump_module(pid, file.base, DMP_FULL | DMP_RUNTIME);
 	if (runtime_image == 0)
 	{
+		LOG_RED("failed to scan %s\n", file.path.c_str());
 		return;
 	}
 
@@ -856,13 +857,13 @@ static void scan_runtime(std::vector<EFI_MODULE_INFO> &dxe_modules)
 	for (int i = 0; i < HalEfiRuntimeServicesTable.size(); i++)
 	{
 		QWORD rt_func = HalEfiRuntimeServicesTable[i];
-		if (km::vm::read<WORD>(rt_func) == 0x25ff)
+		if (km::vm::read<WORD>(4, rt_func) == 0x25ff)
 		{
 			LOG_RED("EFI Runtime service [%d] is hooked with byte patch: %llx\n", i, rt_func);
 			continue;
 		}
 
-		QWORD physical_address = km::vm::get_physical_address(rt_func);
+		QWORD physical_address = km::get_physical_address(rt_func);
 		BOOL found = 0;
 		for (auto& base : dxe_modules)
 		{

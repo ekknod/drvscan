@@ -34,15 +34,16 @@ namespace km
 {
 	BOOL initialize(void);
 
+	QWORD get_physical_address(QWORD virtual_address);
+
 	namespace vm
 	{
 		BOOL  read(DWORD pid, QWORD address, PVOID buffer, QWORD length);
-		QWORD get_physical_address(QWORD virtual_address);
 		PVOID dump_module(DWORD pid, QWORD base, DWORD dmp_type);
 		void  free_module(PVOID dumped_module);
 
 		template <typename t>
-		t read(QWORD address, DWORD pid = 4)
+		t read(DWORD pid, QWORD address)
 		{
 			t b;
 			if (!read(pid, address, &b, sizeof(b)))
@@ -54,7 +55,7 @@ namespace km
 
 		inline QWORD get_relative_address(DWORD pid, QWORD address, INT offset, INT instruction_size)
 		{
-			return (address + instruction_size) + vm::read<INT>(address + offset, pid);
+			return (address + instruction_size) + vm::read<INT>(pid, address + offset);
 		}
 	}
 

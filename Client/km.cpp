@@ -162,39 +162,48 @@ BOOL km::initialize(void)
 		// resolve HalpPciMcfgTableCount/HalpPciMcfgTable addresses
 		//
 		QWORD table_entry = HalPrivateDispatchTable;
-		table_entry       = vm::read<QWORD>(table_entry + 0xA0);
+		table_entry       = vm::read<QWORD>(4, table_entry + 0xA0);
 		table_entry       = table_entry + 0x1B;
-		table_entry       = (table_entry + 5) + vm::read<INT>(table_entry + 1);
+		table_entry       = (table_entry + 5) + vm::read<INT>(4, table_entry + 1);
 		while (1)
 		{
-			if (vm::read<BYTE>(table_entry) == 0xE8 && vm::read<WORD>(table_entry + 5) == 0xFB83)
+			if (vm::read<BYTE>(4, table_entry) == 0xE8 && vm::read<WORD>(4, table_entry + 5) == 0xFB83)
 			{
 				break;
 			}
 			table_entry++;
 		}
-		table_entry = (table_entry + 5) + vm::read<INT>(table_entry + 1);
+		table_entry = (table_entry + 5) + vm::read<INT>(4, table_entry + 1);
 		while (1)
 		{
-			if (vm::read<DWORD>(table_entry) == 0xCCB70F41 && vm::read<BYTE>(table_entry + 4) == 0xE8)
+			if (vm::read<DWORD>(4, table_entry) == 0xCCB70F41 && vm::read<BYTE>(4, table_entry + 4) == 0xE8)
 			{
 				table_entry += 0x04;
 				break;
 			}
 			table_entry++;
 		}
-		table_entry = (table_entry + 5) + vm::read<INT>(table_entry + 1);
+		table_entry = (table_entry + 5) + vm::read<INT>(4, table_entry + 1);
 		table_entry = table_entry + 0x47;
-		table_entry = (table_entry + 5) + vm::read<INT>(table_entry + 1);
+		table_entry = (table_entry + 5) + vm::read<INT>(4, table_entry + 1);
 
 		HalpPciMcfgTableCount = vm::get_relative_address(4, table_entry + 0x07, 2, 6);
 		HalpPciMcfgTable      = vm::get_relative_address(4, table_entry + 0x11, 3, 7);
 
-		MmPfnDatabase         = vm::read<QWORD>(MmGetVirtualForPhysical + 0x0E + 0x02);
-		MmPteBase             = vm::read<QWORD>(MmGetVirtualForPhysical + 0x20 + 0x02);
+		MmPfnDatabase         = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x0E + 0x02);
+		MmPteBase             = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x20 + 0x02);
 	}
 
 	return hDriver != 0;
+}
+
+QWORD km::get_physical_address(QWORD virtual_address)
+{
+	DRIVER_GET_PHYSICAL io{};
+	io.InOutPhysical = (PVOID)&virtual_address;
+	if (!DeviceIoControl(hDriver, IOCTL_GET_PHYSICAL, &io, sizeof(io), &io, sizeof(io), 0, 0))
+		return 0;
+	return virtual_address;
 }
 
 BOOL km::vm::read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
@@ -258,15 +267,6 @@ BOOL km::vm::read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
 	return 0;
 }
 
-QWORD km::vm::get_physical_address(QWORD virtual_address)
-{
-	DRIVER_GET_PHYSICAL io{};
-	io.InOutPhysical = (PVOID)&virtual_address;
-	if (!DeviceIoControl(hDriver, IOCTL_GET_PHYSICAL, &io, sizeof(io), &io, sizeof(io), 0, 0))
-		return 0;
-	return virtual_address;
-}
-
 PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 {
 	if (base == 0)
@@ -274,18 +274,18 @@ PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 		return 0;
 	}
 
-	if (read<WORD>(base, pid) != IMAGE_DOS_SIGNATURE)
+	if (read<WORD>(pid, base) != IMAGE_DOS_SIGNATURE)
 	{
 		return 0;
 	}
 
-	QWORD nt_header = (QWORD)read<DWORD>(base + 0x03C, pid) + base;
+	QWORD nt_header = (QWORD)read<DWORD>(pid, base + 0x03C) + base;
 	if (nt_header == base)
 	{
 		return 0;
 	}
 
-	DWORD image_size = read<DWORD>(nt_header + 0x050, pid);
+	DWORD image_size = read<DWORD>(pid, nt_header + 0x050);
 	if (image_size == 0)
 	{
 		return 0;
@@ -300,19 +300,19 @@ PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 	new_base += 16;
 	memset(new_base, 0, image_size);
 
-	DWORD headers_size = read<DWORD>(nt_header + 0x54, pid);
+	DWORD headers_size = read<DWORD>(pid, nt_header + 0x54);
 	vm::read(pid, base, new_base, headers_size);
 
-	WORD machine = read<WORD>(nt_header + 0x4, pid);
+	WORD machine = read<WORD>(pid, nt_header + 0x4);
 	QWORD section_header = machine == 0x8664 ?
 		nt_header + 0x0108 :
 		nt_header + 0x00F8;
 
 
-	for (WORD i = 0; i < read<WORD>(nt_header + 0x06, pid); i++) {
+	for (WORD i = 0; i < read<WORD>(pid, nt_header + 0x06); i++) {
 		QWORD section = section_header + ((QWORD)i * 40);
 
-		DWORD section_characteristics = read<DWORD>(section + 0x24, pid);
+		DWORD section_characteristics = read<DWORD>(pid, section + 0x24);
 		//
 		// skip discardable memory
 		//
@@ -345,9 +345,9 @@ PVOID km::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
 				continue;
 			}
 		}
-		QWORD target_address = (QWORD)new_base + km::vm::read<DWORD>(section + ((dmp_type & DMP_RAW) ? 0x14 : 0x0c), pid);
-		QWORD virtual_address = base + (QWORD)read<DWORD>(section + 0x0C, pid);
-		DWORD virtual_size = read<DWORD>(section + 0x08, pid);
+		QWORD target_address = (QWORD)new_base + km::vm::read<DWORD>(pid, section + ((dmp_type & DMP_RAW) ? 0x14 : 0x0c));
+		QWORD virtual_address = base + (QWORD)read<DWORD>(pid, section + 0x0C);
+		DWORD virtual_size = read<DWORD>(pid, section + 0x08);
 		vm::read(pid, virtual_address, (PVOID)target_address, virtual_size);
 	}
 	return (PVOID)new_base;
@@ -396,8 +396,8 @@ QWORD km::pci::get_physical_address(ULONG bus, ULONG slot)
 
 	v3 = 0;
 
-	QWORD table = vm::read<QWORD>(HalpPciMcfgTable);
-	DWORD table_count = vm::read<DWORD>(HalpPciMcfgTableCount);
+	QWORD table = vm::read<QWORD>(4, HalpPciMcfgTable);
+	DWORD table_count = vm::read<DWORD>(4, HalpPciMcfgTableCount);
 
 	if (!table)
 		return 0i64;
@@ -407,9 +407,9 @@ QWORD km::pci::get_physical_address(ULONG bus, ULONG slot)
 
 	for (i = (unsigned __int8*)(table + 54);
 
-		(bus >> 8) != vm::read<WORD>((QWORD)(i - 1)) ||
-		bus < vm::read<BYTE>((QWORD)i) ||
-		bus > vm::read<BYTE>((QWORD)i + 1);
+		(bus >> 8) != vm::read<WORD>(4, (QWORD)(i - 1)) ||
+		bus < vm::read<BYTE>(4, (QWORD)i) ||
+		bus > vm::read<BYTE>(4, (QWORD)i + 1);
 
 		i += 16
 		)
@@ -417,7 +417,7 @@ QWORD km::pci::get_physical_address(ULONG bus, ULONG slot)
 		if (++v3 >= (unsigned int)table_count)
 			return 0i64;
 	}
-	return vm::read<QWORD>((QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
+	return vm::read<QWORD>(4, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
 }
 
 BOOL km::pci::read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
@@ -553,15 +553,15 @@ std::vector<EFI_MODULE_INFO> km::efi::get_dxe_modules(std::vector<EFI_MEMORY_DES
 		for (DWORD page_num = 0; page_num < page.NumberOfPages; page_num++)
 		{
 			QWORD module_base = page.VirtualStart + (page_num * 0x1000);
-			if (vm::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
+			if (vm::read<WORD>(4, module_base) == IMAGE_DOS_SIGNATURE)
 			{
-				QWORD nt = vm::read<DWORD>(module_base + 0x03C) + module_base;
-				if (vm::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
+				QWORD nt = vm::read<DWORD>(4, module_base + 0x03C) + module_base;
+				if (vm::read<WORD>(4, nt) != IMAGE_NT_SIGNATURE)
 				{
 					continue;
 				}
 				QWORD module_base_phys = page.PhysicalStart + (page_num * 0x1000);
-				modules.push_back({ module_base, module_base_phys, vm::read<DWORD>(nt + 0x050) });
+				modules.push_back({ module_base, module_base_phys, vm::read<DWORD>(4, nt + 0x050) });
 			}
 		}
 
@@ -594,7 +594,7 @@ std::vector<QWORD> km::efi::get_runtime_table(void)
 {
 	QWORD HalEfiRuntimeServicesTableAddr = km::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
 	HalEfiRuntimeServicesTableAddr       = km::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
-	HalEfiRuntimeServicesTableAddr       = km::vm::read<QWORD>(HalEfiRuntimeServicesTableAddr);
+	HalEfiRuntimeServicesTableAddr       = km::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);
 	if (!HalEfiRuntimeServicesTableAddr)
 	{
 		return {};
