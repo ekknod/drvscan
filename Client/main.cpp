@@ -58,14 +58,13 @@ int main(int argc, char **argv)
 			);
 
 			printf("\nExample (verifying modules integrity by using cache):\n"
-				"1.                     making sure Windows is not infected\n"
+				"1.                     load malware\n"
 				"1.                     drvscan.exe --scan --savecache --pid 4\n"
 				"2.                     reboot the computer\n"
-				"3.                     load malware what is potentially modifying modules\n"
+				"3.                     load windows without malware\n"
 				"4.                     drvscan.exe --scan --usecache --pid 4\n"
 				"all malware patches should be now visible\n\n"
 			);
-			
 		}
 
 		else if (!strcmp(argv[i], "--scan"))

@@ -1,6 +1,6 @@
 # drvscan
 <pre>
-C:\Users\Juho\source\repos\drvscan\Client\x64\Debug>Client.exe --help
+C:\Users\Juho\Desktop>Client.exe --help
 
 
 --scan                 scan target process memory changes
@@ -8,6 +8,7 @@ C:\Users\Juho\source\repos\drvscan\Client\x64\Debug>Client.exe --help
     --usecache         we use local cache instead of original PE files
     --savecache        dump target process modules to disk, these can be used later with --usecache
 --scanefi              scan abnormals from efi memory map
+    --dump             dump found abnormal to disk
 --scanpci              scan pci cards from the system
     --pcileech         search pcileech-fpga cards
     --dumpcfg          print out every card cfg space
@@ -16,15 +17,15 @@ C:\Users\Juho\source\repos\drvscan\Client\x64\Debug>Client.exe --help
 
 
 Example (verifying modules integrity by using cache):
-1.                     making sure Windows is not infected
+1.                     load malware
 1.                     drvscan.exe --scan --savecache --pid 4
 2.                     reboot the computer
-3.                     load malware what is potentially modifying modules
+3.                     load windows without malware
 4.                     drvscan.exe --scan --usecache --pid 4
 all malware patches should be now visible
 
 
-C:\Users\Juho\source\repos\drvscan\Client\x64\Debug>
+C:\Users\Juho\Desktop>
 </pre>
 # Driver Installation
 - enable testsigning  
