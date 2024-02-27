@@ -18,7 +18,7 @@ printf(__VA_ARGS__); \
 FontColor(7); \
 
 static void scan_efi(BOOL dump);
-static BOOL dump_module_to_file(DWORD pid, FILE_INFO file);
+static BOOL dump_module_to_file(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file);
 static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, BOOL use_cache);
 static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar);
 
@@ -147,7 +147,7 @@ int main(int argc, char **argv)
 		{
 			if (savecache)
 			{
-				dump_module_to_file(pid, mod);
+				dump_module_to_file(modules, pid, mod);
 			}
 			else
 			{
@@ -713,8 +713,31 @@ static BOOL write_dump_file(std::string name, PVOID buffer, QWORD size)
 	return 0;
 }
 
-static BOOL dump_module_to_file(DWORD pid, FILE_INFO file)
+static BOOL dump_module_to_file(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file)
 {
+	const char *sub_str = strstr(file.path.c_str(), "\\dump_");
+
+	if (sub_str)
+	{
+		std::string sub_name = sub_str + 6;
+		std::string resolved_path;
+
+		for (auto &lookup : modules)
+		{
+			if (!_strcmpi(lookup.name.c_str(), sub_name.c_str()))
+			{
+				resolved_path = lookup.path;
+			}
+		}
+
+		if (resolved_path.size() < 1)
+		{
+			resolved_path = "C:\\Windows\\System32\\Drivers\\" + sub_name;
+		}
+
+		file.path = resolved_path;
+	}
+
 	PVOID disk_base = (PVOID)LoadFileEx(file.path.c_str(), 0);
 	if (disk_base == 0)
 	{
