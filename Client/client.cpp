@@ -1,28 +1,16 @@
 #include "client.h"
 #include "clkm/clkm.h"
-#include "clnv/clnv.h"
+#include "clint/clint.h"
 #include "clum/clum.h"
 
-typedef ULONG_PTR QWORD;
-static std::vector<QWORD> global_export_list;
 
-class DLL_EXPORT
-{
-	QWORD address;
-public:
-	DLL_EXPORT(QWORD address) : address(address)
-	{
-		global_export_list.push_back((QWORD)&this->address);
-	}
-	operator QWORD () const { return address; }
+QWORD cl::ntoskrnl_base;
+std::vector<QWORD> cl::global_export_list;
 
-};
 
 //
 // NTOSKRNL_EXPORT define variables are automatically resolved in cl::initialize
 //
-#define NTOSKRNL_EXPORT(export_name) \
-DLL_EXPORT export_name((QWORD)#export_name);
 
 NTOSKRNL_EXPORT(HalPrivateDispatchTable);
 NTOSKRNL_EXPORT(PsInitialSystemProcess);
@@ -30,8 +18,6 @@ NTOSKRNL_EXPORT(PsGetProcessId);
 NTOSKRNL_EXPORT(KeQueryPrcbAddress);
 NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
 NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
-
-QWORD ntoskrnl_base;
 
 namespace cl
 {
@@ -112,7 +98,7 @@ static QWORD get_kernel_export(PCSTR export_name)
 	}
 
 	export_address = export_address - (QWORD)ntos;
-	export_address = export_address + ntoskrnl_base;
+	export_address = export_address + cl::ntoskrnl_base;
 
 cleanup:
 	FreeLibrary(ntos);
@@ -153,7 +139,7 @@ BOOL cl::initialize(void)
 	}
 	
 	clkm *km = new clkm();
-	clnv *nv = new clnv();
+	clint *vd = new clint();
 	clum *um = new clum();
 	if (controller == 0 && km->initialize())
 	{
@@ -164,13 +150,13 @@ BOOL cl::initialize(void)
 		delete km; km = 0;
 	}
 
-	if (controller == 0 && nv->initialize())
+	if (controller == 0 && vd->initialize())
 	{
-		controller = nv;
+		controller = vd;
 	}
 	else
 	{
-		delete nv; nv = 0;
+		delete vd; vd = 0;
 	}
 
 	if (controller == 0 && um->initialize())
@@ -182,7 +168,7 @@ BOOL cl::initialize(void)
 		delete um; um = 0;
 	}
 	
-	if ((km || nv))
+	if ((km || vd))
 	{
 		//
 		// resolve HalpPciMcfgTableCount/HalpPciMcfgTable addresses

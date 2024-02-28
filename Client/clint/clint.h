@@ -5,13 +5,13 @@
 
 namespace cl
 {
-class clnv : public client
+class clint : public client
 {
 	HANDLE hDriver = 0;
 	void* (*encrypt_payload)(void* data_crypt, int, void* temp_buf) = 0;
 public:
-	clnv()  {}
-	~clnv() {}
+	clint()  {}
+	~clint() {}
 	BOOL  initialize(void);
 	BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length);
 	BOOL  read_mmio(QWORD address, PVOID buffer, QWORD length);
@@ -19,8 +19,12 @@ public:
 	QWORD get_physical_address(QWORD virtual_address);
 	PVOID __get_memory_map(QWORD* size);
 	PVOID __get_memory_pages(QWORD* size);
+private:
+	BOOL  copy_memory(PVOID dest, PVOID src, QWORD length);
+	QWORD map_mmio(QWORD physical_address, DWORD size);
+	BOOL  unmap_mmio(QWORD address, DWORD size);
 };
 }
 
-#endif /* CLNV_H */
+#endif /* CLVD_H */
 

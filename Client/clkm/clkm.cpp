@@ -1,14 +1,6 @@
 #include "../client.h"
 #include "clkm.h"
 
-/*
- *
- * driver connector
- * pros: most priviliges
- * cons: requires test signing
- * 
- */
-
 #define IOCTL_READMEMORY         0xECAC00
 #define IOCTL_IO_READ            0xECAC02
 #define IOCTL_IO_WRITE           0xECAC12

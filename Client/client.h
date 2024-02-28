@@ -157,7 +157,36 @@ namespace cl
 		//
 		std::vector<QWORD> get_runtime_table(void);
 	}
+
+
+	extern QWORD ntoskrnl_base;
+	extern std::vector<QWORD> global_export_list;
 }
+
+class DLL_EXPORT
+{
+	QWORD address;
+public:
+	DLL_EXPORT(QWORD address) : address(address)
+	{
+		cl::global_export_list.push_back((QWORD)&this->address);
+	}
+	operator QWORD () const { return address; }
+
+};
+
+#define NTOSKRNL_EXPORT(export_name) \
+DLL_EXPORT export_name((QWORD)#export_name);
+
+#define EXTERN_NTOSKRNL_EXPORT(export_name) \
+extern DLL_EXPORT export_name;
+
+EXTERN_NTOSKRNL_EXPORT(HalPrivateDispatchTable);
+EXTERN_NTOSKRNL_EXPORT(PsInitialSystemProcess);
+EXTERN_NTOSKRNL_EXPORT(PsGetProcessId);
+EXTERN_NTOSKRNL_EXPORT(KeQueryPrcbAddress);
+EXTERN_NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
+EXTERN_NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
 
 #endif /* KM_H */
 

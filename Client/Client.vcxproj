@@ -131,7 +131,7 @@
   <ItemGroup>
     <ClCompile Include="client.cpp" />
     <ClCompile Include="clkm\clkm.cpp" />
-    <ClCompile Include="clnv\clnv.cpp" />
+    <ClCompile Include="clint\clint.cpp" />
     <ClCompile Include="clum\clum.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="utils.cpp" />
@@ -139,7 +139,7 @@
   <ItemGroup>
     <ClInclude Include="client.h" />
     <ClInclude Include="clkm\clkm.h" />
-    <ClInclude Include="clnv\clnv.h" />
+    <ClInclude Include="clint\clint.h" />
     <ClInclude Include="clum\clum.h" />
     <ClInclude Include="utils.h" />
   </ItemGroup>
