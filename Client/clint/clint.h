@@ -1,5 +1,5 @@
-#ifndef CLNV_H
-#define CLNV_H
+#ifndef CLINT_H
+#define CLINT_H
 
 #include "../client.h"
 
@@ -8,7 +8,6 @@ namespace cl
 class clint : public client
 {
 	HANDLE hDriver = 0;
-	void* (*encrypt_payload)(void* data_crypt, int, void* temp_buf) = 0;
 public:
 	clint()  {}
 	~clint() {}
@@ -26,5 +25,5 @@ private:
 };
 }
 
-#endif /* CLVD_H */
+#endif /* CLINT_H */
 
