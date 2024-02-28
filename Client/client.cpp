@@ -11,11 +11,7 @@ std::vector<QWORD> cl::global_export_list;
 //
 // NTOSKRNL_EXPORT define variables are automatically resolved in cl::initialize
 //
-
 NTOSKRNL_EXPORT(HalPrivateDispatchTable);
-NTOSKRNL_EXPORT(PsInitialSystemProcess);
-NTOSKRNL_EXPORT(PsGetProcessId);
-NTOSKRNL_EXPORT(KeQueryPrcbAddress);
 NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
 NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
 
@@ -139,7 +135,7 @@ BOOL cl::initialize(void)
 	}
 	
 	clkm *km = new clkm();
-	clint *vd = new clint();
+	clint *intel = new clint();
 	clum *um = new clum();
 	if (controller == 0 && km->initialize())
 	{
@@ -150,13 +146,13 @@ BOOL cl::initialize(void)
 		delete km; km = 0;
 	}
 
-	if (controller == 0 && vd->initialize())
+	if (controller == 0 && intel->initialize())
 	{
-		controller = vd;
+		controller = intel;
 	}
 	else
 	{
-		delete vd; vd = 0;
+		delete intel; intel = 0;
 	}
 
 	if (controller == 0 && um->initialize())
@@ -168,7 +164,7 @@ BOOL cl::initialize(void)
 		delete um; um = 0;
 	}
 	
-	if ((km || vd))
+	if ((km || intel))
 	{
 		//
 		// resolve HalpPciMcfgTableCount/HalpPciMcfgTable addresses

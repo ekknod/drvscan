@@ -9,7 +9,7 @@ static void unsupported_error(void)
 {
 	printf(
 		"Usermode connector is not supported,\n"
-		"please launch driver or change your target process\n"
+		"please launch driver or change your target action\n"
 	);
 }
 
@@ -17,7 +17,10 @@ BOOL cl::clum::read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length
 {
 	if (pid == 4 || pid == 0)
 	{
-		unsupported_error();
+		printf(
+			"Usermode connector is not supported,\n"
+			"please launch driver or change your target process\n"
+		);
 		return 0;
 	}
 
