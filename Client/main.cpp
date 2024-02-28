@@ -59,7 +59,7 @@ int main(int argc, char **argv)
 		return getchar();
 	}
 	
-	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, pcileech=0, dumpcfg=0, dumpbar=0, use_cache = 0, scanefi = 0, dump = 0;
+	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, pcileech=0, cfg=0, bar=0, use_cache = 0, scanefi = 0, dump = 0;
 	for (int i = 1; i < argc; i++)
 	{
 		if (!strcmp(argv[i], "--help"))
@@ -69,14 +69,14 @@ int main(int argc, char **argv)
 
 				"--scan                 scan target process memory changes\n"
 				"    --pid              target process id\n"
-				"    --usecache         we use local cache instead of original PE files\n"
-				"    --savecache        dump target process modules to disk, these can be used later with --usecache\n"
+				"    --usecache         (optional) we use local cache instead of original PE files\n"
+				"    --savecache        (optional) dump target process modules to disk\n\n"
 				"--scanefi              scan abnormals from efi memory map\n"
-				"    --dump             dump found abnormal to disk\n"
+				"    --dump             (optional) dump found abnormal to disk\n\n"
 				"--scanpci              scan pci cards from the system\n"
 				"    --pcileech         search pcileech-fpga cards\n"
-				"    --dumpcfg          print out every card cfg space\n"
-				"    --dumpbar          print out every card bar space\n\n\n"
+				"    --cfg              print out every card cfg space\n"
+				"    --bar              print out every card bar space\n\n\n"
 			);
 
 			printf("\nExample (verifying modules integrity by using cache):\n"
@@ -114,14 +114,14 @@ int main(int argc, char **argv)
 			pcileech = 1;
 		}
 
-		else if (!strcmp(argv[i], "--dumpcfg"))
+		else if (!strcmp(argv[i], "--cfg"))
 		{
-			dumpcfg = 1;
+			cfg = 1;
 		}
 
-		else if (!strcmp(argv[i], "--dumpbar"))
+		else if (!strcmp(argv[i], "--bar"))
 		{
-			dumpbar = 1;
+			bar = 1;
 		}
 
 		else if (!strcmp(argv[i], "--scanefi"))
@@ -142,10 +142,10 @@ int main(int argc, char **argv)
 
 	if (scanpci)
 	{
-		if (pcileech+dumpcfg+dumpbar!=0)
+		if (pcileech+cfg+bar!=0)
 		{
 			LOG("scanning PCIe devices\n");
-			scan_pci(pcileech, dumpcfg, dumpbar);
+			scan_pci(pcileech, cfg, bar);
 			LOG("scan is complete\n");
 		}
 	}

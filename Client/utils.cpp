@@ -381,12 +381,22 @@ PVOID LoadFileEx(PCSTR path, DWORD *out_len)
 			*out_len = len;
 
 		ret = malloc(len);
+		for (int i = 0; i < len; i++)
+		{
+			if (fread((void *)((char*)ret + i), 1, 1, f) != 1)
+			{
+				free(ret);
+				ret = 0;
+			}
+		}
 
+		/*
 		if (fread(ret, len, 1, f) != 1)
 		{
 			free(ret);
 			ret = 0;
 		}
+		*/
 
 		fclose(f);
 	}

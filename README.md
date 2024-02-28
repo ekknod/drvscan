@@ -5,14 +5,16 @@ C:\Users\Juho\Desktop>Client.exe --help
 
 --scan                 scan target process memory changes
     --pid              target process id
-    --usecache         we use local cache instead of original PE files
-    --savecache        dump target process modules to disk, these can be used later with --usecache
+    --usecache         (optional) we use local cache instead of original PE files
+    --savecache        (optional) dump target process modules to disk
+
 --scanefi              scan abnormals from efi memory map
-    --dump             dump found abnormal to disk
+    --dump             (optional) dump found abnormal to disk
+
 --scanpci              scan pci cards from the system
     --pcileech         search pcileech-fpga cards
-    --dumpcfg          print out every card cfg space
-    --dumpbar          print out every card bar space
+    --cfg              print out every card cfg space
+    --bar              print out every card bar space
 
 
 
