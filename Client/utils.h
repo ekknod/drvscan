@@ -108,6 +108,11 @@ namespace pe
 			return *(DWORD*)(opt + 0x3C);
 		}
 
+		inline DWORD get_checksum(QWORD opt)
+		{
+			return *(DWORD*)(opt + 0x40);
+		}
+
 		inline QWORD get_image_base(QWORD opt)
 		{
 			QWORD nt = opt - 0x18;

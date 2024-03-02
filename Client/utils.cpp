@@ -404,12 +404,61 @@ PVOID LoadFileEx(PCSTR path, DWORD *out_len)
 	return (PVOID)ret;
 }
 
+//
+// https://github.com/mrexodia/portable-executable-library/blob/master/pe_lib/pe_checksum.cpp
+//
+uint32_t calculate_checksum(PVOID file, DWORD file_size)
+{
+	//Checksum value
+	unsigned long long checksum = 0;
+
+	//Read DOS header
+	IMAGE_DOS_HEADER* header = (IMAGE_DOS_HEADER*)file;
+
+	//Calculate PE checksum
+	unsigned long long top = 0xFFFFFFFF;
+	top++;
+
+	//"CheckSum" field position in optional PE headers - it's always 64 for PE and PE+
+	static const unsigned long checksum_pos_in_optional_headers = 64;
+	//Calculate real PE headers "CheckSum" field position
+	//Sum is safe here
+	unsigned long pe_checksum_pos = header->e_lfanew + sizeof(IMAGE_FILE_HEADER) + sizeof(uint32_t) + checksum_pos_in_optional_headers;
+
+	//Calculate checksum for each byte of file
+
+	for (long long i = 0; i < file_size; i += 4)
+	{
+		unsigned long dw = *(unsigned long*)((char*)file + i);
+		//Skip "CheckSum" DWORD
+		if (i == pe_checksum_pos)
+			continue;
+
+		//Calculate checksum
+		checksum = (checksum & 0xffffffff) + dw + (checksum >> 32);
+		if (checksum > top)
+			checksum = (checksum & 0xffffffff) + (checksum >> 32);
+	}
+
+	//Finish checksum
+	checksum = (checksum & 0xffff) + (checksum >> 16);
+	checksum = (checksum)+(checksum >> 16);
+	checksum = checksum & 0xffff;
+
+	checksum += static_cast<unsigned long>(file_size);
+	return static_cast<uint32_t>(checksum);
+}
+
 PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_image)
 {
-	VOID* file_pe = LoadFileEx(path, out_len);
+	DWORD size    = 0;
+	VOID* file_pe = LoadFileEx(path, &size);
 
 	if (file_pe == 0)
 		return 0;
+
+	if (out_len)
+		*out_len = size;
 
 	if (*(WORD*)(file_pe) != IMAGE_DOS_SIGNATURE)
 	{
@@ -417,8 +466,14 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 		return 0;
 	}
 
-	QWORD nt = pe::get_nt_headers((QWORD)file_pe);
+	DWORD checksum = calculate_checksum(file_pe, size);
+
+	QWORD nt  = pe::get_nt_headers((QWORD)file_pe);
 	QWORD opt = pe::nt::get_optional_header(nt);
+	if (pe::optional::get_checksum(opt) != checksum)
+	{
+		printf("\ninvalid checksum: %s %lx, %lx\n\n", path, pe::optional::get_checksum(opt), checksum);
+	}
 
 	DWORD image_size = pe::optional::get_image_size(opt);
 
@@ -452,8 +507,6 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 	free(file_pe);
 
 	nt = pe::get_nt_headers((QWORD)new_image);
-
-
 	opt = pe::nt::get_optional_header(nt);
 
 	BYTE* delta = current_base != 0 ? (BYTE*)current_base - (QWORD)local_base : (BYTE*)(QWORD)new_image - (QWORD)local_base;

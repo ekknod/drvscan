@@ -45,7 +45,6 @@ int main(int argc, char **argv)
 	//
 	FontColor(7);
 
-
 	if (!cl::initialize())
 	{
 		LOG("driver is not running\n");
