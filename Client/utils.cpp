@@ -466,13 +466,19 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 		return 0;
 	}
 
-	DWORD checksum = calculate_checksum(file_pe, size);
-
 	QWORD nt  = pe::get_nt_headers((QWORD)file_pe);
 	QWORD opt = pe::nt::get_optional_header(nt);
-	if (pe::optional::get_checksum(opt) != checksum)
+
+	//
+	// savecache/usecache
+	//
+	if (size != pe::optional::get_image_size(opt))
 	{
-		printf("\ninvalid checksum: %s %lx, %lx\n\n", path, pe::optional::get_checksum(opt), checksum);
+		DWORD checksum = calculate_checksum(file_pe, size);
+		if (pe::optional::get_checksum(opt) != checksum)
+		{
+			printf("\ninvalid checksum: %s %lx, %lx\n\n", path, pe::optional::get_checksum(opt), checksum);
+		}
 	}
 
 	DWORD image_size = pe::optional::get_image_size(opt);
