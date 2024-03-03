@@ -457,9 +457,6 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 	if (file_pe == 0)
 		return 0;
 
-	if (out_len)
-		*out_len = size;
-
 	if (*(WORD*)(file_pe) != IMAGE_DOS_SIGNATURE)
 	{
 		free(file_pe);
