@@ -186,6 +186,13 @@ int main(int argc, char **argv)
 	return 0;
 }
 
+typedef struct _DEVICE_INFO {
+	unsigned char  bus, slot, func, cfg[0x200];
+	unsigned char  blk;
+	unsigned char  info;
+	std::vector<struct _DEVICE_INFO> childrens;
+} DEVICE_INFO;
+
 const char *blkinfo(unsigned char info)
 {
 	switch (info)
@@ -195,6 +202,7 @@ const char *blkinfo(unsigned char info)
 	case 3: return "xilinx";
 	case 4: return "invalid bridge";
 	case 5: return "Hidden";
+	case 6: return "invalid config";
 	}
 	return "OK";
 }
@@ -248,56 +256,23 @@ void PrintPcieBarSpace(DWORD bar)
 	printf("\n");
 }
 
-typedef struct _PCI_CAPABILITIES_HEADER {
-  UCHAR CapabilityID;
-  UCHAR Next;
-} PCI_CAPABILITIES_HEADER, *PPCI_CAPABILITIES_HEADER;
-
-typedef union _PCI_EXPRESS_CAPABILITIES_REGISTER {
-	struct {
-	USHORT CapabilityVersion  :4;
-	USHORT DeviceType  :4;
-	USHORT SlotImplemented  :1;
-	USHORT InterruptMessageNumber  :5;
-	USHORT Rsvd  :2;
-	};
-	USHORT AsUSHORT;
-} PCI_EXPRESS_CAPABILITIES_REGISTER, *PPCI_EXPRESS_CAPABILITIES_REGISTER;
-
-typedef struct _PCI_EXPRESS_CAPABILITY {
-	PCI_CAPABILITIES_HEADER                    Header;
-	PCI_EXPRESS_CAPABILITIES_REGISTER          ExpressCapabilities;
-} PCI_EXPRESS_CAPABILITY, *PPCI_EXPRESS_CAPABILITY;
-
-typedef enum {
-
-    PciExpressEndpoint = 0,
-    PciExpressLegacyEndpoint,
-    PciExpressRootPort = 4,
-    PciExpressUpstreamSwitchPort,
-    PciExpressDownstreamSwitchPort,
-    PciExpressToPciXBridge,
-    PciXToExpressBridge,
-    PciExpressRootComplexIntegratedEndpoint,
-    PciExpressRootComplexEventCollector
-} PCI_EXPRESS_DEVICE_TYPE;
-
 DWORD get_port_type(unsigned char *cfg)
 {
-	BYTE cap = *(BYTE*)(cfg + 0x34);
-	if (cap == 0) return 0;
+	PVOID pcie = pci::get_pcie(cfg);
 
-	unsigned char *pm = cfg + cap;
-	if (pm[1] == 0) return 0;
+	if (pcie == 0)
+	{
+		if (pci::header_type(cfg) == 0x80)
+		{
+			return PciXToExpressBridge;
+		}
+		return 0;
+	}
 
-	unsigned char *msi = cfg + pm[1];
-	if (msi[1] == 0) return 0;
-
-	return ((PPCI_EXPRESS_CAPABILITY)(cfg + msi[1]))->ExpressCapabilities.DeviceType;
+	return pci::pcie::cap::pcie_cap_device_port_type(
+		pcie
+	);
 }
-
-#define GET_BIT(data, bit) ((data >> bit) & 1)
-#define GET_BITS(data, high, low) ((data >> low) & ((1 << (high - low + 1)) - 1))
 
 BOOL heuristic_detection(unsigned char *cfg)
 {
@@ -310,6 +285,78 @@ BOOL heuristic_detection(unsigned char *cfg)
 		return 0;
 	DWORD a1 = *(DWORD*)(cfg + a0[1] + 0x0C);
 	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
+}
+
+BOOL is_valid_config(DEVICE_INFO device)
+{
+	PVOID pm = pci::get_pm(device.cfg);
+
+	if (pm == 0)
+	{
+		return 0;
+	}
+
+	PVOID msi = pci::get_msi(device.cfg);
+	if (msi == 0)
+	{
+		return 0;
+	}
+
+	//
+	// Header Type: bit 7 (0x80) indicates whether it is a multi-function device,
+	// while interesting values of the remaining bits are: 00 = general device, 01 = PCI-to-PCI bridge.
+	// src: https://www.khoury.northeastern.edu/~pjd/cs7680/homework/pci-enumeration.html
+	//
+	if (GET_BIT(pci::header_type(device.cfg), 7))
+	{
+		if (!device.childrens.size())
+		{
+			return 0;
+		}
+
+		if (GET_BIT(pci::header_type(device.cfg), 7) > 1)
+		{
+			return 0;
+		}
+	}
+
+	PVOID pcie = pci::get_pcie(device.cfg);
+	if (pcie == 0)
+	{
+		return 0;
+	}
+
+	//
+	// header type 1 (bridge)
+	//
+	if (GET_BITS(pci::header_type(device.cfg), 6, 0) == 1)
+	{
+		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressDownstreamSwitchPort)
+		{
+			return 0;
+		}
+	}
+	//
+	// header type 0
+	//
+	else if (GET_BITS(pci::header_type(device.cfg), 6, 0) == 0)
+	{
+		//
+		// this is big question mark, if it causes any problems feel free to comment it out
+		//
+		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) > PciExpressRootPort)
+		{
+			return 0;
+		}
+	}
+	//
+	// invalid device
+	//
+	else
+	{
+		return 0;
+	}
+	return 1;
 }
 
 PCSTR get_port_type_str(unsigned char *cfg)
@@ -330,13 +377,6 @@ PCSTR get_port_type_str(unsigned char *cfg)
 	return "";
 }
 
-typedef struct {
-		
-	unsigned char  bus, slot, func, cfg[0x200];
-	unsigned char  blk;
-	unsigned char  info;
-} DEVICE_INFO;
-
 std::vector<DEVICE_INFO> get_pci_device_list(void)
 {
 	std::vector<DEVICE_INFO> devices;
@@ -347,17 +387,21 @@ std::vector<DEVICE_INFO> get_pci_device_list(void)
 			QWORD physical_address = cl::pci::get_physical_address(bus, slot);
 			if (physical_address == 0)
 			{
-				continue;
+				goto E0;
 			}
 
 			for (unsigned char func = 0; func < 8; func++)
 			{
-				physical_address = physical_address + (func << 12);
+				QWORD entry = physical_address + (func << 12l);
 
-				QWORD device_control = cl::io::read<QWORD>(physical_address + 0x04);
+				QWORD device_control = cl::io::read<QWORD>(entry + 0x04);
 
 				if (device_control == 0xFFFFFFFFFFFFFFFF)
 				{
+					if (func == 0)
+					{
+						break;
+					}
 					continue;
 				}
 
@@ -374,13 +418,21 @@ std::vector<DEVICE_INFO> get_pci_device_list(void)
 				//
 				for (int i = 0; i < 0x200; i+= 8)
 				{
-					*(QWORD*)((char*)device.cfg + i) = cl::io::read<QWORD>(physical_address + i);
+					*(QWORD*)((char*)device.cfg + i) = cl::io::read<QWORD>(entry + i);
 				}
-				// cl::io::read(physical_address, device.cfg, sizeof(device.cfg));
-				devices.push_back(device);
+				// cl::io::read(entry, device.cfg, sizeof(device.cfg));
+
+
+				if (func != 0)
+					devices[devices.size() - 1].childrens.push_back(device);
+				else
+					devices.push_back(device);
+
+				// devices.push_back(device);
 			}
 		}
 	}
+E0:
 	return devices;
 }
 
@@ -435,6 +487,7 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 			continue;
 		}
 
+		/*
 		if (get_port_type(dev.cfg) == 8)
 		{
 			if (dev.func == 0)
@@ -443,12 +496,19 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 				dev.info = 4;
 				continue;
 			}
-		}
+		}*/
 
 		if (*(WORD*)(dev.cfg) == 0xFFFF || *(WORD*)(dev.cfg + 0x02) == 0xFFFF)
 		{
 			dev.blk  = 2;
 			dev.info = 5;
+		}
+
+		if (!is_valid_config(dev))
+		{
+			dev.blk = 2;
+			dev.info = 6;
+			continue;
 		}
 	}
 
@@ -458,6 +518,12 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 		{
 			LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
 				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
+
+			for (auto &child : dev.childrens)
+			{
+				LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
+					get_port_type_str(child.cfg), child.bus, child.slot, child.func, *(WORD*)(child.cfg), *(WORD*)(child.cfg + 0x02), blkinfo(child.info));
+			}
 		}
 	}
 
@@ -479,7 +545,6 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 		}
 	}
 }
-
 
 static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar)
 {
