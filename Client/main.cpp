@@ -309,6 +309,9 @@ BOOL is_valid_config(DEVICE_INFO device)
 	//
 	if (GET_BIT(pci::header_type(device.cfg), 7))
 	{
+		//
+		// check if we have any children devices
+		//
 		if (!device.childrens.size())
 		{
 			return 0;
@@ -331,6 +334,9 @@ BOOL is_valid_config(DEVICE_INFO device)
 	//
 	if (GET_BITS(pci::header_type(device.cfg), 6, 0) == 1)
 	{
+		//
+		// this is big question mark, if it causes any problems feel free to comment it out
+		//
 		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressDownstreamSwitchPort)
 		{
 			return 0;
