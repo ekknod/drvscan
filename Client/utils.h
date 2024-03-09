@@ -348,7 +348,7 @@ namespace pci
 			return 0;
 		}
 		PVOID pcie = (PVOID)((PBYTE)cfg + nxt);
-		if (GET_BITS(header_type(cfg), 6, 0) == 0 && pcie::cap::pcie_cap_nextptr(pcie))
+		if (pcie::cap::pcie_cap_nextptr(pcie) && pcie::cap::pcie_cap_capability_id(pcie) != 0x10)
 		{
 			return (PVOID)((PBYTE)cfg + pcie::cap::pcie_cap_nextptr(pcie));
 		}
