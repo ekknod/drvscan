@@ -326,6 +326,9 @@ BOOL is_valid_config(DEVICE_INFO device)
 	PVOID pcie = pci::get_pcie(device.cfg);
 	if (pcie == 0)
 	{
+		//
+		// vmware, not sure if this ever happens on real machines :man_shrugging: 
+		//
 		if (pci::capabilities_ptr(device.cfg) == 0)
 		{
 			return 1;
