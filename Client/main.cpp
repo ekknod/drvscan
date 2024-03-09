@@ -326,6 +326,10 @@ BOOL is_valid_config(DEVICE_INFO device)
 	PVOID pcie = pci::get_pcie(device.cfg);
 	if (pcie == 0)
 	{
+		if (pci::capabilities_ptr(device.cfg) == 0)
+		{
+			return 1;
+		}
 		return 0;
 	}
 
@@ -337,7 +341,8 @@ BOOL is_valid_config(DEVICE_INFO device)
 		//
 		// this is big question mark, if it causes any problems feel free to comment it out
 		//
-		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressDownstreamSwitchPort)
+		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressDownstreamSwitchPort &&
+			pci::pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressRootPort)
 		{
 			return 0;
 		}
@@ -350,7 +355,7 @@ BOOL is_valid_config(DEVICE_INFO device)
 		//
 		// this is big question mark, if it causes any problems feel free to comment it out
 		//
-		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) > PciExpressRootPort)
+		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) > PciXToExpressBridge)
 		{
 			return 0;
 		}
