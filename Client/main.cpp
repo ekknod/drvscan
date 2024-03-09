@@ -202,7 +202,12 @@ const char *blkinfo(unsigned char info)
 	case 3: return "xilinx";
 	case 4: return "invalid bridge";
 	case 5: return "Hidden";
-	case 6: return "invalid config";
+	case 6: return "invalid pm cap";
+	case 7: return "invalid msi cap";
+	case 8: return "invalid pcie cap";
+	case 9: return "invalid multi func device";
+	case 10: return "invalid header type";
+	case 11: return "invalid bridge device";
 	}
 	return "OK";
 }
@@ -259,22 +264,18 @@ void PrintPcieBarSpace(DWORD bar)
 DWORD get_port_type(unsigned char *cfg)
 {
 	PVOID pcie = pci::get_pcie(cfg);
-
 	if (pcie == 0)
 	{
-		if (pci::header_type(cfg) == 0x80)
+		if (pci::class_code(cfg) == 0x60000)
 		{
 			return PciXToExpressBridge;
 		}
 		return 0;
 	}
-
-	return pci::pcie::cap::pcie_cap_device_port_type(
-		pcie
-	);
+	return pci::pcie::cap::pcie_cap_device_port_type(pcie);
 }
 
-BOOL heuristic_detection(unsigned char *cfg)
+BOOL is_xilinx(unsigned char *cfg)
 {
 	unsigned char *a0 = cfg + *(BYTE*)(cfg + 0x34);
 	if (a0[1] == 0)
@@ -287,19 +288,54 @@ BOOL heuristic_detection(unsigned char *cfg)
 	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
 }
 
-BOOL is_valid_config(DEVICE_INFO device)
+void validate_device_config(DEVICE_INFO &device)
 {
-	PVOID pm = pci::get_pm(device.cfg);
+	using namespace pci;
+
+	//
+	// bus master is disabled
+	//
+	if (!GET_BIT(*(WORD*)(device.cfg + 0x04), 2))
+	{
+		device.blk = 1; device.info = 2;
+		return;
+	}
+
+
+	//
+	// can be just used to identify xilinx FPGA
+	//
+	/*
+	if (is_xilinx(device.cfg))
+	{
+		device.blk = 2; device.info = 3;
+		return;
+	}
+	*/
+
+
+	//
+	// hidden device, LUL.
+	//
+	if (*(WORD*)(device.cfg) == 0xFFFF || *(WORD*)(device.cfg + 0x02) == 0xFFFF)
+	{
+		device.blk  = 2; device.info = 5;
+		return;
+	}
+
+	PVOID pm = get_pm(device.cfg);
 
 	if (pm == 0)
 	{
-		return 0;
+		device.blk = 2; device.info = 6;
+		return;
 	}
 
-	PVOID msi = pci::get_msi(device.cfg);
+	PVOID msi = get_msi(device.cfg);
 	if (msi == 0)
 	{
-		return 0;
+		device.blk = 2; device.info = 7;
+		return;
 	}
 
 	//
@@ -307,60 +343,63 @@ BOOL is_valid_config(DEVICE_INFO device)
 	// while interesting values of the remaining bits are: 00 = general device, 01 = PCI-to-PCI bridge.
 	// src: https://www.khoury.northeastern.edu/~pjd/cs7680/homework/pci-enumeration.html
 	//
-	if (GET_BIT(pci::header_type(device.cfg), 7))
+	if (GET_BIT(header_type(device.cfg), 7))
 	{
 		//
 		// check if we have any children devices
 		//
 		if (!device.childrens.size())
 		{
-			return 0;
-		}
-
-		if (GET_BIT(pci::header_type(device.cfg), 7) > 1)
-		{
-			return 0;
+			device.blk = 2; device.info = 9;
+			return;
 		}
 	}
 
-	PVOID pcie = pci::get_pcie(device.cfg);
+	PVOID pcie = get_pcie(device.cfg);
 	if (pcie == 0)
 	{
 		//
 		// vmware, not sure if this ever happens on real machines :man_shrugging: 
 		//
-		if (pci::capabilities_ptr(device.cfg) == 0)
+		if (capabilities_ptr(device.cfg) == 0)
 		{
-			return 1;
+			return;
 		}
-		return 0;
+		device.blk = 2; device.info = 8;
+		return;
 	}
 
 	//
 	// header type 1 (bridge)
 	//
-	if (GET_BITS(pci::header_type(device.cfg), 6, 0) == 1)
+	if (GET_BITS(header_type(device.cfg), 6, 0) == 1)
 	{
 		//
-		// this is big question mark, if it causes any problems feel free to comment it out
+		// Type 1 Configuration Space Header is used for Root Port and Upstream Port/Downstream Port of PCIe Switch.
 		//
-		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressDownstreamSwitchPort &&
-			pci::pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressRootPort)
+		if (
+			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressDownstreamSwitchPort &&
+			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressUpstreamSwitchPort   &&
+			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressRootPort)
 		{
-			return 0;
+			device.blk = 2; device.info = 10;
+			return;
 		}
 	}
 	//
 	// header type 0
 	//
-	else if (GET_BITS(pci::header_type(device.cfg), 6, 0) == 0)
+	else if (GET_BITS(header_type(device.cfg), 6, 0) == 0)
 	{
 		//
-		// this is big question mark, if it causes any problems feel free to comment it out
+		// Type 0 Configuration Space Hader is used for Endpoint Device
 		//
-		if (pci::pcie::cap::pcie_cap_device_port_type(pcie) > PciXToExpressBridge)
+		if (
+			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressEndpoint &&
+			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressLegacyEndpoint)
 		{
-			return 0;
+			device.blk = 2; device.info = 10;
+			return;
 		}
 	}
 	//
@@ -368,9 +407,9 @@ BOOL is_valid_config(DEVICE_INFO device)
 	//
 	else
 	{
-		return 0;
+		device.blk = 2; device.info = 10;
+		return;
 	}
-	return 1;
 }
 
 PCSTR get_port_type_str(unsigned char *cfg)
@@ -487,43 +526,7 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 			continue;
 		}
 
-		if (!GET_BIT(*(WORD*)(dev.cfg + 0x04), 2))
-		{
-			dev.blk = 1;
-			dev.info = 2;
-			continue;
-		}
-
-		if (heuristic_detection(dev.cfg))
-		{
-			dev.blk = 2;
-			dev.info = 3;
-			continue;
-		}
-
-		/*
-		if (get_port_type(dev.cfg) == 8)
-		{
-			if (dev.func == 0)
-			{
-				dev.blk = 2;
-				dev.info = 4;
-				continue;
-			}
-		}*/
-
-		if (*(WORD*)(dev.cfg) == 0xFFFF || *(WORD*)(dev.cfg + 0x02) == 0xFFFF)
-		{
-			dev.blk  = 2;
-			dev.info = 5;
-		}
-
-		if (!is_valid_config(dev))
-		{
-			dev.blk = 2;
-			dev.info = 6;
-			continue;
-		}
+		validate_device_config(dev);
 	}
 
 	for (auto &dev : devices)
