@@ -197,17 +197,18 @@ const char *blkinfo(unsigned char info)
 {
 	switch (info)
 	{
-	case 1: return "pcileech";
-	case 2: return "BME off";
-	case 3: return "xilinx";
-	case 4: return "invalid bridge";
-	case 5: return "Hidden";
-	case 6: return "invalid pm cap";
-	case 7: return "invalid msi cap";
-	case 8: return "invalid pcie cap";
-	case 9: return "invalid multi func device";
-	case 10: return "invalid header type";
-	case 11: return "invalid bridge device";
+	case 1:  return "pcileech";
+	case 2:  return "BME off";
+	case 3:  return "xilinx";
+	case 4:  return "invalid bridge";
+	case 5:  return "Hidden";
+	case 6:  return "invalid pm cap";
+	case 7:  return "invalid msi cap";
+	case 8:  return "invalid pcie cap";
+	case 9:  return "invalid multi func device";
+	case 10: return "invalid header type 0";
+	case 11: return "invalid header type 1";
+	case 12: return "invalid header type";
 	}
 	return "OK";
 }
@@ -382,7 +383,7 @@ void validate_device_config(DEVICE_INFO &device)
 			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressUpstreamSwitchPort   &&
 			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressRootPort)
 		{
-			device.blk = 2; device.info = 10;
+			device.blk = 2; device.info = 11;
 			return;
 		}
 	}
@@ -394,9 +395,7 @@ void validate_device_config(DEVICE_INFO &device)
 		//
 		// Type 0 Configuration Space Hader is used for Endpoint Device
 		//
-		if (
-			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressEndpoint &&
-			pcie::cap::pcie_cap_device_port_type(pcie) != PciExpressLegacyEndpoint)
+		if (pcie::cap::pcie_cap_device_port_type(pcie) > PciExpressRootPort)
 		{
 			device.blk = 2; device.info = 10;
 			return;
@@ -407,7 +406,7 @@ void validate_device_config(DEVICE_INFO &device)
 	//
 	else
 	{
-		device.blk = 2; device.info = 10;
+		device.blk = 2; device.info = 12;
 		return;
 	}
 }
@@ -446,10 +445,17 @@ std::vector<DEVICE_INFO> get_pci_device_list(void)
 			for (unsigned char func = 0; func < 8; func++)
 			{
 				QWORD entry = physical_address + (func << 12l);
+				
+				int invalid_cnt = 0;
+				for (int i = 0; i < 8; i++)
+				{
+					if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
+					{
+						invalid_cnt++;
+					}
+				}
 
-				QWORD device_control = cl::io::read<QWORD>(entry + 0x04);
-
-				if (device_control == 0xFFFFFFFFFFFFFFFF)
+				if (invalid_cnt == 8)
 				{
 					if (func == 0)
 					{
@@ -465,23 +471,18 @@ std::vector<DEVICE_INFO> get_pci_device_list(void)
 				device.blk = 0;
 				device.info = 0;
 
-
 				//
-				// do not even ask...
+				// do not even ask... intel driver problem
 				//
-				for (int i = 0; i < 0x200; i+= 8)
+				for (int i = 0; i < 0x200; i++)
 				{
-					*(QWORD*)((char*)device.cfg + i) = cl::io::read<QWORD>(entry + i);
+					*(BYTE*)((char*)device.cfg + i) = cl::io::read<BYTE>(entry + i);
 				}
-				// cl::io::read(entry, device.cfg, sizeof(device.cfg));
-
 
 				if (func != 0)
 					devices[devices.size() - 1].childrens.push_back(device);
 				else
 					devices.push_back(device);
-
-				// devices.push_back(device);
 			}
 		}
 	}
