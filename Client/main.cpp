@@ -300,6 +300,19 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	DEVICE_INFO &dev = device.d;
 
 
+	PVOID pcie = get_pcie(dev.cfg);
+	if (pcie != 0)
+	{
+		//
+		// end point device never should be bridge without devices
+		//
+		if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
+		{
+			device.blk = 2; device.info = 14;
+			return;
+		}
+	}
+
 	//
 	// bus master is disabled, we can safely disable them
 	//
@@ -389,15 +402,12 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		return;
 	}
 	*/
-
-	PVOID pcie = get_pcie(dev.cfg);
 	if (pcie == 0)
 	{
 		device.blk = 2; device.info = 8;
 		return;
 	}
-
-
+	
 	//
 	// 1432
 	// Header Type: bit 7 (0x80) indicates whether it is a multi-function device,
@@ -454,15 +464,6 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	else
 	{
 		device.blk = 2; device.info = 12;
-		return;
-	}
-
-	//
-	// end point device never should be bridge without devices
-	//
-	if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
-	{
-		device.blk = 2; device.info = 14;
 		return;
 	}
 }
