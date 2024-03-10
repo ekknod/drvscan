@@ -774,6 +774,245 @@ std::vector<PCIE_DEVICE_INFO> get_pci_device_list(void)
 	return pcie_devices;
 }
 
+void filter_pci_cfg(unsigned char *cfg)
+{
+	using namespace pci;
+
+	printf(
+		"\n[General information]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("CFG_VEND_ID | CFG_DEV_ID 			%04X %04X\n", vendor_id(cfg), device_id(cfg));
+	printf("CFG_SUBSYS_VEND_ID | CFG_SUBSYS_ID 		%04X %04X\n", subsys_vendor_id(cfg), subsys_id(cfg));
+	printf("CFG_REV_ID 					%ld\n", revision_id(cfg));
+	printf("HEADER_TYPE 					0x%lx\n", header_type(cfg));
+	printf("BAR0 						%lx\n", bar(cfg)[0]);
+	printf("CLASS_CODE 					%06X\n", class_code(cfg));
+	printf("CAPABILITIES_PTR | PM_BASE_PTR 			0x%x\n", capabilities_ptr(cfg));
+	printf("INTERRUPT_LINE                                  %lx\n", interrupt_line(cfg));
+	printf("INTERRUPT_PIN                                   %lx\n", interrupt_pin(cfg));
+	printf("---------------------------------------------------------------------\n");
+
+	PVOID pm = get_pm(cfg);
+
+	if (pm != 0)
+	{	
+		printf(
+			"\n[PM Cap]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("PM_CAP_ON 					%d\n", pm::cap::pm_cap_on(pm));
+		printf("PM_CAP_NEXTPTR | MSI_BASE_PTR 			0x%x\n", pm::cap::pm_cap_next_ptr(pm));
+		printf("PM_CAP_ID 					%d\n",pm::cap::pm_cap_id(pm));
+		printf("PM_CAP_PME_CLOCK 				%d\n", pm::cap::pm_cap_pme_clock(pm));
+		printf("PM_CAP_DSI 					%d\n", pm::cap::pm_cap_dsi(pm));
+		printf("PM_CAP_AUXCURRENT 				%d\n", pm::cap::pm_cap_auxcurrent(pm));
+		printf("PM_CAP_D1SUPPORT PM_CAP_D2SUPPORT 		%d %d\n", pm::cap::pm_cap_d1support(pm), pm::cap::pm_cap_d2support(pm));
+		printf("PM_CAP_PMESUPPORT 				0x0%x\n", pm::cap::pm_cap_pmesupport(pm));
+		printf("PM_CAP_RSVD_04 					%ld\n", pm::cap::pm_cap_rsvd_04(pm));
+		printf("PM_CAP_VERSION 					%ld\n", pm::cap::pm_cap_version(pm));
+		printf("---------------------------------------------------------------------\n");
+
+		printf(
+			"\n[PMCSR]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("PM_CSR_NOSOFTRST 				%ld\n", pm::csr::pm_csr_nosoftrst(pm));
+		printf("PM_CSR_BPCCEN    				%ld\n", pm::csr::pm_csr_bpccen(pm));
+		printf("PM_CSR_B2B3S     				%ld\n", pm::csr::pm_csr_b2b3s(pm));
+		printf("PMCSR PWR STATE 				%ld\n", pm::csr::pm_csr_power_state(pm));
+		printf("PMCSR PMESTATUS 				%ld\n", pm::csr::pm_csr_pme_status(pm));
+		printf("PMCSR DATA SCALE 				%ld\n", pm::csr::pm_csr_data_scale(pm));
+		printf("PMCSR DATA SELECT 				%ld\n", pm::csr::pm_csr_pme_status(pm));
+		printf("PMCSR PME ENABLE 				%ld\n", pm::csr::pm_csr_pme_enabled(pm));
+		printf("PMCSR reserved 					%ld\n", pm::csr::pm_csr_reserved(pm));
+		printf("PMCSR dynamic data 				%ld\n", pm::csr::pm_csr_dynamic_data(pm));
+		printf("---------------------------------------------------------------------\n");
+	}
+	PVOID msi = get_msi(cfg);
+
+	if (msi != 0)
+	{
+		printf(
+			"\n[MSI CAP]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("MSI_CAP_ON 					%d\n", msi::cap::msi_cap_on(msi));
+		printf("MSI_CAP_NEXTPTR | PCIE_BASE_PTR 		0x%x\n", msi::cap::msi_cap_nextptr(msi));
+		printf("MSI_CAP_ID 					0x0%lx\n", msi::cap::msi_cap_id(msi));
+		printf("MSI_CAP_MULTIMSGCAP 				%ld\n", msi::cap::msi_cap_multimsgcap(msi));
+		printf("MSI_CAP_MULTIMSG_EXTENSION 			%ld\n", msi::cap::msi_cap_multimsg_extension(msi));
+		printf("MSI_CAP_64_BIT_ADDR_CAPABLE 			%ld\n", msi::cap::msi_cap_64_bit_addr_capable(msi));
+		printf("MSI_CAP_PER_VECTOR_MASKING_CAPABLE 		%ld\n", msi::cap::msi_cap_per_vector_masking_capable(msi));
+		printf("---------------------------------------------------------------------\n");
+	}
+	PVOID pcie = get_pcie(cfg);
+
+	if (pcie == 0)
+	{
+		return;
+	}
+	
+	printf(
+		"\n[PE CAP]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("PCIE_CAP_ON 					%d\n", pcie::cap::pcie_cap_on(pcie));
+	printf("PCIE_CAP_NEXTPTR               			0x%lx\n", pcie::cap::pcie_cap_nextptr(pcie));
+	printf("PCIE_CAP_CAPABILITY_ID               		0x%lx\n", pcie::cap::pcie_cap_capability_id(pcie));
+	printf("PCIE_CAP_CAPABILITY_VERSION 			0x%lx\n", pcie::cap::pcie_cap_capability_version(pcie));
+	printf("PCIE_CAP_DEVICE_PORT_TYPE 			0x%lx\n", pcie::cap::pcie_cap_device_port_type(pcie));
+	printf("PCIE_CAP_SLOT_IMPLEMENTED  			0x%lx\n", pcie::cap::pcie_cap_slot_implemented(pcie));
+	printf("---------------------------------------------------------------------\n");
+
+	PVOID dev = get_dev(cfg);
+
+	if (dev == 0)
+	{
+		return;
+	}
+
+	
+	printf(
+		"\n[PCI Express Device Capabilities]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("DEV_CAP_MAX_PAYLOAD_SUPPORTED 			%d\n", dev::cap::dev_cap_max_payload_supported(dev));
+	printf("DEV_CAP_PHANTOM_FUNCTIONS_SUPPORT 		%ld\n", dev::cap::dev_cap_phantom_functions_support(dev));
+	printf("DEV_CAP_EXT_TAG_SUPPORTED 			%ld\n", dev::cap::dev_cap_ext_tag_supported(dev));
+	printf("DEV_CAP_ENDPOINT_L0S_LATENCY 			%ld\n", dev::cap::dev_cap_endpoint_l0s_latency(dev));
+	printf("DEV_CAP_ENDPOINT_L1_LATENCY 			%ld\n", dev::cap::dev_cap_endpoint_l1_latency(dev));
+	printf("DEV_CAP_ROLE_BASED_ERROR 			%ld\n", dev::cap::dev_cap_role_based_error(dev));
+	printf("DEV_CAP_ENABLE_SLOT_PWR_LIMIT_VALUE 		%ld\n", dev::cap::dev_cap_enable_slot_pwr_limit_value(dev));
+	printf("DEV_CAP_ENABLE_SLOT_PWR_LIMIT_SCALE 		%ld\n", dev::cap::dev_cap_enable_slot_pwr_limit_scale(dev));
+	printf("DEV_CAP_FUNCTION_LEVEL_RESET_CAPABLE 		%ld\n", dev::cap::dev_cap_function_level_reset_capable(dev));
+	printf("---------------------------------------------------------------------\n");
+
+
+	printf(
+		"\n[Device Control]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("Correctable Error Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_corr_err_reporting(dev));
+	printf("Non-Fatal Error Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_non_fatal_reporting(dev));
+	printf("Fatal Error Reporting Enable 			%ld\n", dev::ctrl::dev_ctrl_fatal_err_reporting(dev));
+	printf("Unsupported Request Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_ur_reporting(dev));
+	printf("Enable Relaxed Ordering 			%ld\n", dev::ctrl::dev_ctrl_relaxed_ordering(dev));
+	printf("Max_Payload_Size 				%ld\n", dev::ctrl::dev_ctrl_max_payload_size(dev));
+	printf("DEV_CONTROL_EXT_TAG_DEFAULT 			%ld\n", dev::ctrl::dev_ctrl_ext_tag_default(dev));
+	printf("Phantom Functions Enable 			%ld\n", dev::ctrl::dev_ctrl_phantom_func_enable(dev));
+	printf("Auxiliary Power PM Enable 			%ld\n", dev::ctrl::dev_ctrl_aux_power_enable(dev));
+	printf("Enable No Snoop 				%ld\n", dev::ctrl::dev_ctrl_enable_no_snoop(dev));
+	printf("Max_Read_Request_Size 				%ld\n", dev::ctrl::dev_ctrl_max_read_request_size(dev));
+	printf("Configuration retry status enable 		%ld\n", dev::ctrl::dev_ctrl_cfg_retry_status_enable(dev));
+	printf("---------------------------------------------------------------------\n");
+		
+	PVOID link = get_link(cfg);
+
+	if (link == 0)
+	{
+		return;
+	}
+
+	printf(
+		"\n[PCI Express Link Capabilities]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("LINK_CAP_MAX_LINK_SPEED 			%ld\n", link::cap::link_cap_max_link_speed(link));
+	printf("LINK_CAP_MAX_LINK_WIDTH 			%ld\n", link::cap::link_cap_max_link_width(link));
+	printf("LINK_CAP_ASPM_SUPPORT 				%d\n",  link::cap::link_cap_aspm_support(link));
+	printf("LINK_CAP_L0S_EXIT_LATENCY 			%ld\n", link::cap::link_cap_l0s_exit_latency(link));
+	printf("LINK_CAP_L1_EXIT_LATENCY 			%ld\n", link::cap::link_cap_l1_exit_latency(link));
+	printf("LINK_CAP_CLOCK_POWER_MANAGEMENT 		%ld\n", link::cap::link_cap_clock_power_management(link));
+	printf("LINK_CAP_ASPM_OPTIONALITY 			%ld\n", link::cap::link_cap_aspm_optionality(link));
+	printf("LINK_CAP_RSVD_23 				%ld\n", link::cap::link_cap_rsvd_23(link));
+	printf("---------------------------------------------------------------------\n");
+
+
+
+	printf(
+		"\n[Link Control]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("LINK_CONTROL_RCB  				%ld\n", link::ctrl::link_control_rcb(link));
+	printf("---------------------------------------------------------------------\n");
+
+
+
+	printf(
+		"\n[Link Status]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("LINK_STATUS_SLOT_CLOCK_CONFIG	 		%ld\n", link::status::link_status_slot_clock_config(link));
+	printf("---------------------------------------------------------------------\n");
+
+
+	printf(
+		"\n[PCI Express Device Capabilities 2]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("CPL_TIMEOUT_RANGES_SUPPORTED 			%ld\n", dev::cap2::cpl_timeout_disable_supported(dev));
+	printf("CPL_TIMEOUT_DISABLE_SUPPORTED 			%ld\n", dev::cap2::cpl_timeout_disable_supported(dev));
+	printf("---------------------------------------------------------------------\n");
+
+
+	printf(
+		"\n[Device Control 2]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("Completion Timeout value 			%ld\n", dev::ctrl2::completiontimeoutvalue(dev));
+	printf("Completion Timeout disable 			%ld\n", dev::ctrl2::completiontimeoutdisable(dev));
+	printf("---------------------------------------------------------------------\n");
+
+
+
+	printf(
+		"\n[PCI Express Link Capabilities 2]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("Link speeds supported 				%ld\n", link::cap2::linkspeedssupported(link));
+	printf("---------------------------------------------------------------------\n");
+
+
+
+	printf(
+		"\n[Link Control 2]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("LINK_CTRL2_TARGET_LINK_SPEED 			%d\n",  link::ctrl2::link_ctrl2_target_link_speed(link));
+	printf("LINK_CTRL2_HW_AUTONOMOUS_SPEED_DISABLE 		%ld\n", link::ctrl2::link_ctrl2_hw_autonomous_speed_disable(link));
+	printf("LINK_CTRL2_DEEMPHASIS 				%ld\n", link::ctrl2::link_ctrl2_deemphasis(link));
+	printf("Enter Compliance 				%ld\n", link::ctrl2::entercompliance(link));
+	printf("Transmit Margin 				%ld\n", link::ctrl2::transmitmargin(link));
+	printf("Enter Modified Compliance 			%ld\n", link::ctrl2::entermodifiedcompliance(link));
+	printf("Compliance SOS 					%d\n",  link::ctrl2::compliancesos(link));
+	printf("---------------------------------------------------------------------\n");
+
+
+	printf(
+		"\n[Link Status 2]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("Compliance Preset/De-emphasis 			%ld\n", link::status2::deemphasis(link));
+	printf("Current De-emphasis Level 			%ld\n", link::status2::deemphasislvl(link));
+	printf("Equalization Complete 				%ld\n", link::status2::equalizationcomplete(link));
+	printf("Equalization Phase 1 Successful 		%ld\n", link::status2::equalizationphase1successful(link));
+	printf("Equalization Phase 2 Successful 		%ld\n", link::status2::equalizationphase2successful(link));
+	printf("Equalization Phase 3 Successful 		%ld\n", link::status2::equalizationphase3successful(link));
+	printf("Link Equalization Request 			%ld\n", link::status2::linkequalizationrequest(link));
+	printf("---------------------------------------------------------------------\n");
+		
+	PVOID dsn = get_dsn(cfg);
+
+	printf(
+		"\n[PCI Express Extended Capability - DSN]\n"
+		"---------------------------------------------------------------------\n"
+	);
+	printf("DSN_CAP_NEXTPTR 				0x%lx\n", dsn::dsn_cap_nextptr(dsn));
+	printf("DSN_CAP_ON 					%ld\n", dsn::dsn_cap_on(dsn));
+	printf("DSN_CAP_ID 					0x0%lx\n", dsn::dsn_cap_id(dsn));
+	printf("---------------------------------------------------------------------\n");
+}
 
 static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar)
 {
@@ -790,6 +1029,8 @@ static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar)
 			DEVICE_INFO &dev = entry.d;
 			printf("[%d:%d:%d] [%02X:%02X]", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
 			PrintPcieConfiguration(dev.cfg, sizeof(dev.cfg));
+			printf("\n");
+			filter_pci_cfg(dev.cfg);
 			printf("\n");
 		}
 	}
