@@ -368,12 +368,15 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		return;
 	}
 	
+	/*
+	not every device got MSI cap
 	PVOID msi = get_msi(dev.cfg);
 	if (msi == 0)
 	{
-		device.blk = 2; device.info = 7;
+		device.blk = 1; device.info = 7;
 		return;
 	}
+	*/
 
 	PVOID pcie = get_pcie(dev.cfg);
 	if (pcie == 0)
