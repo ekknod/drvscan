@@ -395,7 +395,7 @@ void validate_device_config(DEVICE_INFO &device)
 		//
 		// Type 0 Configuration Space Hader is used for Endpoint Device
 		//
-		if (pcie::cap::pcie_cap_device_port_type(pcie) > PciExpressRootPort)
+		if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
 		{
 			device.blk = 2; device.info = 10;
 			return;
