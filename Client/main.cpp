@@ -216,6 +216,7 @@ const char *blkinfo(unsigned char info)
 	case 11: return "invalid header type 1";
 	case 12: return "invalid header type";
 	case 13: return "invalid config"; // just general msg
+	case 14: return "invalid device type"; // just general msg
 	}
 	return "OK";
 }
@@ -360,6 +361,17 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		return;
 	}
 
+
+	//
+	// invalid VID/PID
+	//
+	if (device_id(dev.cfg) == 0x0000 && vendor_id(dev.cfg + 0x02) == 0x0000)
+	{
+		device.blk  = 2; device.info = 5;
+		return;
+	}
+
+
 	PVOID pm = get_pm(dev.cfg);
 
 	if (pm == 0)
@@ -450,7 +462,7 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	//
 	if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
 	{
-		device.blk = 2; device.info = 13;
+		device.blk = 2; device.info = 14;
 		return;
 	}
 }
