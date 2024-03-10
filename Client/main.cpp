@@ -294,6 +294,24 @@ void validate_device_config(DEVICE_INFO &device)
 	using namespace pci;
 
 	//
+	// whitelist root complex
+	//
+	if (device.bus == 0 && device.slot == 0 && device.func == 0)
+	{
+		return;
+	}
+
+
+	//
+	// vmware, not sure if this ever happens on real machines :man_shrugging:
+	//
+	if (capabilities_ptr(device.cfg) == 0)
+	{
+		return;
+	}
+
+
+	//
 	// bus master is disabled
 	//
 	if (!GET_BIT(*(WORD*)(device.cfg + 0x04), 2))
@@ -318,7 +336,7 @@ void validate_device_config(DEVICE_INFO &device)
 	//
 	// hidden device, LUL.
 	//
-	if (*(WORD*)(device.cfg) == 0xFFFF || *(WORD*)(device.cfg + 0x02) == 0xFFFF)
+	if (device_id(device.cfg) == 0xFFFF && vendor_id(device.cfg + 0x02) == 0xFFFF)
 	{
 		device.blk  = 2; device.info = 5;
 		return;
@@ -333,11 +351,19 @@ void validate_device_config(DEVICE_INFO &device)
 	}
 
 	PVOID msi = get_msi(device.cfg);
-	if (msi == 0)
+	if (msi == 0 && !device.childrens.size())
 	{
 		device.blk = 2; device.info = 7;
 		return;
 	}
+
+	PVOID pcie = get_pcie(device.cfg);
+	if (pcie == 0 && !device.childrens.size())
+	{
+		device.blk = 2; device.info = 8;
+		return;
+	}
+
 
 	//
 	// Header Type: bit 7 (0x80) indicates whether it is a multi-function device,
@@ -356,19 +382,6 @@ void validate_device_config(DEVICE_INFO &device)
 		}
 	}
 
-	PVOID pcie = get_pcie(device.cfg);
-	if (pcie == 0)
-	{
-		//
-		// vmware, not sure if this ever happens on real machines :man_shrugging: 
-		//
-		if (capabilities_ptr(device.cfg) == 0)
-		{
-			return;
-		}
-		device.blk = 2; device.info = 8;
-		return;
-	}
 
 	//
 	// header type 1 (bridge)
