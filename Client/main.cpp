@@ -294,6 +294,14 @@ void validate_device_config(DEVICE_INFO &device)
 	using namespace pci;
 
 	//
+	// whitelist internal devices (remove me if any troubles)
+	//
+	if (device.slot != 0)
+	{
+		return;
+	}
+
+	//
 	// whitelist root complex
 	//
 	if (device.bus == 0 && device.slot == 0 && device.func == 0)
