@@ -214,6 +214,7 @@ const char *blkinfo(unsigned char info)
 	case 10: return "invalid header type 0";
 	case 11: return "invalid header type 1";
 	case 12: return "invalid header type";
+	case 13: return "invalid config"; // just general msg
 	}
 	return "OK";
 }
@@ -301,16 +302,7 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	DEVICE_INFO &dev = device.d;
 
 	//
-	// vmware, not sure if this ever happens on real machines :man_shrugging:
-	//
-	if (capabilities_ptr(dev.cfg) == 0)
-	{
-		return;
-	}
-
-
-	//
-	// bus master is disabled
+	// bus master is disabled, we can safely disable them
 	//
 	if (!GET_BIT(*(WORD*)(dev.cfg + 0x04), 2))
 	{
@@ -318,6 +310,14 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		return;
 	}
 
+	//
+	// invalid cfg
+	//
+	if (capabilities_ptr(dev.cfg) == 0)
+	{
+		device.blk = 2; device.info = 13;
+		return;
+	}
 
 	//
 	// can be just used to identify xilinx FPGA
@@ -419,6 +419,15 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	else
 	{
 		device.blk = 2; device.info = 12;
+		return;
+	}
+
+	//
+	// end point device never should be bridge without devices
+	//
+	if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
+	{
+		device.blk = 2; device.info = 13;
 		return;
 	}
 }
