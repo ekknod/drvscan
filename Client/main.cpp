@@ -141,12 +141,13 @@ int main(int argc, char **argv)
 
 	if (scanpci)
 	{
-		if (pcileech+cfg+bar!=0)
+		if (pcileech+cfg+bar==0)
 		{
-			LOG("scanning PCIe devices\n");
-			scan_pci(pcileech, cfg, bar);
-			LOG("scan is complete\n");
+			pcileech = 1;
 		}
+		LOG("scanning PCIe devices\n");
+		scan_pci(pcileech, cfg, bar);
+		LOG("scan is complete\n");
 	}
 
 	if (scan)
