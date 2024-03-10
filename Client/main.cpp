@@ -368,7 +368,7 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	//
 	// hidden device, LUL.
 	//
-	if (device_id(dev.cfg) == 0xFFFF && vendor_id(dev.cfg + 0x02) == 0xFFFF)
+	if (device_id(dev.cfg) == 0xFFFF && vendor_id(dev.cfg) == 0xFFFF)
 	{
 		device.blk  = 2; device.info = 5;
 		return;
@@ -378,7 +378,7 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	//
 	// invalid VID/PID
 	//
-	if (device_id(dev.cfg) == 0x0000 && vendor_id(dev.cfg + 0x02) == 0x0000)
+	if (device_id(dev.cfg) == 0x0000 && vendor_id(dev.cfg) == 0x0000)
 	{
 		device.blk  = 2; device.info = 5;
 		return;
