@@ -273,10 +273,6 @@ DWORD get_port_type(unsigned char *cfg)
 	PVOID pcie = pci::get_pcie(cfg);
 	if (pcie == 0)
 	{
-		if (pci::class_code(cfg) == 0x60000)
-		{
-			return PciXToExpressBridge;
-		}
 		return 0;
 	}
 	return pci::pcie::cap::pcie_cap_device_port_type(pcie);
@@ -301,12 +297,35 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 
 	DEVICE_INFO &dev = device.d;
 
+
 	//
 	// bus master is disabled, we can safely disable them
 	//
 	if (!GET_BIT(*(WORD*)(dev.cfg + 0x04), 2))
 	{
+		BOOL allow=0;
+		//
+		// verify if any multifunc devices got bus master enabled
+		//
+		if (GET_BIT(header_type(dev.cfg), 7))
+		{
+			for (auto &entry : dev.childrens)
+			{
+				if (GET_BIT(*(WORD*)(entry.cfg + 0x04), 2))
+				{
+					allow = 1;
+					break;
+				}
+			}
+		}
+
+		if (allow)
+		{
+			return;
+		}
+
 		device.blk = 1; device.info = 2;
+
 		return;
 	}
 
@@ -450,6 +469,33 @@ PCSTR get_port_type_str(unsigned char *cfg)
 	return "";
 }
 
+inline void print_device_info(PCIE_DEVICE_INFO entry)
+{
+	DEVICE_INFO &parent = entry.p;
+	DEVICE_INFO &dev = entry.d;
+
+	//
+	// print parent information (bridge)
+	//
+	printf("[%s] [%02d:%02d:%02d] [%04X:%04X] (%s)\n",
+		get_port_type_str(parent.cfg), parent.bus, parent.slot, parent.func, *(WORD*)(parent.cfg), *(WORD*)(parent.cfg + 0x02), blkinfo(entry.info));
+
+	//
+	// print device PCIe device information
+	//
+	printf("	[%s] [%02d:%02d:%02d] [%04X:%04X]\n",
+		get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
+
+	//
+	// print children PCIe device information
+	//
+	for (auto &child : dev.childrens)
+	{
+		printf("	[%s] [%02d:%02d:%02d] [%04X:%04X]\n",
+			get_port_type_str(child.cfg), child.bus, child.slot, child.func, *(WORD*)(child.cfg), *(WORD*)(child.cfg + 0x02));
+	}
+}
+
 void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
 {
 	//
@@ -496,16 +542,8 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
 	{
 		if (!entry.blk)
 		{
-			DEVICE_INFO &dev = entry.d;
-
-			LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
-				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(entry.info));
-
-			for (auto &child : dev.childrens)
-			{
-				LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
-					get_port_type_str(child.cfg), child.bus, child.slot, child.func, *(WORD*)(child.cfg), *(WORD*)(child.cfg + 0x02), blkinfo(entry.info));
-			}
+			print_device_info(entry);
+			printf("\n");
 		}
 	}
 
@@ -513,10 +551,10 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
 	{
 		if (entry.blk == 1)
 		{
-			DEVICE_INFO &dev = entry.d;
-
-			LOG_YELLOW("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
-				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(entry.info));
+			FontColor(14);
+			print_device_info(entry);
+			FontColor(7);
+			printf("\n");
 		}
 	}
 
@@ -524,10 +562,10 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
 	{
 		if (entry.blk == 2)
 		{
-			DEVICE_INFO &dev = entry.d;
-
-			LOG_RED("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
-				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(entry.info));
+			FontColor(4);
+			print_device_info(entry);
+			FontColor(7);
+			printf("\n");
 		}
 	}
 }

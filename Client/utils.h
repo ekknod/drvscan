@@ -176,7 +176,7 @@ namespace pci
 		namespace cap
 		{
 		inline BYTE pm_cap_on(PVOID pm) { return ((DWORD*)pm)[0] != 0; }
-		inline BYTE pm_cap_next(PVOID pm) { return ((unsigned char*)(pm))[1]; }
+		inline BYTE pm_cap_next_ptr(PVOID pm) { return ((unsigned char*)(pm))[1]; }
 		inline BYTE pm_cap_id(PVOID pm) { return GET_BITS(((DWORD*)pm)[0], 7, 0); }
 		inline BYTE pm_cap_version(PVOID pm) { return GET_BITS(((DWORD*)pm)[0], 18, 16); }
 		inline BYTE pm_cap_pme_clock(PVOID pm) { return GET_BIT(((DWORD*)pm)[0], 19); }
@@ -334,34 +334,80 @@ namespace pci
 		inline BYTE dsn_cap_id(PVOID dsn) { return *(BYTE*)(dsn) ; }
 	}
 
-	inline PVOID get_pm(PVOID cfg) { return (PVOID)((PBYTE)cfg + capabilities_ptr(cfg)); }
-	inline PVOID get_msi(PVOID cfg)
+	inline PVOID get_capabilities(PVOID cfg)
 	{
-		BYTE nxt = pm::cap::pm_cap_next(get_pm(cfg));
-		if (nxt == 0)
+		if (capabilities_ptr(cfg) == 0)
 		{
 			return 0;
 		}
-		return (PVOID)((PBYTE)cfg + nxt);
+		return (PVOID)((PBYTE)cfg + capabilities_ptr(cfg));
+	}
+
+	inline PVOID get_pm(PVOID cfg)
+	{
+		PVOID cap_ptr = get_capabilities(cfg);
+
+		if (cap_ptr == 0)
+		{
+			return 0;
+		}
+		while (1)
+		{
+			if (pm::cap::pm_cap_id(cap_ptr) == 0x01)
+			{
+				break;
+			}
+			if (pm::cap::pm_cap_next_ptr(cap_ptr) == 0)
+			{
+				return 0;
+			}
+			cap_ptr = (PVOID)((PBYTE)cfg + pm::cap::pm_cap_next_ptr(cap_ptr));
+		}
+		return cap_ptr;
+
+	}
+	inline PVOID get_msi(PVOID cfg)
+	{
+		PVOID cap_ptr = get_capabilities(cfg);
+		if (cap_ptr == 0)
+		{
+			return 0;
+		}
+		while (1)
+		{
+			if (msi::cap::msi_cap_id(cap_ptr) == 0x05)
+			{
+				break;
+			}
+			if (msi::cap::msi_cap_nextptr(cap_ptr) == 0)
+			{
+				return 0;
+			}
+			cap_ptr = (PVOID)((PBYTE)cfg + msi::cap::msi_cap_nextptr(cap_ptr));
+		}
+		return cap_ptr;
 	}
 	inline PVOID get_pcie(PVOID cfg)
 	{
-		PVOID msi = get_msi(cfg);
-		if (msi == 0)
+		PVOID cap_ptr = get_capabilities(cfg);
+
+		if (cap_ptr == 0)
 		{
 			return 0;
 		}
-		BYTE nxt = msi::cap::msi_cap_nextptr(msi);
-		if (nxt == 0)
+		while (1)
 		{
-			return 0;
+			if (pcie::cap::pcie_cap_capability_id(cap_ptr) == 0x10)
+			{
+				break;
+			}
+			if (pcie::cap::pcie_cap_nextptr(cap_ptr) == 0)
+			{
+				return 0;
+			}
+			cap_ptr = (PVOID)((PBYTE)cfg + pcie::cap::pcie_cap_nextptr(cap_ptr));
 		}
-		PVOID pcie = (PVOID)((PBYTE)cfg + nxt);
-		if (pcie::cap::pcie_cap_nextptr(pcie) && pcie::cap::pcie_cap_capability_id(pcie) != 0x10)
-		{
-			return (PVOID)((PBYTE)cfg + pcie::cap::pcie_cap_nextptr(pcie));
-		}
-		return pcie;
+		return cap_ptr;
 	}
 	inline PVOID get_dev(PVOID cfg)
 	{
