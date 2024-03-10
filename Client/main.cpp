@@ -188,10 +188,15 @@ int main(int argc, char **argv)
 
 typedef struct _DEVICE_INFO {
 	unsigned char  bus, slot, func, cfg[0x200];
-	unsigned char  blk;
-	unsigned char  info;
 	std::vector<struct _DEVICE_INFO> childrens;
 } DEVICE_INFO;
+
+typedef struct _PCIE_DEVICE_INFO {
+	unsigned char blk;
+	unsigned char info;
+	DEVICE_INFO   d; // device
+	DEVICE_INFO   p; // parent
+} PCIE_DEVICE_INFO;
 
 const char *blkinfo(unsigned char info)
 {
@@ -289,31 +294,16 @@ BOOL is_xilinx(unsigned char *cfg)
 	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
 }
 
-void validate_device_config(DEVICE_INFO &device)
+void validate_device_config(PCIE_DEVICE_INFO &device)
 {
 	using namespace pci;
 
-	//
-	// whitelist internal devices (remove me if any troubles)
-	//
-	if (device.slot != 0)
-	{
-		return;
-	}
-
-	//
-	// whitelist root complex
-	//
-	if (device.bus == 0 && device.slot == 0 && device.func == 0)
-	{
-		return;
-	}
-
+	DEVICE_INFO &dev = device.d;
 
 	//
 	// vmware, not sure if this ever happens on real machines :man_shrugging:
 	//
-	if (capabilities_ptr(device.cfg) == 0)
+	if (capabilities_ptr(dev.cfg) == 0)
 	{
 		return;
 	}
@@ -322,7 +312,7 @@ void validate_device_config(DEVICE_INFO &device)
 	//
 	// bus master is disabled
 	//
-	if (!GET_BIT(*(WORD*)(device.cfg + 0x04), 2))
+	if (!GET_BIT(*(WORD*)(dev.cfg + 0x04), 2))
 	{
 		device.blk = 1; device.info = 2;
 		return;
@@ -344,29 +334,29 @@ void validate_device_config(DEVICE_INFO &device)
 	//
 	// hidden device, LUL.
 	//
-	if (device_id(device.cfg) == 0xFFFF && vendor_id(device.cfg + 0x02) == 0xFFFF)
+	if (device_id(dev.cfg) == 0xFFFF && vendor_id(dev.cfg + 0x02) == 0xFFFF)
 	{
 		device.blk  = 2; device.info = 5;
 		return;
 	}
 
-	PVOID pm = get_pm(device.cfg);
+	PVOID pm = get_pm(dev.cfg);
 
 	if (pm == 0)
 	{
 		device.blk = 2; device.info = 6;
 		return;
 	}
-
-	PVOID msi = get_msi(device.cfg);
-	if (msi == 0 && !device.childrens.size())
+	
+	PVOID msi = get_msi(dev.cfg);
+	if (msi == 0)
 	{
 		device.blk = 2; device.info = 7;
 		return;
 	}
 
-	PVOID pcie = get_pcie(device.cfg);
-	if (pcie == 0 && !device.childrens.size())
+	PVOID pcie = get_pcie(dev.cfg);
+	if (pcie == 0)
 	{
 		device.blk = 2; device.info = 8;
 		return;
@@ -374,16 +364,17 @@ void validate_device_config(DEVICE_INFO &device)
 
 
 	//
+	// 1432
 	// Header Type: bit 7 (0x80) indicates whether it is a multi-function device,
 	// while interesting values of the remaining bits are: 00 = general device, 01 = PCI-to-PCI bridge.
 	// src: https://www.khoury.northeastern.edu/~pjd/cs7680/homework/pci-enumeration.html
 	//
-	if (GET_BIT(header_type(device.cfg), 7))
+	if (GET_BIT(header_type(dev.cfg), 7))
 	{
 		//
 		// check if we have any children devices
 		//
-		if (!device.childrens.size())
+		if (!dev.childrens.size())
 		{
 			device.blk = 2; device.info = 9;
 			return;
@@ -394,7 +385,7 @@ void validate_device_config(DEVICE_INFO &device)
 	//
 	// header type 1 (bridge)
 	//
-	if (GET_BITS(header_type(device.cfg), 6, 0) == 1)
+	if (GET_BITS(header_type(dev.cfg), 6, 0) == 1)
 	{
 		//
 		// Type 1 Configuration Space Header is used for Root Port and Upstream Port/Downstream Port of PCIe Switch.
@@ -411,7 +402,7 @@ void validate_device_config(DEVICE_INFO &device)
 	//
 	// header type 0
 	//
-	else if (GET_BITS(header_type(device.cfg), 6, 0) == 0)
+	else if (GET_BITS(header_type(dev.cfg), 6, 0) == 0)
 	{
 		//
 		// Type 0 Configuration Space Hader is used for Endpoint Device
@@ -450,74 +441,15 @@ PCSTR get_port_type_str(unsigned char *cfg)
 	return "";
 }
 
-std::vector<DEVICE_INFO> get_pci_device_list(void)
-{
-	std::vector<DEVICE_INFO> devices;
-	for (unsigned char bus = 0; bus < 255; bus++)
-	{
-		for (unsigned char slot = 0; slot < 32; slot++)
-		{
-			QWORD physical_address = cl::pci::get_physical_address(bus, slot);
-			if (physical_address == 0)
-			{
-				goto E0;
-			}
-
-			for (unsigned char func = 0; func < 8; func++)
-			{
-				QWORD entry = physical_address + (func << 12l);
-				
-				int invalid_cnt = 0;
-				for (int i = 0; i < 8; i++)
-				{
-					if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
-					{
-						invalid_cnt++;
-					}
-				}
-
-				if (invalid_cnt == 8)
-				{
-					if (func == 0)
-					{
-						break;
-					}
-					continue;
-				}
-
-				DEVICE_INFO device;
-				device.bus = bus;
-				device.slot = slot;
-				device.func = func;
-				device.blk = 0;
-				device.info = 0;
-
-				//
-				// do not even ask... intel driver problem
-				//
-				for (int i = 0; i < 0x200; i++)
-				{
-					*(BYTE*)((char*)device.cfg + i) = cl::io::read<BYTE>(entry + i);
-				}
-
-				if (func != 0)
-					devices[devices.size() - 1].childrens.push_back(device);
-				else
-					devices.push_back(device);
-			}
-		}
-	}
-E0:
-	return devices;
-}
-
-void test_devices(std::vector<DEVICE_INFO> &devices)
+void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
 {
 	//
 	// test shadow cfg (pcileech-fpga 4.11 and lower)
 	//
-	for (auto &dev : devices)
+	for (auto &entry : devices)
 	{
+		DEVICE_INFO &dev = entry.d;
+
 		DWORD tick = GetTickCount();
 		cl::pci::write<WORD>(dev.bus, dev.slot, 0xA0, *(WORD*)(dev.cfg + 0xA0));
 		tick = GetTickCount() - tick;
@@ -529,8 +461,8 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 		tick = GetTickCount() - tick;
 		if (tick > 100)
 		{
-			dev.blk = 2;
-			dev.info = 1;
+			entry.blk = 2;
+			entry.info = 1;
 			break;
 		}
 	}
@@ -538,80 +470,304 @@ void test_devices(std::vector<DEVICE_INFO> &devices)
 	//
 	// check configuration space
 	//
-	for (auto &dev : devices)
+	for (auto &entry : devices)
 	{
 		//
 		// device was already blocked
 		//
-		if (dev.blk)
+		if (entry.blk)
 		{
 			continue;
 		}
 
-		validate_device_config(dev);
+		validate_device_config(entry);
 	}
 
-	for (auto &dev : devices)
+	for (auto &entry : devices)
 	{
-		if (!dev.blk)
+		if (!entry.blk)
 		{
+			DEVICE_INFO &dev = entry.d;
+
 			LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
-				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
+				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(entry.info));
 
 			for (auto &child : dev.childrens)
 			{
 				LOG("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
-					get_port_type_str(child.cfg), child.bus, child.slot, child.func, *(WORD*)(child.cfg), *(WORD*)(child.cfg + 0x02), blkinfo(child.info));
+					get_port_type_str(child.cfg), child.bus, child.slot, child.func, *(WORD*)(child.cfg), *(WORD*)(child.cfg + 0x02), blkinfo(entry.info));
 			}
 		}
 	}
 
-	for (auto &dev : devices)
+	for (auto &entry : devices)
 	{
-		if (dev.blk == 1)
+		if (entry.blk == 1)
 		{
+			DEVICE_INFO &dev = entry.d;
+
 			LOG_YELLOW("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
-				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
+				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(entry.info));
 		}
 	}
 
-	for (auto &dev : devices)
+	for (auto &entry : devices)
 	{
-		if (dev.blk == 2)
+		if (entry.blk == 2)
 		{
+			DEVICE_INFO &dev = entry.d;
+
 			LOG_RED("[%s] [%02d:%02d:%02d] [%04X:%04X] [%s]\n",
-				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(dev.info));
+				get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02), blkinfo(entry.info));
 		}
 	}
 }
 
+std::vector<DEVICE_INFO> get_root_bridge_devices(void)
+{
+	std::vector<DEVICE_INFO> devices;
+	unsigned char bus = 0;
+	for (unsigned char slot = 0; slot < 32; slot++)
+	{
+		QWORD physical_address = cl::pci::get_physical_address(bus, slot);
+		if (physical_address == 0)
+		{
+			goto E0;
+		}
+
+		for (unsigned char func = 0; func < 8; func++)
+		{
+			QWORD entry = physical_address + (func << 12l);
+
+			DWORD class_code = 0;
+			((unsigned char*)&class_code)[0] = cl::io::read<BYTE>(entry + 0x09 + 0);
+			((unsigned char*)&class_code)[1] = cl::io::read<BYTE>(entry + 0x09 + 1);
+			((unsigned char*)&class_code)[2] = cl::io::read<BYTE>(entry + 0x09 + 2);
+				
+			int invalid_cnt = 0;
+			for (int i = 0; i < 8; i++)
+			{
+				if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
+				{
+					invalid_cnt++;
+				}
+			}
+
+			if (invalid_cnt == 8)
+			{
+				if (func == 0)
+				{
+					break;
+				}
+				continue;
+			}
+
+			if (class_code != 0x060400)
+			{
+				continue;
+			}
+
+			DEVICE_INFO device;
+			device.bus = bus;
+			device.slot = slot;
+			device.func = func;
+
+			//
+			// do not even ask... intel driver problem
+			//
+			for (int i = 0; i < 0x200; i++)
+			{
+				*(BYTE*)((char*)device.cfg + i) = cl::io::read<BYTE>(entry + i);
+			}
+			devices.push_back(device);
+		}
+	}
+E0:
+	return devices;
+}
+
+std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
+{
+	std::vector<DEVICE_INFO> devices;
+	for (unsigned char slot = 0; slot < 32; slot++)
+	{
+		QWORD physical_address = cl::pci::get_physical_address(bus, slot);
+		if (physical_address == 0)
+		{
+			goto E0;
+		}
+
+		for (unsigned char func = 0; func < 8; func++)
+		{
+			QWORD entry = physical_address + (func << 12l);
+				
+			int invalid_cnt = 0;
+			for (int i = 0; i < 8; i++)
+			{
+				if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
+				{
+					invalid_cnt++;
+				}
+			}
+
+			if (invalid_cnt == 8)
+			{
+				if (func == 0)
+				{
+					break;
+				}
+				continue;
+			}
+
+			DEVICE_INFO device;
+			device.bus = bus;
+			device.slot = slot;
+			device.func = func;
+
+			//
+			// do not even ask... intel driver problem
+			//
+			for (int i = 0; i < 0x200; i++)
+			{
+				*(BYTE*)((char*)device.cfg + i) = cl::io::read<BYTE>(entry + i);
+			}
+			devices.push_back(device);
+		}
+	}
+E0:
+	return devices;
+}
+
+std::vector<PCIE_DEVICE_INFO> get_pci_device_list(void)
+{
+	using namespace pci;
+	std::vector<DEVICE_INFO> root_devices = get_root_bridge_devices();
+	std::vector<PCIE_DEVICE_INFO> pcie_devices;
+
+	for (auto &entry : root_devices)
+	{
+		BYTE max_bus = type1::subordinate_bus_number(entry.cfg);
+		for (auto &children : get_devices_by_bus(type1::secondary_bus_number(entry.cfg)))
+		{
+
+			if (class_code(children.cfg) != 0x060400)
+			{
+				if (children.func == 0)
+					pcie_devices.push_back({0, 0, children,entry});
+				else
+					pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children);
+				continue;
+			}
+
+			if (type1::subordinate_bus_number(children.cfg) > max_bus)
+			{
+				if (children.func == 0)
+					pcie_devices.push_back({0, 0, children,entry});
+				else
+					pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children);
+				continue;
+			}
+
+			auto bridge2 = get_devices_by_bus(type1::secondary_bus_number(children.cfg));
+			for (auto &children2 : bridge2)
+			{
+				if (class_code(children2.cfg) != 0x060400)
+				{
+					if (children2.func == 0)
+						pcie_devices.push_back({0, 0, children2,children});
+					else
+						pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children2);
+					continue;
+				}
+
+				if (type1::subordinate_bus_number(children2.cfg) > max_bus)
+				{
+					if (children2.func == 0)
+						pcie_devices.push_back({0, 0, children2,children});
+					else
+						pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children2);
+					continue;
+				}
+
+				auto bridge3 = get_devices_by_bus(type1::secondary_bus_number(children2.cfg));
+				for (auto &children3 : bridge3)
+				{
+					if (children3.func == 0)
+						pcie_devices.push_back({0, 0, children3,children2});
+					else
+						pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children3);
+				}
+
+				//
+				// add fake bridges too
+				//
+				if (!bridge3.size())
+				{
+					if (children2.func == 0)
+						pcie_devices.push_back({0, 0, children2,children});
+					else
+						pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children2);
+				}
+			}
+
+			//
+			// add fake bridges too
+			//
+			if (!bridge2.size())
+			{
+				if (children.func == 0)
+					pcie_devices.push_back({0, 0, children,entry});
+				else
+					pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children);
+			}
+		}
+	}
+
+	return pcie_devices;
+}
+
+
 static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar)
 {
-	std::vector<DEVICE_INFO> devices = get_pci_device_list();
+	using namespace pci;
+
+
+	std::vector<PCIE_DEVICE_INFO> devices = get_pci_device_list();
+
 
 	if (dump_cfg)
 	{
-		for (auto &dev : devices)
+		for (auto &entry : devices)
 		{
+			DEVICE_INFO &dev = entry.d;
 			printf("[%d:%d:%d] [%02X:%02X]", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
 			PrintPcieConfiguration(dev.cfg, sizeof(dev.cfg));
 			printf("\n");
 		}
 	}
+	
 	if (dump_bar)
 	{
 		for (auto &dev : devices)
 		{
-			if (!GET_BIT(*(WORD*)(dev.cfg + 0x04), 2))
+			if (!GET_BIT(*(WORD*)(dev.d.cfg + 0x04), 2))
 			{
 				continue;
 			}
-			DWORD *bar = (DWORD*)(dev.cfg + 0x10);
-			for (int i = 0; i < 6; i++)
+
+			DWORD cnt=6;
+			if (GET_BITS(header_type(dev.d.cfg), 6, 0) == 1)
+			{
+				cnt = 2;
+			}
+
+			DWORD *bar = (DWORD*)(dev.d.cfg + 0x10);
+			for (DWORD i = 0; i < cnt; i++)
 			{
 				if (bar[i] > 0x10000000)
 				{
-					printf("[%d:%d:%d] [%02X:%02X]\n", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg), *(WORD*)(dev.cfg + 0x02));
+					printf("[%d:%d:%d] [%02X:%02X]\n",
+						dev.d.bus, dev.d.slot, dev.d.func, *(WORD*)(dev.d.cfg), *(WORD*)(dev.d.cfg + 0x02));
 					PrintPcieBarSpace(bar[i]);
 					printf("\n\n\n\n");
 				}

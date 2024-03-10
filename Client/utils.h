@@ -134,12 +134,21 @@ namespace pe
 
 namespace pci
 {
-	inline WORD vendor_id(PVOID cfg)   { return *(WORD*)((PBYTE)cfg + 0x00); }
-	inline WORD device_id(PVOID cfg)   { return *(WORD*)((PBYTE)cfg + 0x02); }
-	inline BYTE revision_id(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x08); }
-	inline DWORD* bar(PVOID cfg)       { return (DWORD*)((PBYTE)cfg + 0x10); }
-	inline BYTE header_type(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x0E); }
+	inline WORD vendor_id(PVOID cfg)         { return *(WORD*)((PBYTE)cfg + 0x00); }
+	inline WORD device_id(PVOID cfg)         { return *(WORD*)((PBYTE)cfg + 0x02); }
+	inline BYTE revision_id(PVOID cfg)       { return *(BYTE*)((PBYTE)cfg + 0x08); }
+	inline DWORD* bar(PVOID cfg)             { return (DWORD*)((PBYTE)cfg + 0x10); }
+	inline BYTE header_type(PVOID cfg)       { return *(BYTE*)((PBYTE)cfg + 0x0E); }
 
+	//
+	// bridge stuff
+	//
+	namespace type1
+	{
+		inline BYTE bus_number(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x18); }
+		inline BYTE secondary_bus_number(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x18 + 1); }
+		inline BYTE subordinate_bus_number(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x18 + 2); }
+	}
 
 	//
 	// printf("%06X\n", classcode);
