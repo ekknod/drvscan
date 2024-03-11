@@ -92,14 +92,9 @@ namespace cl
 			return b;
 		}
 		template <typename t>
-		t write(QWORD address)
+		BOOL write(QWORD address, t value)
 		{
-			t b;
-			if (!write(address, &b, sizeof(b)))
-			{
-				b = 0;
-			}
-			return b;
+			return write(address, &value, sizeof(t));
 		}
 	}
 

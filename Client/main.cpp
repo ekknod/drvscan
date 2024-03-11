@@ -36,7 +36,7 @@ FontColor(7); \
 static void scan_efi(BOOL dump);
 static BOOL dump_module_to_file(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file);
 static void scan_image(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, BOOL use_cache);
-static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar);
+static void scan_pci(BOOL disable, BOOL dump_cfg, BOOL dump_bar);
 
 int main(int argc, char **argv)
 {
@@ -58,7 +58,7 @@ int main(int argc, char **argv)
 		return getchar();
 	}
 	
-	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, pcileech=0, cfg=0, bar=0, use_cache = 0, scanefi = 0, dump = 0;
+	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, disable=0, cfg=0, bar=0, use_cache = 0, scanefi = 0, dump = 0;
 	for (int i = 1; i < argc; i++)
 	{
 		if (!strcmp(argv[i], "--help"))
@@ -73,7 +73,7 @@ int main(int argc, char **argv)
 				"--scanefi              scan abnormals from efi memory map\n"
 				"    --dump             (optional) dump found abnormal to disk\n\n"
 				"--scanpci              scan pci cards from the system\n"
-				"    --pcileech         search pcileech-fpga cards\n"
+				"    --disable          disable illegal cards\n"
 				"    --cfg              print out every card cfg space\n"
 				"    --bar              print out every card bar space\n\n\n"
 			);
@@ -108,9 +108,9 @@ int main(int argc, char **argv)
 			scanpci = 1;
 		}
 
-		else if (!strcmp(argv[i], "--pcileech"))
+		else if (!strcmp(argv[i], "--disable"))
 		{
-			pcileech = 1;
+			disable = 1;
 		}
 
 		else if (!strcmp(argv[i], "--cfg"))
@@ -141,12 +141,8 @@ int main(int argc, char **argv)
 
 	if (scanpci)
 	{
-		if (pcileech+cfg+bar==0)
-		{
-			pcileech = 1;
-		}
 		LOG("scanning PCIe devices\n");
-		scan_pci(pcileech, cfg, bar);
+		scan_pci(disable, cfg, bar);
 		LOG("scan is complete\n");
 	}
 
@@ -195,6 +191,9 @@ int main(int argc, char **argv)
 
 typedef struct _DEVICE_INFO {
 	unsigned char  bus, slot, func, cfg[0x200];
+
+	QWORD physical_address;
+
 	std::vector<struct _DEVICE_INFO> childrens;
 } DEVICE_INFO;
 
@@ -521,7 +520,7 @@ inline void print_device_info(PCIE_DEVICE_INFO entry)
 	}
 }
 
-void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
+void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 {
 	//
 	// test shadow cfg (pcileech-fpga 4.11 and lower)
@@ -580,6 +579,21 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
 			print_device_info(entry);
 			FontColor(7);
 			printf("\n");
+			if (disable)
+			{
+				//
+				// check if bus master is enabled from bridge
+				//
+				WORD command = pci::command(entry.p.cfg);
+				if (GET_BIT(command, 2))
+				{
+					//
+					// disable bus master from bridge
+					//
+					command = command & ~(1 << 2);
+					cl::io::write<WORD>(entry.p.physical_address + 0x04, command);
+				}
+			}
 		}
 	}
 
@@ -591,6 +605,21 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
 			print_device_info(entry);
 			FontColor(7);
 			printf("\n");
+			if (disable)
+			{
+				//
+				// check if bus master is enabled from bridge
+				//
+				WORD command = pci::command(entry.p.cfg);
+				if (GET_BIT(command, 2))
+				{
+					//
+					// disable bus master from bridge
+					//
+					command = command & ~(1 << 2);
+					cl::io::write<WORD>(entry.p.physical_address + 0x04, command);
+				}
+			}
 		}
 	}
 }
@@ -643,6 +672,7 @@ std::vector<PCIE_DEVICE_INFO> get_root_bridge_devices(void)
 			device.d.bus = bus;
 			device.d.slot = slot;
 			device.d.func = func;
+			device.d.physical_address = entry;
 
 			//
 			// do not even ask... intel driver problem
@@ -695,6 +725,7 @@ std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
 			device.bus = bus;
 			device.slot = slot;
 			device.func = func;
+			device.physical_address = entry;
 
 			//
 			// do not even ask... intel driver problem
@@ -1037,7 +1068,7 @@ void filter_pci_cfg(unsigned char *cfg)
 	printf("---------------------------------------------------------------------\n");
 }
 
-static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar)
+static void scan_pci(BOOL disable, BOOL dump_cfg, BOOL dump_bar)
 {
 	using namespace pci;
 
@@ -1058,7 +1089,7 @@ static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar)
 		}
 	}
 	
-	if (dump_bar)
+	else if (dump_bar)
 	{
 		for (auto &dev : devices)
 		{
@@ -1087,9 +1118,9 @@ static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar)
 				
 		}
 	}
-	if (pcileech)
+	else
 	{
-		test_devices(devices);
+		test_devices(devices, disable);
 	}
 }
 

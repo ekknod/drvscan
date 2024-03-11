@@ -50,7 +50,6 @@ typedef struct {
 
 #define GET_BIT(data, bit) ((data >> bit) & 1)
 #define GET_BITS(data, high, low) ((data >> low) & ((1 << (high - low + 1)) - 1))
-
 namespace pe
 {
 	inline QWORD get_nt_headers(QWORD image)
@@ -136,6 +135,8 @@ namespace pci
 {
 	inline WORD vendor_id(PVOID cfg)         { return *(WORD*)((PBYTE)cfg + 0x00); }
 	inline WORD device_id(PVOID cfg)         { return *(WORD*)((PBYTE)cfg + 0x02); }
+	inline WORD command(PVOID cfg)           { return *(WORD*)((PBYTE)cfg + 0x04); }
+	inline WORD status(PVOID cfg)            { return *(WORD*)((PBYTE)cfg + 0x04 + 0x02); }
 	inline BYTE revision_id(PVOID cfg)       { return *(BYTE*)((PBYTE)cfg + 0x08); }
 	inline DWORD* bar(PVOID cfg)             { return (DWORD*)((PBYTE)cfg + 0x10); }
 	inline BYTE header_type(PVOID cfg)       { return *(BYTE*)((PBYTE)cfg + 0x0E); }
