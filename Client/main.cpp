@@ -771,8 +771,6 @@ std::vector<PCIE_DEVICE_INFO> get_endpoint_device_list(void)
 
 	while (1)
 	{
-		root_devices = get_inner_devices(root_devices);
-
 		for (auto &dev : root_devices)
 		{
 			if (!is_bridge_device(dev))
@@ -787,12 +785,13 @@ std::vector<PCIE_DEVICE_INFO> get_endpoint_device_list(void)
 				}
 			}
 		}
-
+		root_devices = get_inner_devices(root_devices);
 		if (!root_devices.size())
 		{
 			break;
 		}
 	}
+
 	return endpoint_devices;
 }
 
