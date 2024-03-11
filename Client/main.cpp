@@ -587,9 +587,9 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices)
 	}
 }
 
-std::vector<DEVICE_INFO> get_root_bridge_devices(void)
+std::vector<PCIE_DEVICE_INFO> get_root_bridge_devices(void)
 {
-	std::vector<DEVICE_INFO> devices;
+	std::vector<PCIE_DEVICE_INFO> devices;
 	unsigned char bus = 0;
 	for (unsigned char slot = 0; slot < 32; slot++)
 	{
@@ -631,17 +631,17 @@ std::vector<DEVICE_INFO> get_root_bridge_devices(void)
 				continue;
 			}
 
-			DEVICE_INFO device;
-			device.bus = bus;
-			device.slot = slot;
-			device.func = func;
+			PCIE_DEVICE_INFO device{};
+			device.d.bus = bus;
+			device.d.slot = slot;
+			device.d.func = func;
 
 			//
 			// do not even ask... intel driver problem
 			//
 			for (int i = 0; i < 0x200; i++)
 			{
-				*(BYTE*)((char*)device.cfg + i) = cl::io::read<BYTE>(entry + i);
+				*(BYTE*)((char*)device.d.cfg + i) = cl::io::read<BYTE>(entry + i);
 			}
 			devices.push_back(device);
 		}
@@ -702,92 +702,98 @@ E0:
 	return devices;
 }
 
-std::vector<PCIE_DEVICE_INFO> get_pci_device_list(void)
+static BOOL is_bridge_device(PCIE_DEVICE_INFO& dev)
 {
 	using namespace pci;
-	std::vector<DEVICE_INFO> root_devices = get_root_bridge_devices();
-	std::vector<PCIE_DEVICE_INFO> pcie_devices;
 
-	for (auto &entry : root_devices)
+	//
+	// validate if its real bridge
+	//
+	if (class_code(dev.d.cfg) != 0x060400)
 	{
-		BYTE max_bus = type1::subordinate_bus_number(entry.cfg);
-		for (auto &children : get_devices_by_bus(type1::secondary_bus_number(entry.cfg)))
-		{
-
-			if (class_code(children.cfg) != 0x060400)
-			{
-				if (children.func == 0)
-					pcie_devices.push_back({0, 0, children,entry});
-				else
-					pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children);
-				continue;
-			}
-
-			if (type1::subordinate_bus_number(children.cfg) > max_bus)
-			{
-				if (children.func == 0)
-					pcie_devices.push_back({0, 0, children,entry});
-				else
-					pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children);
-				continue;
-			}
-
-			auto bridge2 = get_devices_by_bus(type1::secondary_bus_number(children.cfg));
-			for (auto &children2 : bridge2)
-			{
-				if (class_code(children2.cfg) != 0x060400)
-				{
-					if (children2.func == 0)
-						pcie_devices.push_back({0, 0, children2,children});
-					else
-						pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children2);
-					continue;
-				}
-
-				if (type1::subordinate_bus_number(children2.cfg) > max_bus)
-				{
-					if (children2.func == 0)
-						pcie_devices.push_back({0, 0, children2,children});
-					else
-						pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children2);
-					continue;
-				}
-
-				auto bridge3 = get_devices_by_bus(type1::secondary_bus_number(children2.cfg));
-				for (auto &children3 : bridge3)
-				{
-					if (children3.func == 0)
-						pcie_devices.push_back({0, 0, children3,children2});
-					else
-						pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children3);
-				}
-
-				//
-				// add fake bridges too
-				//
-				if (!bridge3.size())
-				{
-					if (children2.func == 0)
-						pcie_devices.push_back({0, 0, children2,children});
-					else
-						pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children2);
-				}
-			}
-
-			//
-			// add fake bridges too
-			//
-			if (!bridge2.size())
-			{
-				if (children.func == 0)
-					pcie_devices.push_back({0, 0, children,entry});
-				else
-					pcie_devices[pcie_devices.size() - 1].d.childrens.push_back(children);
-			}
-		}
+		return 0;
 	}
 
-	return pcie_devices;
+	//
+	// type0 endpoint device
+	//
+	if (GET_BITS(header_type(dev.d.cfg), 6, 0) == 0)
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+std::vector<PCIE_DEVICE_INFO> get_inner_devices(std::vector<PCIE_DEVICE_INFO> &devices)
+{
+	using namespace pci;
+
+
+	std::vector<PCIE_DEVICE_INFO> devs;
+
+
+	for (auto &entry : devices)
+	{
+		if (!is_bridge_device(entry))
+		{
+			continue;
+		}
+
+		BYTE max_bus = type1::subordinate_bus_number(entry.d.cfg);
+		auto bridge_devices = get_devices_by_bus(type1::secondary_bus_number(entry.d.cfg));
+
+		for (auto &bridge : bridge_devices)
+		{
+			if (bridge.bus > max_bus)
+			{
+				continue;
+			}
+			devs.push_back({0, 0, bridge, entry.d});
+		}
+	}
+	return devs;
+}
+
+std::vector<PCIE_DEVICE_INFO> get_endpoint_device_list(void)
+{
+	using namespace pci;
+
+
+	std::vector<PCIE_DEVICE_INFO> endpoint_devices;
+
+
+	std::vector<PCIE_DEVICE_INFO> root_devices = get_root_bridge_devices();
+	if (!root_devices.size())
+	{
+		return {};
+	}
+
+	while (1)
+	{
+		root_devices = get_inner_devices(root_devices);
+
+		for (auto &dev : root_devices)
+		{
+			if (!is_bridge_device(dev))
+			{
+				if (dev.d.func != 0)
+				{
+					endpoint_devices[endpoint_devices.size() - 1].d.childrens.push_back(dev.d);
+				}
+				else
+				{
+					endpoint_devices.push_back(dev);
+				}
+			}
+		}
+
+		if (!root_devices.size())
+		{
+			break;
+		}
+	}
+	return endpoint_devices;
 }
 
 void filter_pci_cfg(unsigned char *cfg)
@@ -1035,7 +1041,7 @@ static void scan_pci(BOOL pcileech, BOOL dump_cfg, BOOL dump_bar)
 	using namespace pci;
 
 
-	std::vector<PCIE_DEVICE_INFO> devices = get_pci_device_list();
+	std::vector<PCIE_DEVICE_INFO> devices = get_endpoint_device_list();
 
 
 	if (dump_cfg)
