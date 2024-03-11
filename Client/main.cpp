@@ -184,6 +184,12 @@ int main(int argc, char **argv)
 		scan_efi(dump);
 		LOG("scan is complete\n");
 	}
+
+	//
+	// add watermark
+	//
+	PRINT_GREEN("\nbuild date: %s, %s\n", __DATE__, __TIME__);
+
 	return 0;
 }
 
