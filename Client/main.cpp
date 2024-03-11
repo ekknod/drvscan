@@ -390,7 +390,8 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		return;
 	}
 
-
+	/*
+	not every device got PM cap
 	PVOID pm = get_pm(dev.cfg);
 
 	if (pm == 0)
@@ -398,6 +399,7 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		device.blk = 2; device.info = 6;
 		return;
 	}
+	*/
 	
 	/*
 	not every device got MSI cap
@@ -765,16 +767,10 @@ std::vector<PCIE_DEVICE_INFO> get_endpoint_device_list(void)
 {
 	using namespace pci;
 
+	std::vector<PCIE_DEVICE_INFO> root_devices = get_root_bridge_devices();
+
 
 	std::vector<PCIE_DEVICE_INFO> endpoint_devices;
-
-
-	std::vector<PCIE_DEVICE_INFO> root_devices = get_root_bridge_devices();
-	if (!root_devices.size())
-	{
-		return {};
-	}
-
 	while (1)
 	{
 		for (auto &dev : root_devices)
