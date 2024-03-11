@@ -1,6 +1,6 @@
 # drvscan
 <pre>
-C:\Users\Juho\Desktop>Client.exe --help
+C:\Users\Juho\Desktop\drvscan>Client.exe --help
 
 
 --scan                 scan target process memory changes
@@ -12,7 +12,7 @@ C:\Users\Juho\Desktop>Client.exe --help
     --dump             (optional) dump found abnormal to disk
 
 --scanpci              scan pci cards from the system
-    --pcileech         search pcileech-fpga cards
+    --disable          disable illegal cards
     --cfg              print out every card cfg space
     --bar              print out every card bar space
 
@@ -27,7 +27,9 @@ Example (verifying modules integrity by using cache):
 all malware patches should be now visible
 
 
-C:\Users\Juho\Desktop>
+build date: Mar 11 2024, 18:18:44
+
+C:\Users\Juho\Desktop\drvscan>
 </pre>
 # Driver Installation
 - enable testsigning  
