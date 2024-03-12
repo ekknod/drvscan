@@ -58,7 +58,7 @@ int main(int argc, char **argv)
 		return getchar();
 	}
 	
-	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, disable=0, cfg=0, bar=0, use_cache = 0, scanefi = 0, dump = 0;
+	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, block=0, cfg=0, bar=0, use_cache = 0, scanefi = 0, dump = 0;
 	for (int i = 1; i < argc; i++)
 	{
 		if (!strcmp(argv[i], "--help"))
@@ -73,7 +73,7 @@ int main(int argc, char **argv)
 				"--scanefi              scan abnormals from efi memory map\n"
 				"    --dump             (optional) dump found abnormal to disk\n\n"
 				"--scanpci              scan pci cards from the system\n"
-				"    --disable          disable illegal cards\n"
+				"    --block            block illegal cards\n"
 				"    --cfg              print out every card cfg space\n"
 				"    --bar              print out every card bar space\n\n\n"
 			);
@@ -108,9 +108,9 @@ int main(int argc, char **argv)
 			scanpci = 1;
 		}
 
-		else if (!strcmp(argv[i], "--disable"))
+		else if (!strcmp(argv[i], "--block"))
 		{
-			disable = 1;
+			block = 1;
 		}
 
 		else if (!strcmp(argv[i], "--cfg"))
@@ -142,7 +142,7 @@ int main(int argc, char **argv)
 	if (scanpci)
 	{
 		LOG("scanning PCIe devices\n");
-		scan_pci(disable, cfg, bar);
+		scan_pci(block, cfg, bar);
 		LOG("scan is complete\n");
 	}
 
@@ -222,6 +222,7 @@ const char *blkinfo(unsigned char info)
 	case 12: return "invalid header type";
 	case 13: return "invalid config"; // just general msg
 	case 14: return "invalid device type"; // just general msg
+	case 15: return "port/device mismatch";
 	}
 	return "OK";
 }
@@ -303,11 +304,27 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	using namespace pci;
 
 	DEVICE_INFO &dev = device.d;
+	DEVICE_INFO &port = device.p;
 
 
 	PVOID pcie = get_pcie(dev.cfg);
 	if (pcie != 0)
 	{
+		//
+		// compare data between device data and port
+		//
+		if (link::status::link_speed(get_link(dev.cfg)) > link::status::link_speed(get_link(port.cfg)))
+		{
+			device.blk = 2; device.info = 15;
+			return;
+		}
+
+		if (link::status::link_width(get_link(dev.cfg)) > link::status::link_width(get_link(port.cfg)))
+		{
+			device.blk = 2; device.info = 15;
+			return;
+		}
+
 		//
 		// end point device never should be bridge without devices
 		//
@@ -414,6 +431,18 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		device.blk = 2; device.info = 8;
 		return;
 	}
+
+	//
+	// invalid port device test
+	//
+	for (auto& children : dev.childrens)
+	{
+		if (device_id(children.cfg) == 0xFFFF && vendor_id(children.cfg) == 0xFFFF)
+		{
+			device.blk = 2; device.info = 9;
+			return;
+		}
+	}
 	
 	//
 	// 1432
@@ -432,7 +461,6 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 			return;
 		}
 	}
-
 
 	//
 	// header type 1 (bridge)
@@ -571,6 +599,8 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 		}
 	}
 
+	std::vector<DEVICE_INFO> blocked_devices;
+
 	for (auto &entry : devices)
 	{
 		if (entry.blk == 1)
@@ -590,8 +620,10 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 					//
 					// disable bus master from bridge
 					//
-					command = command & ~(1 << 2);
+					command &= ~(1 << 2);
 					cl::io::write<WORD>(entry.p.physical_address + 0x04, command);
+
+					blocked_devices.push_back(entry.p);
 				}
 			}
 		}
@@ -616,10 +648,23 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 					//
 					// disable bus master from bridge
 					//
-					command = command & ~(1 << 2);
+					command &= ~(1 << 2);
 					cl::io::write<WORD>(entry.p.physical_address + 0x04, command);
+
+					blocked_devices.push_back(entry.p);
 				}
 			}
+		}
+	}
+
+	if (blocked_devices.size())
+	{
+		LOG("Press any key to unblock deviecs . . .\n");
+		getchar();
+
+		for (auto &entry : blocked_devices)
+		{
+			cl::io::write<WORD>(entry.physical_address + 0x04, pci::command(entry.cfg));
 		}
 	}
 }
