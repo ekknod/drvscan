@@ -442,6 +442,14 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 			device.blk = 2; device.info = 9;
 			return;
 		}
+		/*
+		????
+		if (device_id(children.cfg) == 0x0000 && vendor_id(children.cfg) == 0x0000)
+		{
+			device.blk = 2; device.info = 9;
+			return;
+		}
+		*/
 	}
 	
 	//
@@ -849,6 +857,7 @@ std::vector<PCIE_DEVICE_INFO> get_endpoint_device_list(void)
 	std::vector<PCIE_DEVICE_INFO> endpoint_devices;
 	while (1)
 	{
+		std::vector<PCIE_DEVICE_INFO> fake_bridges;
 		for (auto &dev : root_devices)
 		{
 			if (!is_bridge_device(dev))
@@ -862,14 +871,31 @@ std::vector<PCIE_DEVICE_INFO> get_endpoint_device_list(void)
 					endpoint_devices.push_back(dev);
 				}
 			}
+			else
+			{
+				fake_bridges.push_back(dev);
+			}
 		}
 		root_devices = get_inner_devices(root_devices);
 		if (!root_devices.size())
 		{
+			//
+			// add fake bridges too
+			//
+			for (auto &dev : fake_bridges)
+			{
+				if (dev.d.func != 0)
+				{
+					endpoint_devices[endpoint_devices.size() - 1].d.childrens.push_back(dev.d);
+				}
+				else
+				{
+					endpoint_devices.push_back(dev);
+				}
+			}
 			break;
 		}
 	}
-
 	return endpoint_devices;
 }
 
