@@ -659,7 +659,7 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 
 	if (blocked_devices.size())
 	{
-		LOG("Press any key to unblock deviecs . . .\n");
+		LOG("Press any key to unblock devices . . .\n");
 		getchar();
 
 		for (auto &entry : blocked_devices)
