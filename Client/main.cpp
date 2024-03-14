@@ -646,7 +646,7 @@ inline void print_device_info(PCIE_DEVICE_INFO entry)
 
 void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 {
-	std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
+	// std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
 
 	//
 	// test shadow cfg (pcileech-fpga 4.11 and lower)
@@ -691,6 +691,7 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 	//
 	// check device features
 	//
+	/*
 	for (auto &entry : devices)
 	{
 		//
@@ -702,6 +703,7 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 		}
 		validate_device_features(entry, pnp_adapters);
 	}
+	*/
 
 	for (auto &entry : devices)
 	{
