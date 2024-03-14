@@ -977,13 +977,11 @@ std::vector<PNP_ADAPTER> get_pnp_adapters()
 	while (table_entry)
 	{
 		std::string device_id = wmi::get_string(table_entry, "DeviceID");
-		if (device_id.size() > 5 && *(DWORD*)device_id.c_str() == 0x5C494350)
+		if (device_id.size() > 4 && *(DWORD*)device_id.c_str() == 0x5C494350)
 		{
 			std::string location = wmi::get_string(table_entry, "Location");
-			if (location.size() >= 30 && *(DWORD*)location.c_str() == 0x20494350)
+			if (location.size() > 12 && *(DWORD*)location.c_str() == 0x20494350)
 			{
-				
-
 				unsigned char bus  = atoi(location.c_str()+8);
 				unsigned char slot = 0;
 				unsigned char func = 0;
