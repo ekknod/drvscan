@@ -223,6 +223,9 @@ const char *blkinfo(unsigned char info)
 	case 13: return "invalid config"; // just general msg
 	case 14: return "invalid device type"; // just general msg
 	case 15: return "port/device mismatch";
+	case 16: return "driverless card";
+	case 17: return "invalid network adapter";
+	case 18: return "not connected";
 	}
 	return "OK";
 }
@@ -511,6 +514,91 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 	}
 }
 
+void validate_network_adapters(PCIE_DEVICE_INFO &device, PNP_ADAPTER &pnp_adapter)
+{
+	using namespace pci;
+
+	BOOL  found       = 0;
+	BOOL  status      = 0;
+
+	QWORD table       = wmi::open_table("SELECT * FROM Win32_NetworkAdapter");
+	QWORD table_entry = wmi::next_entry(table, 0);
+	while (table_entry)
+	{
+		std::string pnp_id = wmi::get_string(table_entry, "PNPDeviceID");
+		if (pnp_id.size() && !_strcmpi(pnp_adapter.pnp_id.c_str(), pnp_id.c_str()))
+		{
+			found  = 1;
+			status = wmi::get_bool(table_entry, "NetEnabled");
+			break;
+		}
+		table_entry = wmi::next_entry(table, table_entry);
+	}
+	wmi::close_table(table);
+
+
+	if (found == 0)
+	{
+		//
+		// sus
+		//
+		device.info = 17;
+		device.blk  = 2;
+		return;
+	}
+
+	if (status == 0)
+	{
+		//
+		// sus
+		//
+		device.info = 18;
+		device.blk  = 1;
+		return;
+	}
+}
+
+void validate_device_features(PCIE_DEVICE_INFO &device, std::vector<PNP_ADAPTER> &pnp_adapters)
+{
+	using namespace pci;
+
+	//
+	// check if device is backed by driver
+	//
+	BOOL found = 0;
+	PNP_ADAPTER pnp_adapter;
+
+	for (auto& pnp : pnp_adapters)
+	{
+		DEVICE_INFO& dev = device.d;
+
+		if (pnp.bus == dev.bus &&
+			pnp.slot == dev.slot &&
+			pnp.func == dev.func
+			)
+		{
+			found = 1;
+			pnp_adapter = pnp;
+			break;
+		}
+	}
+
+	if (!found)
+	{
+		device.blk = 1;
+		device.info = 16;
+		return;
+	}
+
+	//
+	// check network card features
+	//
+	if (class_code(device.d.cfg) == 0x020000 || class_code(device.d.cfg) == 0x028000)
+	{
+		validate_network_adapters(device, pnp_adapter);
+	}
+}
+
 PCSTR get_port_type_str(unsigned char *cfg)
 {
 	switch (get_port_type(cfg))
@@ -558,6 +646,9 @@ inline void print_device_info(PCIE_DEVICE_INFO entry)
 
 void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 {
+	std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
+
+
 	//
 	// test shadow cfg (pcileech-fpga 4.11 and lower)
 	//
@@ -596,6 +687,21 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 		}
 
 		validate_device_config(entry);
+	}
+
+	//
+	// check device features
+	//
+	for (auto &entry : devices)
+	{
+		//
+		// device was already blocked
+		//
+		if (entry.blk)
+		{
+			continue;
+		}
+		validate_device_features(entry, pnp_adapters);
 	}
 
 	for (auto &entry : devices)

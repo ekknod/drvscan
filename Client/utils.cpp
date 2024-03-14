@@ -564,7 +564,7 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 	//
 	// validate target module
 	//
-	if (!pe::nt::get_image_section(nt, "GFIDS"))
+	if (!pe::nt::get_image_section(nt, "GFIDS") && !strstr(path, "UCPD.sys"))
 		return new_image;
 
 	IMAGE_DATA_DIRECTORY* data_dir = (IMAGE_DATA_DIRECTORY*)pe::optional::get_data_directory(opt, 10);
@@ -768,4 +768,226 @@ void FreeImageEx(PVOID ImageBase)
 	}
 }
 
+#include <comdef.h>
+#include <Wbemidl.h>
+#pragma comment(lib, "wbemuuid.lib")
+
+namespace wmi
+{
+	IWbemServices *svc = NULL;
+
+	static void initialize(void);
+}
+
+static void wmi::initialize(void)
+{
+	static BOOL initialized = 0;
+	if (initialized == 0)
+	{
+		CoInitializeEx(0, COINIT_MULTITHREADED);
+		CoInitializeSecurity(
+			NULL,
+			-1,                          // COM authentication
+			NULL,                        // Authentication services
+			NULL,                        // Reserved
+			RPC_C_AUTHN_LEVEL_DEFAULT,   // Default authentication
+			RPC_C_IMP_LEVEL_IMPERSONATE, // Default Impersonation
+			NULL,                        // Authentication info
+			EOAC_NONE,                   // Additional capabilities
+			NULL                         // Reserved
+		);
+
+		IWbemLocator* pLoc = NULL;
+
+		CoCreateInstance(
+			CLSID_WbemLocator,
+			0,
+			CLSCTX_INPROC_SERVER,
+			IID_IWbemLocator, (LPVOID*)&pLoc);
+
+		// Connect to the root\cimv2 namespace with
+		// the current user and obtain pointer pSvc
+		// to make IWbemServices calls.
+		pLoc->ConnectServer(
+			_bstr_t(L"ROOT\\CIMV2"), // Object path of WMI namespace
+			NULL,                    // User name. NULL = current user
+			NULL,                    // User password. NULL = current
+			0,                       // Locale. NULL indicates current
+			NULL,                    // Security flags.
+			0,                       // Authority (for example, Kerberos)
+			0,                       // Context object
+			&svc                     // pointer to IWbemServices proxy
+		);
+
+
+		CoSetProxyBlanket(
+			svc,                        // Indicates the proxy to set
+			RPC_C_AUTHN_WINNT,           // RPC_C_AUTHN_xxx
+			RPC_C_AUTHZ_NONE,            // RPC_C_AUTHZ_xxx
+			NULL,                        // Server principal name
+			RPC_C_AUTHN_LEVEL_CALL,      // RPC_C_AUTHN_LEVEL_xxx
+			RPC_C_IMP_LEVEL_IMPERSONATE, // RPC_C_IMP_LEVEL_xxx
+			NULL,                        // client identity
+			EOAC_NONE                    // proxy capabilities
+		);
+
+		initialized = 1;
+	}
+}
+
+QWORD wmi::open_table(PCSTR name)
+{
+	//
+	// init server
+	//
+	initialize();
+
+
+	IEnumWbemClassObject* table = NULL;
+	HRESULT res = svc->ExecQuery(
+		bstr_t("WQL"),
+		bstr_t(name),
+		WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+		NULL,
+		&table);
+
+	if (FAILED(res))
+	{
+		return 0;
+	}
+
+	return (QWORD)table;
+}
+
+void  wmi::close_table(QWORD table)
+{
+	if (table)
+		((IEnumWbemClassObject*)table)->Release();
+}
+
+QWORD wmi::next_entry(QWORD table, QWORD prev)
+{
+	if (table == 0)
+	{
+		return 0;
+	}
+
+	IWbemClassObject *pclsObj = NULL;
+	ULONG uReturn = 0;
+	IEnumWbemClassObject* pEnumerator = (IEnumWbemClassObject *)table;
+
+	if (prev)
+	{
+		IWbemClassObject *pclsObj = (IWbemClassObject *)prev;
+		pclsObj->Release();
+	}
+	else
+	{
+		pEnumerator->Reset();
+	}
+
+	pEnumerator->Next(WBEM_INFINITE, 1, &pclsObj, &uReturn);
+	if (0 == uReturn)
+	{
+		return 0;
+	}
+	return (QWORD)pclsObj;
+}
+
+std::string wmi::get_string(QWORD table_entry, PCSTR value)
+{
+	std::string res{};
+
+
+	wchar_t prop_name[260]{};
+	for (size_t i = strlen(value); i--;)
+	{
+		prop_name[i] = value[i];
+	}
+
+
+	IWbemClassObject *pclsObj = (IWbemClassObject *)table_entry;
+
+
+	VARIANT vtProp;
+	VariantInit(&vtProp);
+	if (pclsObj->Get(prop_name, 0, &vtProp, 0, 0) == 0)
+	{
+		std::wstring ws(vtProp.bstrVal);
+		for (size_t i = 0; i < ws.size(); i++)
+		{
+			res.push_back((const char)ws[i]);
+		}
+	}
+	VariantClear(&vtProp);
+	return res;
+}
+
+int wmi::get_int(QWORD table_entry, PCSTR value)
+{
+	int res = 0;
+
+	wchar_t prop_name[260]{};
+	for (size_t i = strlen(value); i--;)
+	{
+		prop_name[i] = value[i];
+	}
+
+	IWbemClassObject *pclsObj = (IWbemClassObject *)table_entry;
+
+	VARIANT vtProp;
+	VariantInit(&vtProp);
+	if (pclsObj->Get(prop_name, 0, &vtProp, 0, 0) == 0)
+	{
+		res = vtProp.intVal;
+	}
+	VariantClear(&vtProp);
+	return res;
+}
+
+bool wmi::get_bool(QWORD table_entry, PCSTR value)
+{
+	short res = 0;
+
+	wchar_t prop_name[260]{};
+	for (size_t i = strlen(value); i--;)
+	{
+		prop_name[i] = value[i];
+	}
+
+	IWbemClassObject *pclsObj = (IWbemClassObject *)table_entry;
+
+	VARIANT vtProp;
+	VariantInit(&vtProp);
+	if (pclsObj->Get(prop_name, 0, &vtProp, 0, 0) == 0)
+	{
+		res = vtProp.boolVal;
+	}
+	VariantClear(&vtProp);
+	return res!=0;
+}
+
+std::vector<PNP_ADAPTER> get_pnp_adapters()
+{
+	std::vector<PNP_ADAPTER> adapters;
+
+	QWORD table       = wmi::open_table("SELECT * FROM Win32_PnPSignedDriver WHERE Location IS NOT NULL");
+	QWORD table_entry = wmi::next_entry(table, 0);
+
+	while (table_entry)
+	{
+		std::string device_id = wmi::get_string(table_entry, "DeviceID");
+		if (device_id.size() > 5 && *(DWORD*)device_id.c_str() == 0x5C494350)
+		{
+			std::string location = wmi::get_string(table_entry, "Location");
+			unsigned char bus  = atoi(location.c_str()+8);
+			unsigned char slot = atoi(strstr(location.c_str(), "device ")   + 7);
+			unsigned char func = atoi(strstr(location.c_str(), "function ") + 9);
+			adapters.push_back({bus,slot,func,device_id});
+		}
+		table_entry = wmi::next_entry(table, table_entry);
+	}
+	wmi::close_table(table);
+	return adapters;
+}
 
