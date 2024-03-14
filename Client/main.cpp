@@ -521,12 +521,12 @@ void validate_network_adapters(PCIE_DEVICE_INFO &device, PNP_ADAPTER &pnp_adapte
 	BOOL  found       = 0;
 	BOOL  status      = 0;
 
-	QWORD table       = wmi::open_table("SELECT * FROM Win32_NetworkAdapter");
+	QWORD table       = wmi::open_table("SELECT * FROM Win32_NetworkAdapter where PNPDeviceID is not NULL");
 	QWORD table_entry = wmi::next_entry(table, 0);
 	while (table_entry)
 	{
 		std::string pnp_id = wmi::get_string(table_entry, "PNPDeviceID");
-		if (pnp_id.size() && !_strcmpi(pnp_adapter.pnp_id.c_str(), pnp_id.c_str()))
+		if (pnp_id.size() && !_strcmpi(pnp_id.c_str(), pnp_adapter.pnp_id.c_str()))
 		{
 			found  = 1;
 			status = wmi::get_bool(table_entry, "NetEnabled");
