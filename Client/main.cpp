@@ -209,10 +209,10 @@ const char *blkinfo(unsigned char info)
 	switch (info)
 	{
 	case 1:  return "pcileech";
-	case 2:  return "BME off";
+	case 2:  return "bus master off";
 	case 3:  return "xilinx";
 	case 4:  return "invalid bridge";
-	case 5:  return "Hidden";
+	case 5:  return "hidden device";
 	case 6:  return "invalid pm cap";
 	case 7:  return "invalid msi cap";
 	case 8:  return "invalid pcie cap";
@@ -225,7 +225,8 @@ const char *blkinfo(unsigned char info)
 	case 15: return "port/device mismatch";
 	case 16: return "driverless card";
 	case 17: return "invalid network adapter";
-	case 18: return "not connected";
+	case 18: return "no network connections";
+	case 19: return "driverless card with bus master";
 	}
 	return "OK";
 }
@@ -549,9 +550,6 @@ void validate_network_adapters(PCIE_DEVICE_INFO &device, PNP_ADAPTER &pnp_adapte
 
 	if (status == 0)
 	{
-		//
-		// sus
-		//
 		device.info = 18;
 		device.blk  = 1;
 		return;
@@ -585,8 +583,19 @@ void validate_device_features(PCIE_DEVICE_INFO &device, std::vector<PNP_ADAPTER>
 
 	if (!found)
 	{
-		device.blk = 1;
-		device.info = 16;
+		//
+		// bus master was forcefully enabled(?)
+		//
+		if (GET_BIT(command(device.d.cfg), 2))
+		{
+			device.blk = 2;
+			device.info = 19;
+		}
+		else
+		{
+			device.blk = 1;
+			device.info = 16;
+		}
 		return;
 	}
 
