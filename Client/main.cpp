@@ -648,7 +648,6 @@ void test_devices(std::vector<PCIE_DEVICE_INFO> &devices, BOOL disable)
 {
 	std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
 
-
 	//
 	// test shadow cfg (pcileech-fpga 4.11 and lower)
 	//

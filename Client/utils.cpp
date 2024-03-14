@@ -980,10 +980,24 @@ std::vector<PNP_ADAPTER> get_pnp_adapters()
 		if (device_id.size() > 5 && *(DWORD*)device_id.c_str() == 0x5C494350)
 		{
 			std::string location = wmi::get_string(table_entry, "Location");
-			unsigned char bus  = atoi(location.c_str()+8);
-			unsigned char slot = atoi(strstr(location.c_str(), "device ")   + 7);
-			unsigned char func = atoi(strstr(location.c_str(), "function ") + 9);
-			adapters.push_back({bus,slot,func,device_id});
+			if (location.size() >= 30 && *(DWORD*)location.c_str() == 0x20494350)
+			{
+				
+
+				unsigned char bus  = atoi(location.c_str()+8);
+				unsigned char slot = 0;
+				unsigned char func = 0;
+
+				const char *tmp = strstr(location.c_str(), "device ");
+				if (tmp)
+					slot = atoi(tmp + 7);
+
+				tmp = strstr(location.c_str(), "function ");
+				if (tmp)
+					func = atoi(tmp + 9);
+
+				adapters.push_back({bus,slot,func,device_id});
+			}
 		}
 		table_entry = wmi::next_entry(table, table_entry);
 	}
