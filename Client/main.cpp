@@ -227,6 +227,8 @@ const char *blkinfo(unsigned char info)
 	case 17: return "invalid network adapter";
 	case 18: return "no network connections";
 	case 19: return "driverless card with bus master";
+	case 20: return "invalid usb controller";
+	case 21: return "no attached USB devices";
 	}
 	return "OK";
 }
@@ -556,6 +558,59 @@ void validate_network_adapters(PCIE_DEVICE_INFO &device, PNP_ADAPTER &pnp_adapte
 	}
 }
 
+void validate_usb_adapters(PCIE_DEVICE_INFO &device, PNP_ADAPTER &pnp_adapter)
+{
+	using namespace pci;
+
+	BOOL  found = 0;
+	QWORD table = wmi::open_table("SELECT DeviceID FROM Win32_USBController where DeviceID is not NULL");
+	QWORD table_entry = wmi::next_entry(table, 0);
+	while (table_entry)
+	{
+		std::string DeviceID = wmi::get_string(table_entry, "DeviceID");
+		if (!_strcmpi(DeviceID.c_str(), pnp_adapter.pnp_id.c_str()))
+		{
+			found = 1;
+			break;
+		}
+		table_entry = wmi::next_entry(table, table_entry);
+	}
+	wmi::close_table(table);
+
+	if (!found)
+	{
+		device.info = 20;
+		device.blk  = 2;
+		return;
+	}
+
+	found           = 0;
+	table           = wmi::open_table("SELECT Antecedent FROM Win32_USBControllerDevice where Antecedent is not NULL");
+	table_entry     = wmi::next_entry(table, 0);
+	while (table_entry)
+	{
+		std::string Antecedent = wmi::get_string(table_entry, "Antecedent");
+
+		for (size_t pos = Antecedent.find("\\\\"); pos != std::string::npos; pos = Antecedent.find("\\\\", pos + 1)) {
+			Antecedent.replace(pos, 2, "\\");
+		}
+		if (strstr(Antecedent.c_str(), pnp_adapter.pnp_id.c_str()))
+		{
+			found = 1;
+			break;
+		}
+		table_entry = wmi::next_entry(table, table_entry);
+	}
+	wmi::close_table(table);
+
+	if (found == 0)
+	{
+		device.info = 21;
+		device.blk  = 1;
+		return;
+	}
+}
+
 void validate_device_features(PCIE_DEVICE_INFO &device, std::vector<PNP_ADAPTER> &pnp_adapters)
 {
 	using namespace pci;
@@ -599,12 +654,23 @@ void validate_device_features(PCIE_DEVICE_INFO &device, std::vector<PNP_ADAPTER>
 		return;
 	}
 
-	//
-	// check network card features
-	//
-	if (class_code(device.d.cfg) == 0x020000 || class_code(device.d.cfg) == 0x028000)
+	switch (class_code(device.d.cfg))
 	{
+	//
+	// validate network adapters
+	//
+	case 0x020000:
+	case 0x028000:
 		validate_network_adapters(device, pnp_adapter);
+		break;
+	//
+	// XHCI
+	//
+	case 0x0C0330:
+		validate_usb_adapters(device, pnp_adapter);
+		break;
+	default:
+		break;
 	}
 }
 
