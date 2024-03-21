@@ -210,7 +210,7 @@ const char *blkinfo(unsigned char info)
 	{
 	case 1:  return "pcileech";
 	case 2:  return "bus master off";
-	case 3:  return "xilinx";
+	case 3:  return "xilinx development card";
 	case 4:  return "invalid bridge";
 	case 5:  return "hidden device";
 	case 6:  return "invalid pm cap";
@@ -391,6 +391,12 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		return;
 	}
 	*/
+
+	if (vendor_id(dev.cfg) == 0x10EE)
+	{
+		device.blk = 1; device.info = 3;
+		return;
+	}
 
 
 	//
