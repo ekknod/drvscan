@@ -494,12 +494,26 @@ void validate_device_config(PCIE_DEVICE_INFO &device)
 		}
 	}
 	//
+	// header type 2 (cardbus)
+	//
+	else if (GET_BITS(header_type(dev.cfg), 6, 0) == 2)
+	{
+		//
+		// Type 2 Configuration Space header is used for Endpoint Device
+		//
+		if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
+		{
+			device.blk = 2; device.info = 10;
+			return;
+		}
+	}
+	//
 	// header type 0
 	//
 	else if (GET_BITS(header_type(dev.cfg), 6, 0) == 0)
 	{
 		//
-		// Type 0 Configuration Space Hader is used for Endpoint Device
+		// Type 0 Configuration Space header is used for Endpoint Device
 		//
 		if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
 		{
