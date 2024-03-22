@@ -323,22 +323,64 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 
 	for (auto &dev : port.devices)
 	{
-		PVOID pcie = get_pcie(dev.cfg);
-		if (pcie == 0)
-		{
-			port.blk = 2; port.blk_info = 8;
-			break;
-		}
-
 		//
-		// end point device never should be bridge/port
+		// check that the device has a pointer to the capabilities list (status register bit 4 set to 1)
 		//
-		if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
+		if (GET_BIT(status(dev.cfg), 4))
 		{
-			port.blk = 2; port.blk_info = 14;
-			break;
-		}
+			PVOID pcie = get_pcie(dev.cfg);
+			if (pcie == 0)
+			{
+				port.blk = 2; port.blk_info = 8;
+				break;
+			}
 
+			//
+			// end point device never should be bridge/port
+			//
+			if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
+			{
+				port.blk = 2; port.blk_info = 14;
+				break;
+			}
+
+			//
+			// compare data between device data and port
+			//
+			if (link::status::link_speed(get_link(dev.cfg)) > link::status::link_speed(get_link(port.self.cfg)))
+			{
+				port.blk = 2; port.blk_info = 15;
+				break;
+			}
+
+			if (link::status::link_width(get_link(dev.cfg)) > link::status::link_width(get_link(port.self.cfg)))
+			{
+				port.blk = 2; port.blk_info = 15;
+				break;
+			}
+
+
+			/*
+			not every device got PM cap??
+			PVOID pm = get_pm(dev.cfg);
+
+			if (pm == 0)
+			{
+				device.blk = 2; device.info = 6;
+				return;
+			}
+			*/
+			/*
+			not every device got MSI cap??
+			PVOID msi = get_msi(dev.cfg);
+			if (msi == 0)
+			{
+				device.blk = 1; device.info = 7;
+				return;
+			}
+			*/
+
+		}
 
 		if (GET_BIT(pci::command(dev.cfg), 2))
 		{
@@ -348,21 +390,6 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 			bme_enabled = 1;
 		}
 
-
-		//
-		// compare data between device data and port
-		//
-		if (link::status::link_speed(get_link(dev.cfg)) > link::status::link_speed(get_link(port.self.cfg)))
-		{
-			port.blk = 2; port.blk_info = 15;
-			break;
-		}
-
-		if (link::status::link_width(get_link(dev.cfg)) > link::status::link_width(get_link(port.self.cfg)))
-		{
-			port.blk = 2; port.blk_info = 15;
-			break;
-		}
 
 		//
 		// can be just used to identify xilinx FPGA
@@ -400,26 +427,6 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 			port.blk  = 2; port.blk_info = 5;
 			break;
 		}
-
-		/*
-		not every device got PM cap
-		PVOID pm = get_pm(dev.cfg);
-
-		if (pm == 0)
-		{
-			device.blk = 2; device.info = 6;
-			return;
-		}
-		*/
-		/*
-		not every device got MSI cap
-		PVOID msi = get_msi(dev.cfg);
-		if (msi == 0)
-		{
-			device.blk = 1; device.info = 7;
-			return;
-		}
-		*/
 
 		//
 		// 1432
