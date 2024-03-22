@@ -223,9 +223,9 @@ const char *blkinfo(unsigned char info)
 	case 3:  return "xilinx development card";
 	case 4:  return "invalid bridge";
 	case 5:  return "hidden device";
-	case 6:  return "invalid pm cap";
-	case 7:  return "invalid msi cap";
-	case 8:  return "invalid pcie cap";
+	case 6:
+	case 7:
+	case 8:  return "invalid capabilities";
 	case 9:  return "invalid multi func device";
 	case 10: return "invalid header type 0";
 	case 11: return "invalid header type 1";
@@ -329,57 +329,46 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 		if (GET_BIT(status(dev.cfg), 4))
 		{
 			PVOID pcie = get_pcie(dev.cfg);
-			if (pcie == 0)
+			if (pcie != 0)
 			{
-				port.blk = 2; port.blk_info = 8;
-				break;
+				//
+				// end point device never should be bridge/port
+				//
+				if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
+				{
+					port.blk = 2; port.blk_info = 14;
+					break;
+				}
+
+				//
+				// compare data between device data and port
+				//
+				if (link::status::link_speed(get_link(dev.cfg)) > link::status::link_speed(get_link(port.self.cfg)))
+				{
+					port.blk = 2; port.blk_info = 15;
+					break;
+				}
+
+				if (link::status::link_width(get_link(dev.cfg)) > link::status::link_width(get_link(port.self.cfg)))
+				{
+					port.blk = 2; port.blk_info = 15;
+					break;
+				}
+
 			}
 
 			//
-			// end point device never should be bridge/port
+			// device reports to have capabilities, lets see if we got actually any
 			//
-			if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
+			if (
+				get_capability_by_id(dev.cfg, 0x01) == 0 && // PM
+				get_capability_by_id(dev.cfg, 0x05) == 0 && // MSI
+				get_capability_by_id(dev.cfg, 0x10) == 0 && // PCIE
+				get_capability_by_id(dev.cfg, 0x11) == 0    // MSI-X
+				)
 			{
-				port.blk = 2; port.blk_info = 14;
-				break;
+				port.blk = 2; port.blk_info = 6;
 			}
-
-			//
-			// compare data between device data and port
-			//
-			if (link::status::link_speed(get_link(dev.cfg)) > link::status::link_speed(get_link(port.self.cfg)))
-			{
-				port.blk = 2; port.blk_info = 15;
-				break;
-			}
-
-			if (link::status::link_width(get_link(dev.cfg)) > link::status::link_width(get_link(port.self.cfg)))
-			{
-				port.blk = 2; port.blk_info = 15;
-				break;
-			}
-
-
-			/*
-			not every device got PM cap??
-			PVOID pm = get_pm(dev.cfg);
-
-			if (pm == 0)
-			{
-				device.blk = 2; device.info = 6;
-				return;
-			}
-			*/
-			/*
-			not every device got MSI cap??
-			PVOID msi = get_msi(dev.cfg);
-			if (msi == 0)
-			{
-				device.blk = 1; device.info = 7;
-				return;
-			}
-			*/
-
 		}
 
 		if (GET_BIT(pci::command(dev.cfg), 2))
