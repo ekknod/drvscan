@@ -408,6 +408,34 @@ namespace pci
 		return cap_ptr;
 	}
 
+	inline PVOID get_ext_capability_by_id(PVOID cfg, int id)
+	{
+		PVOID cap_ptr = (PVOID)((PBYTE)cfg + 0x100);
+		if (cap_ptr == 0)
+		{
+			return 0;
+		}
+		while (1)
+		{
+			//
+			// capability id
+			//
+			if (*(BYTE*)(cap_ptr) == id)
+			{
+				break;
+			}
+			//
+			// next ptr
+			//
+			if ((((WORD*)cap_ptr)[1] >> 4) == 0)
+			{
+				return 0;
+			}
+			cap_ptr = (PVOID)((PBYTE)cfg + (((WORD*)cap_ptr)[1] >> 4));
+		}
+		return cap_ptr;
+	}
+
 	inline PVOID get_pm(PVOID cfg)
 	{
 		return get_capability_by_id(cfg, 0x01);

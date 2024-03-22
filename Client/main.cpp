@@ -484,7 +484,7 @@ void validate_network_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp)
 	BOOL  found       = 0;
 	BOOL  status      = 0;
 
-	QWORD table       = wmi::open_table("SELECT * FROM Win32_NetworkAdapter where PNPDeviceID is not NULL");
+	QWORD table       = wmi::open_table("SELECT * FROM Win32_NetworkAdapter where PNPDeviceID is not NULL and MACAddress is not NULL");
 	QWORD table_entry = wmi::next_entry(table, 0);
 	while (table_entry)
 	{
