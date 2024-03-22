@@ -327,7 +327,7 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 		if (pcie == 0)
 		{
 			port.blk = 2; port.blk_info = 8;
-			continue;
+			break;
 		}
 
 		//
@@ -336,7 +336,7 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 		if (pcie::cap::pcie_cap_device_port_type(pcie) >= PciExpressRootPort)
 		{
 			port.blk = 2; port.blk_info = 14;
-			continue;
+			break;
 		}
 
 
@@ -355,13 +355,13 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 		if (link::status::link_speed(get_link(dev.cfg)) > link::status::link_speed(get_link(port.self.cfg)))
 		{
 			port.blk = 2; port.blk_info = 15;
-			continue;
+			break;
 		}
 
 		if (link::status::link_width(get_link(dev.cfg)) > link::status::link_width(get_link(port.self.cfg)))
 		{
 			port.blk = 2; port.blk_info = 15;
-			continue;
+			break;
 		}
 
 		//
@@ -378,7 +378,7 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 		if (vendor_id(dev.cfg) == 0x10EE)
 		{
 			port.blk = 1; port.blk_info = 3;
-			continue;
+			break;
 		}
 
 
@@ -388,7 +388,7 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 		if (device_id(dev.cfg) == 0xFFFF && vendor_id(dev.cfg) == 0xFFFF)
 		{
 			port.blk  = 2; port.blk_info = 5;
-			continue;
+			break;
 		}
 
 
@@ -398,7 +398,7 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 		if (device_id(dev.cfg) == 0x0000 && vendor_id(dev.cfg) == 0x0000)
 		{
 			port.blk  = 2; port.blk_info = 5;
-			continue;
+			break;
 		}
 
 		/*
@@ -435,7 +435,7 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 			if (port.devices.size() < 2)
 			{
 				port.blk = 2; port.blk_info = 9;
-				continue;
+				break;
 			}
 		}
 
@@ -463,7 +463,7 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 			// invalid header type
 			//
 			port.blk = 2; port.blk_info = 12;
-			continue;
+			break;
 		}
 	}
 
@@ -471,7 +471,7 @@ void validate_device_config(PORT_DEVICE_INFO &port)
 	// not any device has bus master enabled
 	// we can safely block the port
 	//
-	if (bme_enabled == 0)
+	if (bme_enabled == 0 && port.blk == 0)
 	{
 		port.blk = 1; port.blk_info = 2;
 	}
@@ -637,6 +637,7 @@ void validate_device_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &
 			{
 				port.blk = 1;
 				port.blk_info = 16;
+				break;
 			}
 		}
 	}
