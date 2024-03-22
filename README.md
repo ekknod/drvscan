@@ -1,10 +1,10 @@
 # drvscan
 <pre>
-C:\Users\Juho\source\repos\drvscan\Client\x64\Debug>Client.exe --help
+C:\Users\Juho\source\repos\drvscan\Client\x64\Release>Client.exe --help
 
 
 --scan                 scan target process memory changes
-    --pid              target process id
+    --pid              (optional) target process id
     --usecache         (optional) we use local cache instead of original PE files
     --savecache        (optional) dump target process modules to disk
 
@@ -12,9 +12,10 @@ C:\Users\Juho\source\repos\drvscan\Client\x64\Debug>Client.exe --help
     --dump             (optional) dump found abnormal to disk
 
 --scanpci              scan pci cards from the system
-    --block            block illegal cards
-    --cfg              print out every card cfg space
-    --bar              print out every card bar space
+    --advanced         (optional) test pci features
+    --block            (optional) block illegal cards
+    --cfg              (optional) print out every card cfg space
+    --bar              (optional) print out every card bar space
 
 
 
@@ -27,9 +28,9 @@ Example (verifying modules integrity by using cache):
 all malware patches should be now visible
 
 
-build date: Mar 12 2024, 16:31:35
+build date: Mar 22 2024, 12:10:11
 
-C:\Users\Juho\source\repos\drvscan\Client\x64\Debug>
+C:\Users\Juho\source\repos\drvscan\Client\x64\Release>
 </pre>
 # Driver Installation
 - enable testsigning  
