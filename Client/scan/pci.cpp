@@ -9,7 +9,7 @@ namespace scan
 	static void check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters);
 	static void check_shadowcfg(PORT_DEVICE_INFO &port);
 
-	static void PrintPcieInfo(PORT_DEVICE_INFO& entry);
+	static void PrintPcieInfo(PORT_DEVICE_INFO& port);
 	static void PrintPcieConfiguration(unsigned char *cfg, int size);
 	static void PrintPcieBarSpace(DWORD bar);
 	static void PrintPcieCfg(unsigned char *cfg);
@@ -64,9 +64,9 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	int block_cnt = 0;
 	if (disable)
 	{
-		for (auto &entry : port_devices)
+		for (auto &port : port_devices)
 		{
-			if (!entry.blk)
+			if (!port.blk)
 			{
 				continue;
 			}
@@ -74,12 +74,12 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 			//
 			// check if bus master is enabled
 			//
-			WORD command = pci::command(entry.self.cfg);
+			WORD command = pci::command(port.self.cfg);
 			if (GET_BIT(command, 2))
 			{
 				block_cnt++;
 				command &= ~(1 << 2);
-				cl::io::write<WORD>(entry.self.physical_address + 0x04, command);
+				cl::io::write<WORD>(port.self.physical_address + 0x04, command);
 			}
 		}
 	}
@@ -87,34 +87,34 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	//
 	// print white cards
 	//
-	for (auto &entry : port_devices) if (entry.blk == 0) PrintPcieInfo(entry);
+	for (auto &port : port_devices) if (port.blk == 0) PrintPcieInfo(port);
 
 	//
 	// print yellow cards
 	//
-	for (auto &entry : port_devices) if (entry.blk == 1) PrintPcieInfo(entry);
+	for (auto &port : port_devices) if (port.blk == 1) PrintPcieInfo(port);
 
 	//
 	// print red cards
 	//
-	for (auto &entry : port_devices) if (entry.blk == 2) PrintPcieInfo(entry);
+	for (auto &port : port_devices) if (port.blk == 2) PrintPcieInfo(port);
 
 	if (block_cnt)
 	{
 		LOG("Press any key to unblock [%d] devices . . .\n", block_cnt);
 		getchar();
 
-		for (auto &entry : port_devices)
+		for (auto &port : port_devices)
 		{
-			if (!entry.blk)
+			if (!port.blk)
 			{
 				continue;
 			}
 
-			WORD command = pci::command(entry.self.cfg);
+			WORD command = pci::command(port.self.cfg);
 			if (GET_BIT(command, 2))
 			{
-				cl::io::write<WORD>(entry.self.physical_address + 0x04, command);
+				cl::io::write<WORD>(port.self.physical_address + 0x04, command);
 			}
 		}
 	}
@@ -488,33 +488,28 @@ inline PCSTR get_port_type_str(unsigned char *cfg)
 	return "";
 }
 
-static void scan::PrintPcieInfo(PORT_DEVICE_INFO &entry)
+static void scan::PrintPcieInfo(PORT_DEVICE_INFO &port)
 {
-	if (entry.blk == 1)
+	if (port.blk == 1)
 	{
 		FontColor(14);
 	}
-	else if (entry.blk == 2)
+	else if (port.blk == 2)
 	{
 		FontColor(4);
 	}
 
 	//
-	// if port doesnt have any PCIe device
-	//
-	DEVICE_INFO &port = entry.self;
-
-	//
 	// print port information
 	//
 	printf("[%s] [%02d:%02d:%02d] [%04X:%04X] (%s)\n",
-		get_port_type_str(port.cfg), port.bus, port.slot, port.func,
-		pci::vendor_id(port.cfg), pci::device_id(port.cfg), blkinfo(entry.blk_info));
+		get_port_type_str(port.self.cfg), port.self.bus, port.self.slot, port.self.func,
+		pci::vendor_id(port.self.cfg), pci::device_id(port.self.cfg), blkinfo(port.blk_info));
 
 	//
 	// print device PCIe device information
 	//
-	for (auto &dev : entry.devices)
+	for (auto &dev : port.devices)
 	{
 		printf("	[%s] [%02d:%02d:%02d] [%04X:%04X]\n",
 			get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, pci::vendor_id(dev.cfg), pci::device_id(dev.cfg));
@@ -522,7 +517,7 @@ static void scan::PrintPcieInfo(PORT_DEVICE_INFO &entry)
 
 	printf("\n");
 
-	if (entry.blk)
+	if (port.blk)
 	{
 		FontColor(7);
 	}
