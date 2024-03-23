@@ -134,6 +134,9 @@
     <ClCompile Include="clint\clint.cpp" />
     <ClCompile Include="clum\clum.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="scan\efi.cpp" />
+    <ClCompile Include="scan\image.cpp" />
+    <ClCompile Include="scan\pci.cpp" />
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -141,6 +144,7 @@
     <ClInclude Include="clkm\clkm.h" />
     <ClInclude Include="clint\clint.h" />
     <ClInclude Include="clum\clum.h" />
+    <ClInclude Include="scan\scan.h" />
     <ClInclude Include="utils.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

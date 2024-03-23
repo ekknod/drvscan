@@ -3,6 +3,38 @@
 
 #include "utils.h"
 
+inline void FontColor(int color=0x07) { SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), color); }
+
+#define LOG_RED(...) \
+printf("[drvscan] "); \
+FontColor(4); \
+printf(__VA_ARGS__); \
+FontColor(7); \
+
+#define LOG_YELLOW(...) \
+printf("[drvscan] "); \
+FontColor(14); \
+printf(__VA_ARGS__); \
+FontColor(7); \
+
+#define PRINT_RED(...) \
+FontColor(4); \
+printf(__VA_ARGS__); \
+FontColor(7); \
+
+#define PRINT_GREEN(...) \
+FontColor(2); \
+printf(__VA_ARGS__); \
+FontColor(7); \
+
+#define DEBUG
+#define LOG(...) printf("[drvscan] "  __VA_ARGS__)
+#ifdef DEBUG
+#define DEBUG_LOG(...) printf("[drvscan] " __VA_ARGS__)
+#else
+#define DEBUG_LOG(...) // __VA_ARGS__
+#endif
+
 namespace cl
 {
 	class client

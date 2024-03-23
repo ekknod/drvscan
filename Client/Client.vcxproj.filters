@@ -33,6 +33,15 @@
     <ClCompile Include="clint\clint.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="scan\image.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="scan\efi.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="scan\pci.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="utils.h">
@@ -48,6 +57,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="clint\clint.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="scan\scan.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
