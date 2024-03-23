@@ -367,7 +367,7 @@ namespace pci
 	namespace dsn
 	{
 		inline BYTE dsn_cap_on(PVOID dsn) { return *(DWORD*)(dsn) != 0; }
-		inline WORD dsn_cap_nextptr(PVOID dsn) { return ((WORD*)dsn)[1] >> 4; }
+		inline WORD dsn_cap_nextptr(PVOID dsn) { return GET_BITS(((WORD*)dsn)[1], 15, 4); }
 		inline BYTE dsn_cap_id(PVOID dsn) { return *(BYTE*)(dsn) ; }
 	}
 
@@ -380,7 +380,7 @@ namespace pci
 		return (PVOID)((PBYTE)cfg + capabilities_ptr(cfg));
 	}
 
-	inline PVOID get_capability_by_id(PVOID cfg, int id)
+	inline PVOID get_capability_by_id(PVOID cfg, BYTE id)
 	{
 		PVOID cap_ptr = get_capabilities(cfg);
 		if (cap_ptr == 0)
@@ -408,7 +408,7 @@ namespace pci
 		return cap_ptr;
 	}
 
-	inline PVOID get_ext_capability_by_id(PVOID cfg, int id)
+	inline PVOID get_ext_capability_by_id(PVOID cfg, WORD id)
 	{
 		PVOID cap_ptr = (PVOID)((PBYTE)cfg + 0x100);
 		if (cap_ptr == 0)
@@ -424,14 +424,15 @@ namespace pci
 			{
 				break;
 			}
+
 			//
 			// next ptr
 			//
-			if ((((WORD*)cap_ptr)[1] >> 4) == 0)
+			if (GET_BITS(((WORD*)cap_ptr)[1], 15, 4) == 0)
 			{
 				return 0;
 			}
-			cap_ptr = (PVOID)((PBYTE)cfg + (((WORD*)cap_ptr)[1] >> 4));
+			cap_ptr = (PVOID)((PBYTE)cfg + GET_BITS(((WORD*)cap_ptr)[1], 15, 4));
 		}
 		return cap_ptr;
 	}
@@ -467,7 +468,7 @@ namespace pci
 		}
 		return (PVOID)((PBYTE)pcie + 0xC);
 	}
-	inline PVOID get_dsn(PVOID cfg) { return (PVOID)((PBYTE)cfg + 0x100); }
+	inline PVOID get_dsn(PVOID cfg) { return pci::get_ext_capability_by_id(cfg , 0x0003); }
 }
 
 typedef enum {

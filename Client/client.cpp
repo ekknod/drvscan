@@ -3,7 +3,6 @@
 #include "clint/clint.h"
 #include "clum/clum.h"
 
-
 QWORD cl::ntoskrnl_base;
 std::vector<QWORD> cl::global_export_list;
 
@@ -369,6 +368,215 @@ BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 		return 0;
 
 	return io::write(device + offset, buffer, size);
+}
+
+static BOOL is_bridge_device(ROOT_DEVICE_INFO& dev)
+{
+	using namespace pci;
+
+	//
+	// validate if its real bridge
+	//
+	if (class_code(dev.d.cfg) != 0x060400)
+	{
+		return 0;
+	}
+
+	//
+	// type0 endpoint device
+	//
+	if (GET_BITS(header_type(dev.d.cfg), 6, 0) == 0)
+	{
+		return 0;
+	}
+
+	return 1;
+}
+
+static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD class_code)
+{
+	std::vector<DEVICE_INFO> devices;
+	for (unsigned char slot = 0; slot < 32; slot++)
+	{
+		QWORD physical_address = cl::pci::get_physical_address(bus, slot);
+		if (physical_address == 0)
+		{
+			goto E0;
+		}
+
+		for (unsigned char func = 0; func < 8; func++)
+		{
+			QWORD entry = physical_address + (func << 12l);
+
+			if (class_code)
+			{
+				DWORD cd = 0;
+				((unsigned char*)&cd)[0] = cl::io::read<BYTE>(entry + 0x09 + 0);
+				((unsigned char*)&cd)[1] = cl::io::read<BYTE>(entry + 0x09 + 1);
+				((unsigned char*)&cd)[2] = cl::io::read<BYTE>(entry + 0x09 + 2);
+
+				if (class_code != cd)
+				{
+					continue;
+				}
+			}
+			int invalid_cnt = 0;
+			for (int i = 0; i < 8; i++)
+			{
+				if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
+				{
+					invalid_cnt++;
+				}
+			}
+
+			if (invalid_cnt == 8)
+			{
+				if (func == 0)
+				{
+					break;
+				}
+				continue;
+			}
+
+			DEVICE_INFO device;
+			device.bus = bus;
+			device.slot = slot;
+			device.func = func;
+			device.physical_address = entry;
+
+			//
+			// do not even ask... intel driver problem
+			//
+			for (int i = 0; i < sizeof(device.cfg); i+= 2)
+			{
+				*(WORD*)((PBYTE)device.cfg + i) = cl::io::read<WORD>(entry + i);
+			}
+			devices.push_back(device);
+		}
+	}
+E0:
+	return devices;
+}
+
+static std::vector<ROOT_DEVICE_INFO> get_root_bridge_devices(void)
+{
+	std::vector<ROOT_DEVICE_INFO> devices;
+	for (auto &dev : get_devices_by_class(0, 0x060400)) devices.push_back({dev});
+	return devices;
+}
+
+static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
+{
+	return get_devices_by_class(bus, 0);
+}
+
+static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_INFO> &devices)
+{
+	using namespace pci;
+
+
+	std::vector<ROOT_DEVICE_INFO> devs;
+
+
+	for (auto &entry : devices)
+	{
+		if (!is_bridge_device(entry))
+		{
+			continue;
+		}
+		BYTE max_bus = type1::subordinate_bus_number(entry.d.cfg);
+		auto bridge_devices = get_devices_by_bus(type1::secondary_bus_number(entry.d.cfg));
+
+		for (auto &bridge : bridge_devices)
+		{
+			if (bridge.bus > max_bus)
+			{
+				continue;
+			}
+			devs.push_back({bridge, entry.d});
+		}
+	}
+	return devs;
+}
+
+std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
+{
+	using namespace pci;
+
+	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_bridge_devices();
+	std::vector<PORT_DEVICE_INFO> port_devices;
+	while (1)
+	{
+		std::vector<ROOT_DEVICE_INFO> bridge_devices;
+		for (auto &dev : root_devices)
+		{
+			if (!is_bridge_device(dev))
+			{
+				for (auto &port : port_devices)
+				{
+					if (port.self.bus == dev.p.bus &&
+						port.self.slot == dev.p.slot &&
+						port.self.func == dev.p.func
+						)
+					{
+						port.devices.push_back(dev.d);
+						break;
+					}
+				}
+			}
+			else
+			{
+				bridge_devices.push_back(dev);
+			}
+		}
+
+		//
+		// get new devices
+		//
+		root_devices = get_inner_devices(root_devices);
+		if (!root_devices.size())
+		{
+			//
+			// append new fake devices
+			//
+			for (auto &dev : bridge_devices)
+			{
+				for (auto &port : port_devices)
+				{
+					if (port.self.bus == dev.p.bus &&
+						port.self.slot == dev.p.slot &&
+						port.self.func == dev.p.func
+						)
+					{
+						port.devices.push_back(dev.d);
+						break;
+					}
+				}
+			}
+			break;
+		}
+		else
+		{
+			//
+			// append new port devices
+			//
+			for (auto &dev : bridge_devices)
+			{
+				port_devices.push_back({0, 0, dev.d});
+			}
+		}
+	}
+
+	std::vector<PORT_DEVICE_INFO> ports;
+	for (auto& port : port_devices)
+	{
+		if (!port.devices.empty())
+		{
+			ports.push_back(port);
+		}
+	}
+
+	return ports;
 }
 
 static PVOID cl::efi::__get_memory_map(QWORD* size)

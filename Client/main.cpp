@@ -195,25 +195,6 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-typedef struct _DEVICE_INFO {
-	unsigned char  bus, slot, func, cfg[0x200];
-	QWORD physical_address;
-} DEVICE_INFO;
-
-typedef struct _PCIE_DEVICE_INFO {
-	unsigned char blk;
-	unsigned char info;
-	DEVICE_INFO   d; // device
-	DEVICE_INFO   p; // parent
-} PCIE_DEVICE_INFO;
-
-typedef struct _PORT_DEVICE_INFO {
-	unsigned char                 blk;
-	unsigned char                 blk_info;
-	DEVICE_INFO                   self; // device
-	std::vector<DEVICE_INFO>      devices;
-} PORT_DEVICE_INFO;
-
 const char *blkinfo(unsigned char info)
 {
 	switch (info)
@@ -820,256 +801,6 @@ void test_devices(std::vector<PORT_DEVICE_INFO> &devices, BOOL disable, BOOL adv
 	}
 }
 
-std::vector<PCIE_DEVICE_INFO> get_root_bridge_devices(void)
-{
-	std::vector<PCIE_DEVICE_INFO> devices;
-	unsigned char bus = 0;
-	for (unsigned char slot = 0; slot < 32; slot++)
-	{
-		QWORD physical_address = cl::pci::get_physical_address(bus, slot);
-		if (physical_address == 0)
-		{
-			goto E0;
-		}
-
-		for (unsigned char func = 0; func < 8; func++)
-		{
-			QWORD entry = physical_address + (func << 12l);
-
-			DWORD class_code = 0;
-			((unsigned char*)&class_code)[0] = cl::io::read<BYTE>(entry + 0x09 + 0);
-			((unsigned char*)&class_code)[1] = cl::io::read<BYTE>(entry + 0x09 + 1);
-			((unsigned char*)&class_code)[2] = cl::io::read<BYTE>(entry + 0x09 + 2);
-				
-			int invalid_cnt = 0;
-			for (int i = 0; i < 8; i++)
-			{
-				if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
-				{
-					invalid_cnt++;
-				}
-			}
-
-			if (invalid_cnt == 8)
-			{
-				if (func == 0)
-				{
-					break;
-				}
-				continue;
-			}
-
-			if (class_code != 0x060400)
-			{
-				continue;
-			}
-
-			PCIE_DEVICE_INFO device{};
-			device.d.bus = bus;
-			device.d.slot = slot;
-			device.d.func = func;
-			device.d.physical_address = entry;
-
-			//
-			// do not even ask... intel driver problem
-			//
-			for (int i = 0; i < 0x200; i++)
-			{
-				*(BYTE*)((char*)device.d.cfg + i) = cl::io::read<BYTE>(entry + i);
-			}
-			devices.push_back(device);
-		}
-	}
-E0:
-	return devices;
-}
-
-std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
-{
-	std::vector<DEVICE_INFO> devices;
-	for (unsigned char slot = 0; slot < 32; slot++)
-	{
-		QWORD physical_address = cl::pci::get_physical_address(bus, slot);
-		if (physical_address == 0)
-		{
-			goto E0;
-		}
-
-		for (unsigned char func = 0; func < 8; func++)
-		{
-			QWORD entry = physical_address + (func << 12l);
-				
-			int invalid_cnt = 0;
-			for (int i = 0; i < 8; i++)
-			{
-				if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
-				{
-					invalid_cnt++;
-				}
-			}
-
-			if (invalid_cnt == 8)
-			{
-				if (func == 0)
-				{
-					break;
-				}
-				continue;
-			}
-
-			DEVICE_INFO device;
-			device.bus = bus;
-			device.slot = slot;
-			device.func = func;
-			device.physical_address = entry;
-
-			//
-			// do not even ask... intel driver problem
-			//
-			for (int i = 0; i < 0x200; i++)
-			{
-				*(BYTE*)((char*)device.cfg + i) = cl::io::read<BYTE>(entry + i);
-			}
-			devices.push_back(device);
-		}
-	}
-E0:
-	return devices;
-}
-
-static BOOL is_bridge_device(PCIE_DEVICE_INFO& dev)
-{
-	using namespace pci;
-
-	//
-	// validate if its real bridge
-	//
-	if (class_code(dev.d.cfg) != 0x060400)
-	{
-		return 0;
-	}
-
-	//
-	// type0 endpoint device
-	//
-	if (GET_BITS(header_type(dev.d.cfg), 6, 0) == 0)
-	{
-		return 0;
-	}
-
-	return 1;
-}
-
-std::vector<PCIE_DEVICE_INFO> get_inner_devices(std::vector<PCIE_DEVICE_INFO> &devices)
-{
-	using namespace pci;
-
-
-	std::vector<PCIE_DEVICE_INFO> devs;
-
-
-	for (auto &entry : devices)
-	{
-		if (!is_bridge_device(entry))
-		{
-			continue;
-		}
-
-		BYTE max_bus = type1::subordinate_bus_number(entry.d.cfg);
-		auto bridge_devices = get_devices_by_bus(type1::secondary_bus_number(entry.d.cfg));
-
-		for (auto &bridge : bridge_devices)
-		{
-			if (bridge.bus > max_bus)
-			{
-				continue;
-			}
-			devs.push_back({0, 0, bridge, entry.d});
-		}
-	}
-	return devs;
-}
-
-std::vector<PORT_DEVICE_INFO> get_port_devices(void)
-{
-	using namespace pci;
-
-	std::vector<PCIE_DEVICE_INFO> root_devices = get_root_bridge_devices();
-	std::vector<PORT_DEVICE_INFO> port_devices;
-	while (1)
-	{
-		std::vector<PCIE_DEVICE_INFO> bridge_devices;
-		for (auto &dev : root_devices)
-		{
-			if (!is_bridge_device(dev))
-			{
-				for (auto &port : port_devices)
-				{
-					if (port.self.bus == dev.p.bus &&
-						port.self.slot == dev.p.slot &&
-						port.self.func == dev.p.func
-						)
-					{
-						port.devices.push_back(dev.d);
-						break;
-					}
-				}
-			}
-			else
-			{
-				bridge_devices.push_back(dev);
-			}
-		}
-
-		//
-		// get new devices
-		//
-		root_devices = get_inner_devices(root_devices);
-		if (!root_devices.size())
-		{
-			//
-			// append new fake devices
-			//
-			for (auto &dev : bridge_devices)
-			{
-				for (auto &port : port_devices)
-				{
-					if (port.self.bus == dev.p.bus &&
-						port.self.slot == dev.p.slot &&
-						port.self.func == dev.p.func
-						)
-					{
-						port.devices.push_back(dev.d);
-						break;
-					}
-				}
-			}
-			break;
-		}
-		else
-		{
-			//
-			// append new port devices
-			//
-			for (auto &dev : bridge_devices)
-			{
-				port_devices.push_back({0, 0, dev.d});
-			}
-		}
-	}
-
-	std::vector<PORT_DEVICE_INFO> ports;
-	for (auto& port : port_devices)
-	{
-		if (!port.devices.empty())
-		{
-			ports.push_back(port);
-		}
-	}
-
-	return ports;
-}
-
 void filter_pci_cfg(unsigned char *cfg)
 {
 	using namespace pci;
@@ -1144,177 +875,197 @@ void filter_pci_cfg(unsigned char *cfg)
 	}
 	PVOID pcie = get_pcie(cfg);
 
-	if (pcie == 0)
+	if (pcie != 0)
 	{
-		return;
-	}
-	
-	printf(
-		"\n[PE CAP]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("PCIE_CAP_ON 					%d\n", pcie::cap::pcie_cap_on(pcie));
-	printf("PCIE_CAP_NEXTPTR               			0x%lx\n", pcie::cap::pcie_cap_nextptr(pcie));
-	printf("PCIE_CAP_CAPABILITY_ID               		0x%lx\n", pcie::cap::pcie_cap_capability_id(pcie));
-	printf("PCIE_CAP_CAPABILITY_VERSION 			0x%lx\n", pcie::cap::pcie_cap_capability_version(pcie));
-	printf("PCIE_CAP_DEVICE_PORT_TYPE 			0x%lx\n", pcie::cap::pcie_cap_device_port_type(pcie));
-	printf("PCIE_CAP_SLOT_IMPLEMENTED  			0x%lx\n", pcie::cap::pcie_cap_slot_implemented(pcie));
-	printf("---------------------------------------------------------------------\n");
+		printf(
+			"\n[PE CAP]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("PCIE_CAP_ON 					%d\n", pcie::cap::pcie_cap_on(pcie));
+		printf("PCIE_CAP_NEXTPTR               			0x%lx\n", pcie::cap::pcie_cap_nextptr(pcie));
+		printf("PCIE_CAP_CAPABILITY_ID               		0x%lx\n", pcie::cap::pcie_cap_capability_id(pcie));
+		printf("PCIE_CAP_CAPABILITY_VERSION 			0x%lx\n", pcie::cap::pcie_cap_capability_version(pcie));
+		printf("PCIE_CAP_DEVICE_PORT_TYPE 			0x%lx\n", pcie::cap::pcie_cap_device_port_type(pcie));
+		printf("PCIE_CAP_SLOT_IMPLEMENTED  			0x%lx\n", pcie::cap::pcie_cap_slot_implemented(pcie));
+		printf("---------------------------------------------------------------------\n");
 
-	PVOID dev = get_dev(cfg);
-
-	if (dev == 0)
-	{
-		return;
-	}
+		PVOID dev = get_dev(cfg);
 
 	
-	printf(
-		"\n[PCI Express Device Capabilities]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("DEV_CAP_MAX_PAYLOAD_SUPPORTED 			%d\n", dev::cap::dev_cap_max_payload_supported(dev));
-	printf("DEV_CAP_PHANTOM_FUNCTIONS_SUPPORT 		%ld\n", dev::cap::dev_cap_phantom_functions_support(dev));
-	printf("DEV_CAP_EXT_TAG_SUPPORTED 			%ld\n", dev::cap::dev_cap_ext_tag_supported(dev));
-	printf("DEV_CAP_ENDPOINT_L0S_LATENCY 			%ld\n", dev::cap::dev_cap_endpoint_l0s_latency(dev));
-	printf("DEV_CAP_ENDPOINT_L1_LATENCY 			%ld\n", dev::cap::dev_cap_endpoint_l1_latency(dev));
-	printf("DEV_CAP_ROLE_BASED_ERROR 			%ld\n", dev::cap::dev_cap_role_based_error(dev));
-	printf("DEV_CAP_ENABLE_SLOT_PWR_LIMIT_VALUE 		%ld\n", dev::cap::dev_cap_enable_slot_pwr_limit_value(dev));
-	printf("DEV_CAP_ENABLE_SLOT_PWR_LIMIT_SCALE 		%ld\n", dev::cap::dev_cap_enable_slot_pwr_limit_scale(dev));
-	printf("DEV_CAP_FUNCTION_LEVEL_RESET_CAPABLE 		%ld\n", dev::cap::dev_cap_function_level_reset_capable(dev));
-	printf("---------------------------------------------------------------------\n");
+		printf(
+			"\n[PCI Express Device Capabilities]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("DEV_CAP_MAX_PAYLOAD_SUPPORTED 			%d\n", dev::cap::dev_cap_max_payload_supported(dev));
+		printf("DEV_CAP_PHANTOM_FUNCTIONS_SUPPORT 		%ld\n", dev::cap::dev_cap_phantom_functions_support(dev));
+		printf("DEV_CAP_EXT_TAG_SUPPORTED 			%ld\n", dev::cap::dev_cap_ext_tag_supported(dev));
+		printf("DEV_CAP_ENDPOINT_L0S_LATENCY 			%ld\n", dev::cap::dev_cap_endpoint_l0s_latency(dev));
+		printf("DEV_CAP_ENDPOINT_L1_LATENCY 			%ld\n", dev::cap::dev_cap_endpoint_l1_latency(dev));
+		printf("DEV_CAP_ROLE_BASED_ERROR 			%ld\n", dev::cap::dev_cap_role_based_error(dev));
+		printf("DEV_CAP_ENABLE_SLOT_PWR_LIMIT_VALUE 		%ld\n", dev::cap::dev_cap_enable_slot_pwr_limit_value(dev));
+		printf("DEV_CAP_ENABLE_SLOT_PWR_LIMIT_SCALE 		%ld\n", dev::cap::dev_cap_enable_slot_pwr_limit_scale(dev));
+		printf("DEV_CAP_FUNCTION_LEVEL_RESET_CAPABLE 		%ld\n", dev::cap::dev_cap_function_level_reset_capable(dev));
+		printf("---------------------------------------------------------------------\n");
 
 
-	printf(
-		"\n[Device Control]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("Correctable Error Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_corr_err_reporting(dev));
-	printf("Non-Fatal Error Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_non_fatal_reporting(dev));
-	printf("Fatal Error Reporting Enable 			%ld\n", dev::ctrl::dev_ctrl_fatal_err_reporting(dev));
-	printf("Unsupported Request Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_ur_reporting(dev));
-	printf("Enable Relaxed Ordering 			%ld\n", dev::ctrl::dev_ctrl_relaxed_ordering(dev));
-	printf("Max_Payload_Size 				%ld\n", dev::ctrl::dev_ctrl_max_payload_size(dev));
-	printf("DEV_CONTROL_EXT_TAG_DEFAULT 			%ld\n", dev::ctrl::dev_ctrl_ext_tag_default(dev));
-	printf("Phantom Functions Enable 			%ld\n", dev::ctrl::dev_ctrl_phantom_func_enable(dev));
-	printf("Auxiliary Power PM Enable 			%ld\n", dev::ctrl::dev_ctrl_aux_power_enable(dev));
-	printf("Enable No Snoop 				%ld\n", dev::ctrl::dev_ctrl_enable_no_snoop(dev));
-	printf("Max_Read_Request_Size 				%ld\n", dev::ctrl::dev_ctrl_max_read_request_size(dev));
-	printf("Configuration retry status enable 		%ld\n", dev::ctrl::dev_ctrl_cfg_retry_status_enable(dev));
-	printf("---------------------------------------------------------------------\n");
+		printf(
+			"\n[Device Control]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("Correctable Error Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_corr_err_reporting(dev));
+		printf("Non-Fatal Error Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_non_fatal_reporting(dev));
+		printf("Fatal Error Reporting Enable 			%ld\n", dev::ctrl::dev_ctrl_fatal_err_reporting(dev));
+		printf("Unsupported Request Reporting Enable 		%ld\n", dev::ctrl::dev_ctrl_ur_reporting(dev));
+		printf("Enable Relaxed Ordering 			%ld\n", dev::ctrl::dev_ctrl_relaxed_ordering(dev));
+		printf("Max_Payload_Size 				%ld\n", dev::ctrl::dev_ctrl_max_payload_size(dev));
+		printf("DEV_CONTROL_EXT_TAG_DEFAULT 			%ld\n", dev::ctrl::dev_ctrl_ext_tag_default(dev));
+		printf("Phantom Functions Enable 			%ld\n", dev::ctrl::dev_ctrl_phantom_func_enable(dev));
+		printf("Auxiliary Power PM Enable 			%ld\n", dev::ctrl::dev_ctrl_aux_power_enable(dev));
+		printf("Enable No Snoop 				%ld\n", dev::ctrl::dev_ctrl_enable_no_snoop(dev));
+		printf("Max_Read_Request_Size 				%ld\n", dev::ctrl::dev_ctrl_max_read_request_size(dev));
+		printf("Configuration retry status enable 		%ld\n", dev::ctrl::dev_ctrl_cfg_retry_status_enable(dev));
+		printf("---------------------------------------------------------------------\n");
 		
-	PVOID link = get_link(cfg);
+		PVOID link = get_link(cfg);
 
-	if (link == 0)
-	{
-		return;
+		printf(
+			"\n[PCI Express Link Capabilities]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("LINK_CAP_MAX_LINK_SPEED 			%ld\n", link::cap::link_cap_max_link_speed(link));
+		printf("LINK_CAP_MAX_LINK_WIDTH 			%ld\n", link::cap::link_cap_max_link_width(link));
+		printf("LINK_CAP_ASPM_SUPPORT 				%d\n",  link::cap::link_cap_aspm_support(link));
+		printf("LINK_CAP_L0S_EXIT_LATENCY 			%ld\n", link::cap::link_cap_l0s_exit_latency(link));
+		printf("LINK_CAP_L1_EXIT_LATENCY 			%ld\n", link::cap::link_cap_l1_exit_latency(link));
+		printf("LINK_CAP_CLOCK_POWER_MANAGEMENT 		%ld\n", link::cap::link_cap_clock_power_management(link));
+		printf("LINK_CAP_ASPM_OPTIONALITY 			%ld\n", link::cap::link_cap_aspm_optionality(link));
+		printf("LINK_CAP_RSVD_23 				%ld\n", link::cap::link_cap_rsvd_23(link));
+		printf("---------------------------------------------------------------------\n");
+
+
+
+		printf(
+			"\n[Link Control]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("LINK_CONTROL_RCB  				%ld\n", link::ctrl::link_control_rcb(link));
+		printf("---------------------------------------------------------------------\n");
+
+
+
+		printf(
+			"\n[Link Status]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("LINK_STATUS_SLOT_CLOCK_CONFIG	 		%ld\n", link::status::link_status_slot_clock_config(link));
+		printf("---------------------------------------------------------------------\n");
+
+
+		printf(
+			"\n[PCI Express Device Capabilities 2]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("CPL_TIMEOUT_RANGES_SUPPORTED 			%ld\n", dev::cap2::cpl_timeout_disable_supported(dev));
+		printf("CPL_TIMEOUT_DISABLE_SUPPORTED 			%ld\n", dev::cap2::cpl_timeout_disable_supported(dev));
+		printf("---------------------------------------------------------------------\n");
+
+
+		printf(
+			"\n[Device Control 2]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("Completion Timeout value 			%ld\n", dev::ctrl2::completiontimeoutvalue(dev));
+		printf("Completion Timeout disable 			%ld\n", dev::ctrl2::completiontimeoutdisable(dev));
+		printf("---------------------------------------------------------------------\n");
+
+
+
+		printf(
+			"\n[PCI Express Link Capabilities 2]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("Link speeds supported 				%ld\n", link::cap2::linkspeedssupported(link));
+		printf("---------------------------------------------------------------------\n");
+
+
+
+		printf(
+			"\n[Link Control 2]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("LINK_CTRL2_TARGET_LINK_SPEED 			%d\n",  link::ctrl2::link_ctrl2_target_link_speed(link));
+		printf("LINK_CTRL2_HW_AUTONOMOUS_SPEED_DISABLE 		%ld\n", link::ctrl2::link_ctrl2_hw_autonomous_speed_disable(link));
+		printf("LINK_CTRL2_DEEMPHASIS 				%ld\n", link::ctrl2::link_ctrl2_deemphasis(link));
+		printf("Enter Compliance 				%ld\n", link::ctrl2::entercompliance(link));
+		printf("Transmit Margin 				%ld\n", link::ctrl2::transmitmargin(link));
+		printf("Enter Modified Compliance 			%ld\n", link::ctrl2::entermodifiedcompliance(link));
+		printf("Compliance SOS 					%d\n",  link::ctrl2::compliancesos(link));
+		printf("---------------------------------------------------------------------\n");
+
+
+		printf(
+			"\n[Link Status 2]\n"
+			"---------------------------------------------------------------------\n"
+		);
+		printf("Compliance Preset/De-emphasis 			%ld\n", link::status2::deemphasis(link));
+		printf("Current De-emphasis Level 			%ld\n", link::status2::deemphasislvl(link));
+		printf("Equalization Complete 				%ld\n", link::status2::equalizationcomplete(link));
+		printf("Equalization Phase 1 Successful 		%ld\n", link::status2::equalizationphase1successful(link));
+		printf("Equalization Phase 2 Successful 		%ld\n", link::status2::equalizationphase2successful(link));
+		printf("Equalization Phase 3 Successful 		%ld\n", link::status2::equalizationphase3successful(link));
+		printf("Link Equalization Request 			%ld\n", link::status2::linkequalizationrequest(link));
+		printf("---------------------------------------------------------------------\n");
 	}
 
-	printf(
-		"\n[PCI Express Link Capabilities]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("LINK_CAP_MAX_LINK_SPEED 			%ld\n", link::cap::link_cap_max_link_speed(link));
-	printf("LINK_CAP_MAX_LINK_WIDTH 			%ld\n", link::cap::link_cap_max_link_width(link));
-	printf("LINK_CAP_ASPM_SUPPORT 				%d\n",  link::cap::link_cap_aspm_support(link));
-	printf("LINK_CAP_L0S_EXIT_LATENCY 			%ld\n", link::cap::link_cap_l0s_exit_latency(link));
-	printf("LINK_CAP_L1_EXIT_LATENCY 			%ld\n", link::cap::link_cap_l1_exit_latency(link));
-	printf("LINK_CAP_CLOCK_POWER_MANAGEMENT 		%ld\n", link::cap::link_cap_clock_power_management(link));
-	printf("LINK_CAP_ASPM_OPTIONALITY 			%ld\n", link::cap::link_cap_aspm_optionality(link));
-	printf("LINK_CAP_RSVD_23 				%ld\n", link::cap::link_cap_rsvd_23(link));
-	printf("---------------------------------------------------------------------\n");
+	for (WORD i = 0; i < 0x2F; i++)
+	{
+		PVOID ext_cap = get_ext_capability_by_id(cfg, i);
 
+		if (ext_cap == 0)
+			continue;
 
+		//
+		// extended capabilities
+		//
+		if (i == 0x03) // DSN
+		{
+			printf(
+				"\n[PCI Express Extended Capability - DSN]\n"
+				"---------------------------------------------------------------------\n"
+			);
+			printf("DSN_BASE_PTR    				0x%lx\n", (DWORD)((PBYTE)ext_cap - cfg));
+			printf("DSN_CAP_NEXTPTR 				0x%lx\n", dsn::dsn_cap_nextptr(ext_cap));
+			printf("DSN_CAP_ON 					%ld\n", dsn::dsn_cap_on(ext_cap));
+			printf("DSN 1st						%lX\n", *(DWORD*)((PBYTE)ext_cap + sizeof(DWORD)));
+			printf("DSN 2nd						%lX\n", *(DWORD*)((PBYTE)ext_cap + sizeof(QWORD)));
+			printf("---------------------------------------------------------------------\n");
+		}
+		else
+		{
+			std::string cap_name = "CAP_" + std::to_string(i);
 
-	printf(
-		"\n[Link Control]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("LINK_CONTROL_RCB  				%ld\n", link::ctrl::link_control_rcb(link));
-	printf("---------------------------------------------------------------------\n");
-
-
-
-	printf(
-		"\n[Link Status]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("LINK_STATUS_SLOT_CLOCK_CONFIG	 		%ld\n", link::status::link_status_slot_clock_config(link));
-	printf("---------------------------------------------------------------------\n");
-
-
-	printf(
-		"\n[PCI Express Device Capabilities 2]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("CPL_TIMEOUT_RANGES_SUPPORTED 			%ld\n", dev::cap2::cpl_timeout_disable_supported(dev));
-	printf("CPL_TIMEOUT_DISABLE_SUPPORTED 			%ld\n", dev::cap2::cpl_timeout_disable_supported(dev));
-	printf("---------------------------------------------------------------------\n");
-
-
-	printf(
-		"\n[Device Control 2]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("Completion Timeout value 			%ld\n", dev::ctrl2::completiontimeoutvalue(dev));
-	printf("Completion Timeout disable 			%ld\n", dev::ctrl2::completiontimeoutdisable(dev));
-	printf("---------------------------------------------------------------------\n");
-
-
-
-	printf(
-		"\n[PCI Express Link Capabilities 2]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("Link speeds supported 				%ld\n", link::cap2::linkspeedssupported(link));
-	printf("---------------------------------------------------------------------\n");
-
-
-
-	printf(
-		"\n[Link Control 2]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("LINK_CTRL2_TARGET_LINK_SPEED 			%d\n",  link::ctrl2::link_ctrl2_target_link_speed(link));
-	printf("LINK_CTRL2_HW_AUTONOMOUS_SPEED_DISABLE 		%ld\n", link::ctrl2::link_ctrl2_hw_autonomous_speed_disable(link));
-	printf("LINK_CTRL2_DEEMPHASIS 				%ld\n", link::ctrl2::link_ctrl2_deemphasis(link));
-	printf("Enter Compliance 				%ld\n", link::ctrl2::entercompliance(link));
-	printf("Transmit Margin 				%ld\n", link::ctrl2::transmitmargin(link));
-	printf("Enter Modified Compliance 			%ld\n", link::ctrl2::entermodifiedcompliance(link));
-	printf("Compliance SOS 					%d\n",  link::ctrl2::compliancesos(link));
-	printf("---------------------------------------------------------------------\n");
-
-
-	printf(
-		"\n[Link Status 2]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("Compliance Preset/De-emphasis 			%ld\n", link::status2::deemphasis(link));
-	printf("Current De-emphasis Level 			%ld\n", link::status2::deemphasislvl(link));
-	printf("Equalization Complete 				%ld\n", link::status2::equalizationcomplete(link));
-	printf("Equalization Phase 1 Successful 		%ld\n", link::status2::equalizationphase1successful(link));
-	printf("Equalization Phase 2 Successful 		%ld\n", link::status2::equalizationphase2successful(link));
-	printf("Equalization Phase 3 Successful 		%ld\n", link::status2::equalizationphase3successful(link));
-	printf("Link Equalization Request 			%ld\n", link::status2::linkequalizationrequest(link));
-	printf("---------------------------------------------------------------------\n");
-		
-	PVOID dsn = get_dsn(cfg);
-
-	printf(
-		"\n[PCI Express Extended Capability - DSN]\n"
-		"---------------------------------------------------------------------\n"
-	);
-	printf("DSN_CAP_NEXTPTR 				0x%lx\n", dsn::dsn_cap_nextptr(dsn));
-	printf("DSN_CAP_ON 					%ld\n", dsn::dsn_cap_on(dsn));
-	printf("DSN_CAP_ID 					0x0%lx\n", dsn::dsn_cap_id(dsn));
-	printf("---------------------------------------------------------------------\n");
+			std::string title =
+				"\n[PCI Express Extended Capability - " + 
+				cap_name +
+				"]\n"
+				"---------------------------------------------------------------------\n";
+			printf(title.c_str());
+			std::string tmp = cap_name + "_BASE_PTR   				0x%lx\n";
+			printf(tmp.c_str(), (DWORD)((PBYTE)ext_cap - cfg));
+			tmp = cap_name + "_CAP_NEXTPTR				0x%lx\n";
+			printf(tmp.c_str(), dsn::dsn_cap_nextptr(ext_cap));
+			tmp = cap_name + "_CAP_ON     				%ld\n";
+			printf(tmp.c_str(), dsn::dsn_cap_on(ext_cap));
+			printf("---------------------------------------------------------------------\n");
+		}
+	}
 }
 
 static void scan_pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 {
 	using namespace pci;
 
-	std::vector<PORT_DEVICE_INFO> devices = get_port_devices();
+	std::vector<PORT_DEVICE_INFO> devices = cl::pci::get_port_devices();
 
 	if (dump_cfg)
 	{

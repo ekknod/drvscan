@@ -41,6 +41,23 @@ typedef struct {
 	DWORD size;
 } EFI_MODULE_INFO;
 
+typedef struct _DEVICE_INFO {
+	unsigned char  bus, slot, func, cfg[0x1000];
+	QWORD physical_address;
+} DEVICE_INFO;
+
+typedef struct _ROOT_DEVICE_INFO {
+	DEVICE_INFO   d; // device
+	DEVICE_INFO   p; // parent
+} ROOT_DEVICE_INFO;
+
+typedef struct _PORT_DEVICE_INFO {
+	unsigned char                 blk;       // info is port is blocked
+	unsigned char                 blk_info;  // reason for blocking
+	DEVICE_INFO                   self;      // port device
+	std::vector<DEVICE_INFO>      devices;   // devices in port
+} PORT_DEVICE_INFO;
+
 
 #define DMP_FULL     0x0001
 #define DMP_CODEONLY 0x0002
@@ -120,6 +137,11 @@ namespace cl
 		{
 			return write(bus, slot, offset, &value, sizeof(t));
 		}
+
+		//
+		// gets every active port from the system with devices
+		//
+		std::vector<PORT_DEVICE_INFO> get_port_devices(void);
 	}
 
 	namespace efi
