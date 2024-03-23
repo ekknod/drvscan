@@ -725,15 +725,33 @@ void test_devices(std::vector<PORT_DEVICE_INFO> &devices, BOOL disable, BOOL adv
 		}
 	}
 
+	BOOL blocked_devices = 0;
 	for (auto &entry : devices)
 	{
 		if (!entry.blk)
 		{
 			print_device_info(entry);
 		}
-	}
+		else
+		{
+			if (disable)
+			{
+				//
+				// check if bus master was already disabled
+				//
+				WORD command = pci::command(entry.self.cfg);
+				if (!GET_BIT(command, 2))
+				{
+					continue;
+				}
 
-	std::vector<DEVICE_INFO> blocked_devices;
+				blocked_devices = 1;
+
+				command &= ~(1 << 2);
+				cl::io::write<WORD>(entry.self.physical_address + 0x04, command);
+			}
+		}
+	}
 
 	for (auto &entry : devices)
 	{
@@ -742,23 +760,6 @@ void test_devices(std::vector<PORT_DEVICE_INFO> &devices, BOOL disable, BOOL adv
 			FontColor(14);
 			print_device_info(entry);
 			FontColor(7);
-			if (disable)
-			{
-				//
-				// check if bus master is enabled from bridge
-				//
-				WORD command = pci::command(entry.self.cfg);
-				if (GET_BIT(command, 2))
-				{
-					//
-					// disable bus master from bridge
-					//
-					command &= ~(1 << 2);
-					cl::io::write<WORD>(entry.self.physical_address + 0x04, command);
-
-					blocked_devices.push_back(entry.self);
-				}
-			}
 		}
 	}
 
@@ -769,34 +770,26 @@ void test_devices(std::vector<PORT_DEVICE_INFO> &devices, BOOL disable, BOOL adv
 			FontColor(4);
 			print_device_info(entry);
 			FontColor(7);
-			if (disable)
-			{
-				//
-				// check if bus master is enabled from bridge
-				//
-				WORD command = pci::command(entry.self.cfg);
-				if (GET_BIT(command, 2))
-				{
-					//
-					// disable bus master from bridge
-					//
-					command &= ~(1 << 2);
-					cl::io::write<WORD>(entry.self.physical_address + 0x04, command);
-
-					blocked_devices.push_back(entry.self);
-				}
-			}
 		}
 	}
 
-	if (blocked_devices.size())
+	if (blocked_devices)
 	{
 		LOG("Press any key to unblock devices . . .\n");
 		getchar();
 
-		for (auto &entry : blocked_devices)
+		for (auto &entry : devices)
 		{
-			cl::io::write<WORD>(entry.physical_address + 0x04, pci::command(entry.cfg));
+			if (!entry.blk)
+			{
+				continue;
+			}
+
+			WORD command = pci::command(entry.self.cfg);
+			if (GET_BIT(command, 2))
+			{
+				cl::io::write<WORD>(entry.self.physical_address + 0x04, command);
+			}
 		}
 	}
 }
