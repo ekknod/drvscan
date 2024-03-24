@@ -178,14 +178,24 @@ void scan::check_config(PORT_DEVICE_INFO &port)
 			//
 			// device reports to have capabilities, lets see if we got actually any
 			//
-			if (
-				get_capability_by_id(dev.cfg, 0x01) == 0 && // PM
-				get_capability_by_id(dev.cfg, 0x05) == 0 && // MSI
-				get_capability_by_id(dev.cfg, 0x10) == 0 && // PCIE
-				get_capability_by_id(dev.cfg, 0x11) == 0    // MSI-X
-				)
+			BOOL found = 0;
+			for (BYTE i = 0; i < 0x16; i++)
+			{
+				PVOID cap = get_capability_by_id(dev.cfg, i);
+				if (cap == 0)
+					continue;
+
+				if (*(DWORD*)cap)
+				{
+					found = 1;
+					break;
+				}
+			}
+
+			if (!found)
 			{
 				port.blk = 2; port.blk_info = 6;
+				return;
 			}
 		}
 
@@ -284,6 +294,49 @@ void scan::check_config(PORT_DEVICE_INFO &port)
 	if (bme_enabled == 0 && port.blk == 0)
 	{
 		port.blk = 1; port.blk_info = 2;
+		return;
+	}
+
+	for (auto &dev : port.devices)
+	for (BYTE i = 0; i < 0x16; i++)
+	{
+		PVOID cap = get_capability_by_id(dev.cfg, i);
+
+		if (!cap)
+			continue;
+
+		if (*(DWORD*)(cap) == 0)
+		{
+			//
+			// device reports to have next cap, but it's empty (???)
+			//
+			port.blk_info = 7;
+			port.blk = 2;
+			return;
+		}
+	}
+
+	//
+	// check ext capability list (https://pcisig.com/sites/default/files/files/PCI_Code-ID_r_1_12__v9_Jan_2020.pdf)
+	//
+	for (auto &dev : port.devices)
+	for (WORD i = 0; i < 0x2F; i++)
+	{
+		PVOID ext_cap = get_ext_capability_by_id(dev.cfg, i);
+
+		if (!ext_cap)
+			continue;
+
+		if (*(DWORD*)(ext_cap) == 0)
+		{
+			//
+			// device reports to have next cap, but it's empty (???)
+			// i don't have enough data to confirm if this is possible
+			//
+			port.blk_info = 8;
+			port.blk = 2;
+			return;
+		}
 	}
 }
 
@@ -440,9 +493,9 @@ inline const char *blkinfo(unsigned char info)
 	case 3:  return "xilinx development card";
 	case 4:  return "invalid bridge";
 	case 5:  return "hidden device";
-	case 6:
-	case 7:
-	case 8:  return "invalid capabilities";
+	case 6:  return "invalid cap reporting";
+	case 7:  return "nulled capabilities";
+	case 8:  return "nulled ext capabilities";
 	case 9:  return "invalid multi func device";
 	case 10: return "invalid header type 0";
 	case 11: return "invalid header type 1";
