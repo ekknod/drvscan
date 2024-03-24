@@ -298,6 +298,7 @@ void scan::check_config(PORT_DEVICE_INFO &port)
 	}
 
 	for (auto &dev : port.devices)
+	if (GET_BIT(status(dev.cfg), 4))
 	for (BYTE i = 0; i < 0x16; i++)
 	{
 		PVOID cap = get_capability_by_id(dev.cfg, i);
