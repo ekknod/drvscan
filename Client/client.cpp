@@ -2,6 +2,7 @@
 #include "clkm/clkm.h"
 #include "clint/clint.h"
 #include "clum/clum.h"
+#include <chrono>
 
 QWORD cl::ntoskrnl_base;
 std::vector<QWORD> cl::global_export_list;
@@ -444,6 +445,10 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 			device.func = func;
 			device.physical_address = entry;
 
+			UINT64 current_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::high_resolution_clock::now().time_since_epoch())
+				.count();
+
 			//
 			// do not even ask... intel driver problem
 			//
@@ -451,6 +456,15 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 			{
 				*(WORD*)((PBYTE)device.cfg + i) = cl::io::read<WORD>(entry + i);
 			}
+
+
+			current_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::high_resolution_clock::now().time_since_epoch())
+				.count() - current_ms;
+
+			device.cfg_time = current_ms;
+
+
 			devices.push_back(device);
 		}
 	}

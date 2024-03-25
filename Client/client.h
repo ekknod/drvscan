@@ -27,6 +27,11 @@ FontColor(2); \
 printf(__VA_ARGS__); \
 FontColor(7); \
 
+#define PRINT_BLUE(...) \
+FontColor(3); \
+printf(__VA_ARGS__); \
+FontColor(7); \
+
 #define DEBUG
 #define LOG(...) printf("[drvscan] "  __VA_ARGS__)
 #ifdef DEBUG
@@ -75,6 +80,7 @@ typedef struct {
 
 typedef struct _DEVICE_INFO {
 	unsigned char  bus, slot, func, cfg[0x1000];
+	QWORD cfg_time;
 	QWORD physical_address;
 } DEVICE_INFO;
 

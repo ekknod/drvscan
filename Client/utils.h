@@ -509,6 +509,7 @@ typedef struct
 {
 	unsigned char bus, slot, func;
 	std::string   pnp_id;
+	std::string   driver;
 } PNP_ADAPTER;
 
 std::vector<PNP_ADAPTER> get_pnp_adapters();

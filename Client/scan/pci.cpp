@@ -5,6 +5,8 @@ namespace scan
 	static void dumpcfg(std::vector<PORT_DEVICE_INFO> &devices);
 	static void dumpbar(std::vector<PORT_DEVICE_INFO> &devices);
 
+	static void check_hidden(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters);
+	static void check_xilinx(PORT_DEVICE_INFO &port);
 	static void check_config(PORT_DEVICE_INFO &port);
 	static void check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters);
 	static void check_shadowcfg(PORT_DEVICE_INFO &port);
@@ -37,11 +39,20 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 		return;
 	}
 
-	std::vector<PNP_ADAPTER> pnp_adapters;
-	if (advanced)
-	{
-		pnp_adapters = get_pnp_adapters();
-	}
+	//
+	// get list of device manager devices
+	//
+	std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
+
+	//
+	// check if devices are found from registry
+	//
+	for (auto &port : port_devices) if (!port.blk) check_hidden(port, pnp_adapters);
+
+	//
+	// xilinx test
+	//
+	for (auto &port : port_devices) if (!port.blk) check_xilinx(port);
 
 	//
 	// check device config
@@ -58,7 +69,6 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	// check shadow cfg
 	//
 	for (auto &port : port_devices) if (!port.blk) check_shadowcfg(port);
-
 
 
 	int block_cnt = 0;
@@ -133,7 +143,67 @@ BOOL is_xilinx(unsigned char *cfg)
 	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
 }
 
-void scan::check_config(PORT_DEVICE_INFO &port)
+static void scan::check_hidden(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters)
+{
+	for (auto& dev : port.devices)
+	{
+		BOOL found = 0;
+
+		for (auto& pnp : pnp_adapters)
+		{
+			if (pnp.bus == dev.bus &&
+				pnp.slot == dev.slot &&
+				pnp.func == dev.func
+				)
+			{
+				found = 1;
+				//
+				// check if device is bus mastering without driver
+				//
+				if (GET_BIT(pci::command(dev.cfg), 2) && !pnp.driver.size())
+				{
+					port.blk = 2;
+					port.blk_info = 19;
+					return;
+				}
+				break;
+			}
+		}
+
+		//
+		// device is not found
+		//
+		if (!found)
+		{
+			port.blk = 2; port.blk_info = 5;
+			break;
+		}
+	}
+}
+
+static void scan::check_xilinx(PORT_DEVICE_INFO &port)
+{
+	for (auto& dev : port.devices)
+	{
+		//
+		// device says i'm not xilinx
+		//
+		if (!is_xilinx(dev.cfg))
+		{
+			//
+			// test if timing approax xilinx timing
+			//
+			if (dev.cfg_time >= 16000 && dev.cfg_time <= 18000)
+			{
+				PRINT_BLUE("[%02d:%02d:%02d][%04X:%04X][EXPERIMENTAL test, don't take me serious] are you spoofed xilinx(?)\n",
+					port.self.bus,port.self.slot,port.self.func,
+					pci::vendor_id(dev.cfg), pci::device_id(dev.cfg));
+			}
+		}
+	}
+}
+
+static void scan::check_config(PORT_DEVICE_INFO &port)
 {
 	using namespace pci;
 
@@ -348,8 +418,6 @@ static void scan::check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER
 	//
 	// check if device is backed by driver
 	//
-
-	BOOL found = 0;
 	for (auto& dev : port.devices)
 	{
 		for (auto& pnp : pnp_adapters)
@@ -359,30 +427,7 @@ static void scan::check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER
 				pnp.func == dev.func
 				)
 			{
-				found = 1;
 				validate_pnp_device(port, dev, pnp);
-				break;
-			}
-		}
-	}
-
-	if (!found)
-	{
-		for (auto& dev : port.devices)
-		{
-			//
-			// bus master was forcefully enabled(?)
-			//
-			if (GET_BIT(command(dev.cfg), 2))
-			{
-				port.blk = 2;
-				port.blk_info = 19;
-				break;
-			}
-			else
-			{
-				port.blk = 1;
-				port.blk_info = 16;
 				break;
 			}
 		}
@@ -909,11 +954,13 @@ static void scan::validate_usb_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp
 	BOOL  found = 0;
 	QWORD table = wmi::open_table("SELECT DeviceID FROM Win32_USBController where DeviceID is not NULL");
 	QWORD table_entry = wmi::next_entry(table, 0);
+	std::string devid;
 	while (table_entry)
 	{
 		std::string DeviceID = wmi::get_string(table_entry, "DeviceID");
 		if (!_strcmpi(DeviceID.c_str(), pnp.pnp_id.c_str()))
 		{
+			devid = DeviceID;
 			found = 1;
 			break;
 		}
@@ -938,11 +985,13 @@ static void scan::validate_usb_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp
 		for (size_t pos = Antecedent.find("\\\\"); pos != std::string::npos; pos = Antecedent.find("\\\\", pos + 1)) {
 			Antecedent.replace(pos, 2, "\\");
 		}
-		if (strstr(Antecedent.c_str(), pnp.pnp_id.c_str()))
+
+		if (strstr(Antecedent.c_str(), devid.c_str()))
 		{
 			found = 1;
 			break;
 		}
+
 		table_entry = wmi::next_entry(table, table_entry);
 	}
 	wmi::close_table(table);
@@ -958,7 +1007,6 @@ static void scan::validate_usb_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp
 static void scan::validate_pnp_device(PORT_DEVICE_INFO &port, DEVICE_INFO &dev, PNP_ADAPTER &pnp)
 {
 	using namespace pci;
-
 	switch (class_code(dev.cfg))
 	{
 	//

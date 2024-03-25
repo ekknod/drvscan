@@ -967,39 +967,107 @@ bool wmi::get_bool(QWORD table_entry, PCSTR value)
 	return res!=0;
 }
 
-std::vector<PNP_ADAPTER> get_pnp_adapters()
+static std::string get_registry_string(HKEY key_handle, const std::string& sub_key, const std::string& value_name)
 {
-	std::vector<PNP_ADAPTER> adapters;
+	std::string val = "";
 
-	QWORD table       = wmi::open_table("SELECT * FROM Win32_PnPSignedDriver WHERE Location IS NOT NULL");
-	QWORD table_entry = wmi::next_entry(table, 0);
+	HKEY sub_key_handle;
 
-	while (table_entry)
+	if (RegOpenKeyExA(key_handle, sub_key.c_str(), 0, KEY_READ, &sub_key_handle) != ERROR_SUCCESS)
 	{
-		std::string device_id = wmi::get_string(table_entry, "DeviceID");
-		if (device_id.size() > 4 && *(DWORD*)device_id.c_str() == 0x5C494350)
-		{
-			std::string location = wmi::get_string(table_entry, "Location");
-			if (location.size() > 12 && *(DWORD*)location.c_str() == 0x20494350)
-			{
-				unsigned char bus  = atoi(location.c_str()+8);
-				unsigned char slot = 0;
-				unsigned char func = 0;
-
-				const char *tmp = strstr(location.c_str(), "device ");
-				if (tmp)
-					slot = atoi(tmp + 7);
-
-				tmp = strstr(location.c_str(), "function ");
-				if (tmp)
-					func = atoi(tmp + 9);
-
-				adapters.push_back({bus,slot,func,device_id});
-			}
-		}
-		table_entry = wmi::next_entry(table, table_entry);
+		return val;
 	}
-	wmi::close_table(table);
-	return adapters;
+
+	DWORD type;
+	DWORD size = 0;
+	char  value[260]{};
+
+	if (RegQueryValueExA(sub_key_handle, value_name.c_str(), NULL, &type, NULL, &size) == ERROR_SUCCESS &&
+		RegQueryValueExA(sub_key_handle, value_name.c_str(), NULL, NULL, (LPBYTE)value, &size) == ERROR_SUCCESS
+		)
+	{
+		val = std::string(value);
+	}
+
+	RegCloseKey(sub_key_handle);
+
+	return val;
+}
+
+static void pnp_adapter_callback(
+	std::vector<PNP_ADAPTER> &adapters,
+	HKEY key_handle,
+	const std::string& subKey,
+	std::string parent
+)
+{
+	HKEY sub_key_handle;
+	if (RegOpenKeyExA(key_handle, subKey.c_str(), 0, KEY_READ, &sub_key_handle) != ERROR_SUCCESS)
+	{
+		return;
+	}
+
+	DWORD index = 0;
+	CHAR  name[260]{};
+	DWORD size = sizeof(name);
+
+	while (RegEnumKeyExA(sub_key_handle, index++, name, &size, NULL, NULL, NULL, NULL) == ERROR_SUCCESS)
+	{
+		if (parent.size() > 1)
+		{
+			std::string location     = get_registry_string(sub_key_handle, name, "LocationInformation");
+			const char* location_ptr = location.c_str();
+
+			int bus  = 0;
+			int slot = 0;
+			int func = 0;
+
+			if (location_ptr && (location_ptr = strrchr(location.c_str(), '(')))
+			{
+				location_ptr = location_ptr + 1;
+				bus = atoi(location_ptr);
+			}
+
+			if (location_ptr && (location_ptr = strchr(location_ptr, ',')))
+			{
+				location_ptr = location_ptr + 1;
+				slot = atoi(location_ptr);
+			}
+
+			if (location_ptr && (location_ptr = strchr(location_ptr, ',')))
+			{
+				location_ptr = location_ptr + 1;
+				func = atoi(location_ptr);
+			}
+
+			std::string pnpid = "PCI\\" + parent + "\\" + name;
+			PNP_ADAPTER adapter{};
+			adapter.bus = (unsigned char)bus;
+			adapter.slot = (unsigned char)slot;
+			adapter.func = (unsigned char)func;
+			adapter.pnp_id = pnpid;
+			adapter.driver = get_registry_string(sub_key_handle, name, "Driver");
+			adapters.push_back(adapter);
+		}
+		else
+		{
+			pnp_adapter_callback(adapters, sub_key_handle, name, name);
+		}
+		size = sizeof(name);
+	}
+
+	RegCloseKey(sub_key_handle);
+}
+
+std::vector<PNP_ADAPTER> get_pnp_adapters(void)
+{
+	std::vector<PNP_ADAPTER> pnp_adapters;
+	HKEY hKey;
+	if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Enum\\PCI", 0, KEY_READ, &hKey) == ERROR_SUCCESS)
+	{
+		pnp_adapter_callback(pnp_adapters, hKey, "", "");
+		RegCloseKey(hKey);
+	}
+	return pnp_adapters;
 }
 
