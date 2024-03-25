@@ -204,6 +204,11 @@ BOOL cl::initialize(void)
 	return 1;
 }
 
+BOOL cl::is_driver(void)
+{
+	return controller->is_driver();
+}
+
 QWORD cl::get_physical_address(QWORD virtual_address)
 {
 	return controller->get_physical_address(virtual_address);

@@ -49,6 +49,7 @@ namespace cl
 		// initialize object
 		//
 		virtual BOOL  initialize(void) = 0;
+		virtual BOOL  is_driver(void) = 0;
 		virtual BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length) = 0;
 		virtual BOOL  read_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
 		virtual BOOL  write_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
@@ -106,6 +107,8 @@ typedef struct _PORT_DEVICE_INFO {
 namespace cl
 {
 	BOOL initialize(void);
+
+	BOOL is_driver(void);
 
 	QWORD get_physical_address(QWORD virtual_address);
 
