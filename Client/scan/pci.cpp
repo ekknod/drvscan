@@ -277,20 +277,11 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 			bme_enabled = 1;
 		}
 
-		//
-		// can be just used to identify xilinx FPGA
-		//
-		if (is_xilinx(dev.cfg))
-		{
-			port.blk = 0; port.blk_info = 3;
-		}
-
 		if (vendor_id(dev.cfg) == 0x10EE)
 		{
 			port.blk = 1; port.blk_info = 3;
 			break;
 		}
-
 
 		//
 		// hidden device, LUL.
