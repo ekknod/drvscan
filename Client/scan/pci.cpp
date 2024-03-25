@@ -52,7 +52,8 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	//
 	// xilinx test
 	//
-	for (auto &port : port_devices) if (!port.blk) check_xilinx(port);
+	if (advanced)
+		for (auto &port : port_devices) if (!port.blk) check_xilinx(port);
 
 	//
 	// check device config
@@ -193,17 +194,16 @@ static void scan::check_xilinx(PORT_DEVICE_INFO &port)
 			//
 			// test if timing approax xilinx timing
 			//
-
 			if (!cl::is_driver() && dev.cfg_time >= 16000 && dev.cfg_time <= 18000)
 			{
 				PRINT_BLUE("[%02d:%02d:%02d][%04X:%04X][EXPERIMENTAL test, don't take me serious] are you spoofed xilinx(?)\n",
-					port.self.bus,port.self.slot,port.self.func,
+					dev.bus,dev.slot,dev.func,
 					pci::vendor_id(dev.cfg), pci::device_id(dev.cfg));
 			}
 			else if (cl::is_driver() && dev.cfg_time >= 14000 && dev.cfg_time <= 15000)
 			{
 				PRINT_BLUE("[%02d:%02d:%02d][%04X:%04X][EXPERIMENTAL test, don't take me serious] are you spoofed xilinx(?)\n",
-					port.self.bus,port.self.slot,port.self.func,
+					dev.bus,dev.slot,dev.func,
 					pci::vendor_id(dev.cfg), pci::device_id(dev.cfg));
 			}
 		}
