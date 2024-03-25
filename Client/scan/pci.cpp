@@ -194,6 +194,14 @@ static void scan::check_xilinx(PORT_DEVICE_INFO &port)
 			//
 			// test if timing approax xilinx timing
 			//
+
+			/*
+			
+
+			this is never going to work at least like this,
+			because there are multiple factors. e.g. system.
+
+			
 			if (!cl::is_driver() && dev.cfg_time >= 16000 && dev.cfg_time <= 18000)
 			{
 				PRINT_BLUE("[%02d:%02d:%02d][%04X:%04X][EXPERIMENTAL test, don't take me serious] are you spoofed xilinx(?)\n",
@@ -205,7 +213,7 @@ static void scan::check_xilinx(PORT_DEVICE_INFO &port)
 				PRINT_BLUE("[%02d:%02d:%02d][%04X:%04X][EXPERIMENTAL test, don't take me serious] are you spoofed xilinx(?)\n",
 					dev.bus,dev.slot,dev.func,
 					pci::vendor_id(dev.cfg), pci::device_id(dev.cfg));
-			}
+			}*/
 		}
 	}
 }
