@@ -12,7 +12,6 @@ public:
 	clint()  {}
 	~clint() {}
 	BOOL  initialize(void);
-	BOOL  is_driver() { return 0; }
 	BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length);
 	BOOL  read_mmio(QWORD address, PVOID buffer, QWORD length);
 	BOOL  write_mmio(QWORD address, PVOID buffer, QWORD length);

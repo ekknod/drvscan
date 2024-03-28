@@ -204,11 +204,6 @@ BOOL cl::initialize(void)
 	return 1;
 }
 
-BOOL cl::is_driver(void)
-{
-	return controller->is_driver();
-}
-
 QWORD cl::get_physical_address(QWORD virtual_address)
 {
 	return controller->get_physical_address(virtual_address);
@@ -413,35 +408,34 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 		for (unsigned char func = 0; func < 8; func++)
 		{
 			QWORD entry = physical_address + (func << 12l);
-
 			if (class_code)
 			{
-				DWORD cd = 0;
-				((unsigned char*)&cd)[0] = cl::io::read<BYTE>(entry + 0x09 + 0);
-				((unsigned char*)&cd)[1] = cl::io::read<BYTE>(entry + 0x09 + 1);
-				((unsigned char*)&cd)[2] = cl::io::read<BYTE>(entry + 0x09 + 2);
-
+				DWORD cd = cl::io::read<BYTE>(entry + 0x09 + 2) << 16 |
+					cl::io::read<BYTE>(entry + 0x09 + 1) << 8 |
+					cl::io::read<BYTE>(entry + 0x09 + 0);
 				if (class_code != cd)
 				{
 					continue;
 				}
 			}
-			int invalid_cnt = 0;
-			for (int i = 0; i < 8; i++)
+			else
 			{
-				if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
+				int invalid_cnt = 0;
+				for (int i = 0; i < 8; i++)
 				{
-					invalid_cnt++;
+					if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
+					{
+						invalid_cnt++;
+					}
 				}
-			}
-
-			if (invalid_cnt == 8)
-			{
-				if (func == 0)
+				if (invalid_cnt == 8)
 				{
-					break;
+					if (func == 0)
+					{
+						break;
+					}
+					continue;
 				}
-				continue;
 			}
 
 			DEVICE_INFO device;
@@ -450,25 +444,30 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 			device.func = func;
 			device.physical_address = entry;
 
-			UINT64 current_ms = std::chrono::duration_cast<std::chrono::microseconds>(
-				std::chrono::high_resolution_clock::now().time_since_epoch())
-				.count();
 
-			//
-			// do not even ask... intel driver problem
-			//
-			for (int i = 0; i < sizeof(device.cfg); i+= 2)
+			WORD optimize_ptr = 0x100 + 2;
+			WORD max_size     = sizeof(device.cfg);
+			for (int i = 0; i < max_size; i+= 2)
 			{
 				*(WORD*)((PBYTE)device.cfg + i) = cl::io::read<WORD>(entry + i);
+				if (i >= optimize_ptr)
+				{
+					optimize_ptr = GET_BITS(*(WORD*)((PBYTE)device.cfg + optimize_ptr), 15, 4);
+					if (optimize_ptr)
+					{
+						optimize_ptr += 2;
+					}
+					else
+					{
+						optimize_ptr = 0x1000;   // disable
+						max_size     = i + 0x30; // max data left 0x30
+						if (max_size > sizeof(device.cfg))
+						{
+							max_size = sizeof(device.cfg);
+						}
+					}
+				}
 			}
-
-
-			current_ms = std::chrono::duration_cast<std::chrono::microseconds>(
-				std::chrono::high_resolution_clock::now().time_since_epoch())
-				.count() - current_ms;
-
-			device.cfg_time = current_ms;
-
 
 			devices.push_back(device);
 		}

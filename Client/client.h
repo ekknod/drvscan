@@ -49,7 +49,6 @@ namespace cl
 		// initialize object
 		//
 		virtual BOOL  initialize(void) = 0;
-		virtual BOOL  is_driver(void) = 0;
 		virtual BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length) = 0;
 		virtual BOOL  read_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
 		virtual BOOL  write_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
@@ -81,7 +80,6 @@ typedef struct {
 
 typedef struct _DEVICE_INFO {
 	unsigned char  bus, slot, func, cfg[0x1000];
-	QWORD cfg_time;
 	QWORD physical_address;
 } DEVICE_INFO;
 
