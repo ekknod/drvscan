@@ -530,6 +530,8 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 {
 	using namespace pci;
 
+	unsigned char prevportbus=0;
+
 	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_bridge_devices();
 	std::vector<PORT_DEVICE_INFO> port_devices;
 	while (1)
@@ -539,6 +541,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		{
 			if (!is_bridge_device(dev))
 			{
+			not_bridge:
 				for (auto &port : port_devices)
 				{
 					if (port.self.bus == dev.p.bus &&
@@ -553,7 +556,12 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 			}
 			else
 			{
+				if (prevportbus > dev.d.bus)
+				{
+					goto not_bridge;
+				}
 				bridge_devices.push_back(dev);
+				prevportbus = dev.d.bus;
 			}
 		}
 
