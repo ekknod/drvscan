@@ -485,6 +485,15 @@ static std::vector<ROOT_DEVICE_INFO> get_root_bridge_devices(void)
 
 static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
 {
+	//
+	// skip invalid ports
+	//
+	if (bus > 31) return {};
+
+	//
+	// skip root ports
+	//
+	if (bus < 1)  return {};
 	return get_devices_by_class(bus, 0);
 }
 
