@@ -488,7 +488,7 @@ static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
 	//
 	// skip invalid ports
 	//
-	if (bus > 31) return {};
+	if (bus > 255) return {};
 
 	//
 	// skip root ports
