@@ -497,7 +497,7 @@ static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
 	return get_devices_by_class(bus, 0);
 }
 
-static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_INFO> &devices)
+static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_INFO> &devices, std::vector<BYTE> &secondary_bus)
 {
 	using namespace pci;
 
@@ -511,6 +511,22 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 		{
 			continue;
 		}
+
+		BOOL found=0;
+		for (auto &sec : secondary_bus)
+		{
+			if (sec == type1::secondary_bus_number(entry.d.cfg))
+			{
+				found = 1;
+				break;
+			}
+		}
+
+		if (found)
+		{
+			continue;
+		}
+
 		BYTE max_bus = type1::subordinate_bus_number(entry.d.cfg);
 		auto bridge_devices = get_devices_by_bus(type1::secondary_bus_number(entry.d.cfg));
 
@@ -522,6 +538,8 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 			}
 			devs.push_back({bridge, entry.d});
 		}
+
+		secondary_bus.push_back(type1::secondary_bus_number(entry.d.cfg));
 	}
 	return devs;
 }
@@ -530,7 +548,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 {
 	using namespace pci;
 
-	unsigned char prevportbus=0;
+	std::vector<BYTE> portbus_list;
 
 	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_bridge_devices();
 	std::vector<PORT_DEVICE_INFO> port_devices;
@@ -541,7 +559,6 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		{
 			if (!is_bridge_device(dev))
 			{
-			not_bridge:
 				for (auto &port : port_devices)
 				{
 					if (port.self.bus == dev.p.bus &&
@@ -556,19 +573,14 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 			}
 			else
 			{
-				if (prevportbus > dev.d.bus)
-				{
-					goto not_bridge;
-				}
 				bridge_devices.push_back(dev);
-				prevportbus = dev.d.bus;
 			}
 		}
 
 		//
 		// get new devices
 		//
-		root_devices = get_inner_devices(root_devices);
+		root_devices = get_inner_devices(root_devices, portbus_list);
 		if (!root_devices.size())
 		{
 			//
