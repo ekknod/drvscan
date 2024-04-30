@@ -27,6 +27,27 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 
 	std::vector<PORT_DEVICE_INFO> port_devices = cl::pci::get_port_devices();
 
+
+	//
+	// duplicated port
+	//
+	std::vector<BYTE> nums;
+	for (auto &port : port_devices)
+	{
+		BYTE secondary_bus = pci::type1::secondary_bus_number( port.self.cfg ) ;
+
+		for (auto &num : nums)
+		{
+			if (num == secondary_bus)
+			{
+				port.blk = 2;
+				port.blk_info = 4;
+			}
+		}
+
+		nums.push_back(secondary_bus);
+	}
+
 	if (dump_cfg)
 	{
 		dumpcfg(port_devices);
@@ -543,7 +564,7 @@ inline const char *blkinfo(unsigned char info)
 	case 1:  return "pcileech";
 	case 2:  return "bus master off";
 	case 3:  return "xilinx development card";
-	case 4:  return "invalid bridge";
+	case 4:  return "invalid port";
 	case 5:  return "hidden device";
 	case 6:  return "invalid cap reporting";
 	case 7:  return "nulled capabilities";
