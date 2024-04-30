@@ -497,7 +497,11 @@ static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
 	return get_devices_by_class(bus, 0);
 }
 
-static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_INFO> &devices, std::vector<BYTE> &secondary_bus)
+static std::vector<ROOT_DEVICE_INFO> get_inner_devices(
+	std::vector<ROOT_DEVICE_INFO> &devices,
+	std::vector<BYTE> &secondary_bus,
+	ROOT_DEVICE_INFO *fake_out
+	)
 {
 	using namespace pci;
 
@@ -524,6 +528,7 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 
 		if (found)
 		{
+			*fake_out = entry;
 			continue;
 		}
 
@@ -580,7 +585,23 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		//
 		// get new devices
 		//
-		root_devices = get_inner_devices(root_devices, portbus_list);
+		ROOT_DEVICE_INFO fake_out{};
+		root_devices = get_inner_devices(root_devices, portbus_list, &fake_out);
+
+		if (is_bridge_device(fake_out))
+		{
+			for (auto &port : port_devices)
+			{
+				if (port.self.bus == fake_out.p.bus &&
+					port.self.slot == fake_out.p.slot &&
+					port.self.func == fake_out.p.func
+					)
+				{
+					port.devices.push_back(fake_out.d);
+				}
+			}
+		}
+
 		if (!root_devices.size())
 		{
 			//
