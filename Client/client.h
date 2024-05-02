@@ -84,12 +84,12 @@ typedef struct _DEVICE_INFO {
 } DEVICE_INFO;
 
 typedef struct _ROOT_DEVICE_INFO {
-	DEVICE_INFO   d; // device
-	DEVICE_INFO   p; // parent
+	DEVICE_INFO   self;   // device
+	DEVICE_INFO   parent; // parent
 } ROOT_DEVICE_INFO;
 
 typedef struct _PORT_DEVICE_INFO {
-	unsigned char                 blk;       // info is port is blocked
+	unsigned char                 blk;       // info is port blocked
 	unsigned char                 blk_info;  // reason for blocking
 	DEVICE_INFO                   self;      // port device
 	std::vector<DEVICE_INFO>      devices;   // devices in port
@@ -105,8 +105,6 @@ typedef struct _PORT_DEVICE_INFO {
 namespace cl
 {
 	BOOL initialize(void);
-
-	BOOL is_driver(void);
 
 	QWORD get_physical_address(QWORD virtual_address);
 

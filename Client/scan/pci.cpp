@@ -27,27 +27,6 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 
 	std::vector<PORT_DEVICE_INFO> port_devices = cl::pci::get_port_devices();
 
-
-	//
-	// duplicated port
-	//
-	std::vector<BYTE> nums;
-	for (auto &port : port_devices)
-	{
-		BYTE secondary_bus = pci::type1::secondary_bus_number( port.self.cfg ) ;
-
-		for (auto &num : nums)
-		{
-			if (num == secondary_bus)
-			{
-				port.blk = 2;
-				port.blk_info = 4;
-			}
-		}
-
-		nums.push_back(secondary_bus);
-	}
-
 	if (dump_cfg)
 	{
 		dumpcfg(port_devices);
@@ -58,6 +37,51 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	{
 		dumpbar(port_devices);
 		return;
+	}
+
+	//
+	// duplicated ports
+	//
+	{
+		std::vector<BYTE> nums;
+		for (auto &port : port_devices)
+		{
+			BYTE secondary_bus = pci::type1::secondary_bus_number( port.self.cfg ) ;
+
+			for (auto &num : nums)
+			{
+				if (num == secondary_bus)
+				{
+					port.blk = 2;
+					port.blk_info = 4;
+				}
+			}
+
+			nums.push_back(secondary_bus);
+		}
+	}
+
+	//
+	// duplicated port devices
+	//
+	{
+		for (auto &port : port_devices)
+		{
+			std::vector<DWORD> nums;
+			for (auto &dev : port.devices)
+			{
+				DWORD location = (dev.bus << 16) | (dev.slot << 8) | dev.func;
+				for (auto &num : nums)
+				{
+					if (location == num)
+					{
+						port.blk = 2;
+						port.blk_info = 4;
+					}
+				}
+				nums.push_back(location);
+			}
+		}
 	}
 
 	//
@@ -182,7 +206,7 @@ static void scan::check_hidden(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> 
 				//
 				// check if device is bus mastering without driver
 				//
-				if (GET_BIT(pci::command(dev.cfg), 2) && !pnp.driver.size())
+				if (GET_BIT(pci::command(dev.cfg), 2) && !pnp.driver.size() && port.devices.size() == 1)
 				{
 					port.blk = 2;
 					port.blk_info = 19;

@@ -378,7 +378,7 @@ static BOOL is_bridge_device(ROOT_DEVICE_INFO& dev)
 	//
 	// validate if its real bridge
 	//
-	if (class_code(dev.d.cfg) != 0x060400)
+	if (class_code(dev.self.cfg) != 0x060400)
 	{
 		return 0;
 	}
@@ -386,7 +386,7 @@ static BOOL is_bridge_device(ROOT_DEVICE_INFO& dev)
 	//
 	// type0 endpoint device
 	//
-	if (GET_BITS(header_type(dev.d.cfg), 6, 0) == 0)
+	if (GET_BITS(header_type(dev.self.cfg), 6, 0) == 0)
 	{
 		return 0;
 	}
@@ -512,8 +512,8 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 			continue;
 		}
 
-		BYTE max_bus = type1::subordinate_bus_number(entry.d.cfg);
-		auto bridge_devices = get_devices_by_bus(type1::secondary_bus_number(entry.d.cfg));
+		BYTE max_bus = type1::subordinate_bus_number(entry.self.cfg);
+		auto bridge_devices = get_devices_by_bus(type1::secondary_bus_number(entry.self.cfg));
 
 		for (auto &bridge : bridge_devices)
 		{
@@ -521,7 +521,7 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 			{
 				continue;
 			}
-			devs.push_back({bridge, entry.d});
+			devs.push_back({bridge, entry.self});
 		}
 	}
 	return devs;
@@ -542,12 +542,12 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 			{
 				for (auto &port : port_devices)
 				{
-					if (port.self.bus == dev.p.bus &&
-						port.self.slot == dev.p.slot &&
-						port.self.func == dev.p.func
+					if (port.self.bus == dev.parent.bus &&
+						port.self.slot == dev.parent.slot &&
+						port.self.func == dev.parent.func
 						)
 					{
-						port.devices.push_back(dev.d);
+						port.devices.push_back(dev.self);
 						break;
 					}
 				}
@@ -564,6 +564,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		root_devices = get_inner_devices(root_devices);
 		if (!root_devices.size())
 		{
+
 			//
 			// append new fake devices
 			//
@@ -571,12 +572,12 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 			{
 				for (auto &port : port_devices)
 				{
-					if (port.self.bus == dev.p.bus &&
-						port.self.slot == dev.p.slot &&
-						port.self.func == dev.p.func
+					if (port.self.bus == dev.parent.bus &&
+						port.self.slot == dev.parent.slot &&
+						port.self.func == dev.parent.func
 						)
 					{
-						port.devices.push_back(dev.d);
+						port.devices.push_back(dev.self);
 						break;
 					}
 				}
@@ -590,7 +591,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 			//
 			for (auto &dev : bridge_devices)
 			{
-				port_devices.push_back({0, 0, dev.d});
+				port_devices.push_back({0, 0, dev.self});
 			}
 		}
 	}
