@@ -588,9 +588,9 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		//
 		if (port.self.bus != port.self.cfg.bus_number())
 		{
-			ports.push_back(port);
 			port.blk = 2;
 			port.blk_info = 4;
+			ports.push_back(port);
 			continue;
 		}
 
