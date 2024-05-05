@@ -371,22 +371,14 @@ BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 	return io::write(device + offset, buffer, size);
 }
 
-static BOOL is_bridge_device(ROOT_DEVICE_INFO& dev)
+static BOOL is_port_device(ROOT_DEVICE_INFO& dev)
 {
-	using namespace pci;
-
-	//
-	// validate if its real bridge
-	//
-	if (class_code(dev.self.cfg) != 0x060400)
+	if (dev.self.cfg.class_code() != 0x060400)
 	{
 		return 0;
 	}
 
-	//
-	// type0 endpoint device
-	//
-	if (GET_BITS(header_type(dev.self.cfg), 6, 0) == 0)
+	if (dev.self.cfg.header().type() == 0)
 	{
 		return 0;
 	}
@@ -444,15 +436,14 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 			device.func = func;
 			device.physical_address = entry;
 
-
 			WORD optimize_ptr = 0x100 + 2;
-			WORD max_size     = sizeof(device.cfg);
+			WORD max_size     = sizeof(device.cfg.raw);
 			for (int i = 0; i < max_size; i+= 2)
 			{
-				*(WORD*)((PBYTE)device.cfg + i) = cl::io::read<WORD>(entry + i);
+				*(WORD*)((PBYTE)device.cfg.raw + i) = cl::io::read<WORD>(entry + i);
 				if (i >= optimize_ptr)
 				{
-					optimize_ptr = GET_BITS(*(WORD*)((PBYTE)device.cfg + optimize_ptr), 15, 4);
+					optimize_ptr = GET_BITS(*(WORD*)((PBYTE)device.cfg.raw + optimize_ptr), 15, 4);
 					if (optimize_ptr)
 					{
 						optimize_ptr += 2;
@@ -461,9 +452,9 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 					{
 						optimize_ptr = 0x1000;   // disable
 						max_size     = i + 0x30; // max data left 0x30
-						if (max_size > sizeof(device.cfg))
+						if (max_size > sizeof(device.cfg.raw))
 						{
-							max_size = sizeof(device.cfg);
+							max_size = sizeof(device.cfg.raw);
 						}
 					}
 				}
@@ -499,22 +490,17 @@ static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
 
 static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_INFO> &devices)
 {
-	using namespace pci;
-
-
 	std::vector<ROOT_DEVICE_INFO> devs;
 
 
 	for (auto &entry : devices)
 	{
-		if (!is_bridge_device(entry))
+		if (!is_port_device(entry))
 		{
 			continue;
 		}
-
-		BYTE max_bus = type1::subordinate_bus_number(entry.self.cfg);
-		auto bridge_devices = get_devices_by_bus(type1::secondary_bus_number(entry.self.cfg));
-
+		BYTE max_bus = entry.self.cfg.subordinate_bus();
+		auto bridge_devices = get_devices_by_bus(entry.self.cfg.secondary_bus());
 		for (auto &bridge : bridge_devices)
 		{
 			if (bridge.bus > max_bus)
@@ -529,8 +515,6 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 
 std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 {
-	using namespace pci;
-
 	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_bridge_devices();
 	std::vector<PORT_DEVICE_INFO> port_devices;
 	while (1)
@@ -538,7 +522,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		std::vector<ROOT_DEVICE_INFO> bridge_devices;
 		for (auto &dev : root_devices)
 		{
-			if (!is_bridge_device(dev))
+			if (!is_port_device(dev))
 			{
 				for (auto &port : port_devices)
 				{

@@ -131,344 +131,514 @@ namespace pe
 	}
 }
 
-namespace pci
-{
-	inline WORD vendor_id(PVOID cfg)         { return *(WORD*)((PBYTE)cfg + 0x00); }
-	inline WORD device_id(PVOID cfg)         { return *(WORD*)((PBYTE)cfg + 0x02); }
-	inline WORD command(PVOID cfg)           { return *(WORD*)((PBYTE)cfg + 0x04); }
-	inline WORD status(PVOID cfg)            { return *(WORD*)((PBYTE)cfg + 0x04 + 0x02); }
-	inline BYTE revision_id(PVOID cfg)       { return *(BYTE*)((PBYTE)cfg + 0x08); }
-	inline DWORD* bar(PVOID cfg)             { return (DWORD*)((PBYTE)cfg + 0x10); }
-	inline BYTE header_type(PVOID cfg)       { return *(BYTE*)((PBYTE)cfg + 0x0E); }
 
-	//
-	// bridge stuff
-	//
-	namespace type1
-	{
-		inline BYTE bus_number(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x18); }
-		inline BYTE secondary_bus_number(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x18 + 1); }
-		inline BYTE subordinate_bus_number(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x18 + 2); }
-	}
 
-	//
-	// printf("%06X\n", classcode);
-	//
-	inline DWORD class_code(PVOID cfg)
-	{
-		BYTE *cc = (BYTE*)((PBYTE)cfg + 0x09);
+namespace config {
+	const BYTE MAX_CAPABILITIES = 0x16;
+	const BYTE MAX_EXTENDED_CAPABILITIES = 0x2F;
 
-		DWORD dw = 0;
-		((unsigned char*)&dw)[0] = cc[0];
-		((unsigned char*)&dw)[1] = cc[1];
-		((unsigned char*)&dw)[2] = cc[2];
+	namespace pci {
 
-		return dw;
-	}
+		struct Command {
+			WORD raw;
+			BYTE memory_space_enable( ) { return GET_BIT(raw, 1); };
+			BYTE bus_master_enable( ) { return GET_BIT(raw, 2); };
+			BYTE special_cycle_enable( ) { return GET_BIT(raw, 3); };
+			BYTE memory_write( ) { return GET_BIT(raw, 4); };
+			BYTE vga_enable( ) { return GET_BIT(raw, 5); };
+			BYTE parity_err_enable( ) { return GET_BIT(raw, 6); };
+			BYTE serr_enable( ) { return GET_BIT(raw, 8); };
+			BYTE b2b_enable( ) { return GET_BIT(raw, 9); };
+			BYTE interrupt_disable( ) { return GET_BIT(raw, 10); };
+		};
 
-	inline WORD subsys_vendor_id(PVOID cfg) { return *(WORD*)((PBYTE)cfg + 0x2C); }
-	inline WORD subsys_id(PVOID cfg) { return *(WORD*)((PBYTE)cfg + 0x2C + 0x02); }
-	inline BYTE capabilities_ptr(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x34); }
-	inline BYTE interrupt_line(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x3C); }
-	inline BYTE interrupt_pin(PVOID cfg) { return *(BYTE*)((PBYTE)cfg + 0x3C+1); }
+		struct Status {
+			WORD raw;
+			BYTE parity_error( ) { return GET_BIT(raw, 15); }
+			BYTE signaled_error( ) { return GET_BIT(raw, 14); }
+			BYTE master_abort( ) { return GET_BIT(raw, 13); }
+			BYTE target_abort( ) { return GET_BIT(raw, 12); }
+			BYTE signaled_abort( ) { return GET_BIT(raw, 11); }
+			BYTE devsel_timing( ) { return GET_BITS(raw, 10, 9); }
+			BYTE master_parity_error( ) { return GET_BIT(raw, 8); }
+			BYTE fast_b2b_capable( ) { return GET_BIT(raw, 7); }
+			BYTE c66_capable( ) { return GET_BIT(raw, 5); }
+			BYTE capabilities_list( ) { return GET_BIT(raw, 4); }
+			BYTE interrupt_status( ) { return GET_BIT(raw, 3); }
+		};
 
-	namespace pm
-	{
-		namespace cap
-		{
-		inline BYTE pm_cap_on(PVOID pm) { return ((DWORD*)pm)[0] != 0; }
-		inline BYTE pm_cap_next_ptr(PVOID pm) { return ((unsigned char*)(pm))[1]; }
-		inline BYTE pm_cap_id(PVOID pm) { return GET_BITS(((DWORD*)pm)[0], 7, 0); }
-		inline BYTE pm_cap_version(PVOID pm) { return GET_BITS(((DWORD*)pm)[0], 18, 16); }
-		inline BYTE pm_cap_pme_clock(PVOID pm) { return GET_BIT(((DWORD*)pm)[0], 19); }
-		inline BYTE pm_cap_rsvd_04(PVOID pm) { return GET_BIT(((DWORD*)pm)[0], 20); }
-		inline BYTE pm_cap_dsi(PVOID pm) { return GET_BIT(((DWORD*)pm)[0], 21); }
-		inline BYTE pm_cap_auxcurrent(PVOID pm) { return GET_BITS(((DWORD*)pm)[0], 24, 22); }
-		inline BYTE pm_cap_d1support(PVOID pm) { return GET_BIT(((DWORD*)pm)[0], 25); }
-		inline BYTE pm_cap_d2support(PVOID pm) { return GET_BIT(((DWORD*)pm)[0], 26); }
-		inline BYTE pm_cap_pmesupport(PVOID pm) { return GET_BITS(((DWORD*)pm)[0], 31, 27); }
-		}
+		struct HeaderType {
+			BYTE raw;
+			BYTE multifunc_device() { return GET_BIT(raw, 7); }
 
-		namespace csr
-		{
-		inline BYTE pm_csr_nosoftrst(PVOID pm) { return GET_BITS(((DWORD*)pm)[1], 3, 2)!=0; }
-		inline BYTE pm_csr_bpccen(PVOID pm) { return GET_BIT(((DWORD*)pm)[1], 23); }
-		inline BYTE pm_csr_b2b3s(PVOID pm) { return GET_BIT(((DWORD*)pm)[1], 22); }
-
-		inline BYTE pm_csr_power_state(PVOID pm) { return GET_BITS(((DWORD*)pm)[1], 1, 0); }
-		inline BYTE pm_csr_dynamic_data(PVOID pm) { return GET_BIT(((DWORD*)pm)[1], 4); }
-		inline BYTE pm_csr_reserved(PVOID pm) { return GET_BITS(((DWORD*)pm)[1], 7, 5); }
-		inline BYTE pm_csr_pme_enabled(PVOID pm) { return GET_BIT(((DWORD*)pm)[1], 8); }
-		inline BYTE pm_csr_data_select(PVOID pm) { return GET_BITS(((DWORD*)pm)[1], 12, 9); }
-		inline BYTE pm_csr_data_scale(PVOID pm) { return GET_BITS(((DWORD*)pm)[1], 14, 13); }
-		inline BYTE pm_csr_pme_status(PVOID pm) { return GET_BIT(((DWORD*)pm)[1], 15); }
-		}
-	}
-
-	namespace msi
-	{
-		namespace cap
-		{
-		inline BYTE msi_cap_on(PVOID msi) { return ((DWORD*)msi)[0] != 0; }
-		inline BYTE msi_cap_nextptr(PVOID msi) { return ((unsigned char*)(msi))[1]; }
-		inline BYTE msi_cap_id(PVOID msi) { return GET_BITS(((DWORD*)msi)[0], 7, 0); }
-		inline BYTE msi_cap_multimsgcap(PVOID msi) { return GET_BITS(((DWORD*)msi)[0], 19, 17); }
-		inline BYTE msi_cap_multimsg_extension(PVOID msi) { return GET_BITS(((DWORD*)msi)[0], 22, 20); }
-		inline BYTE msi_cap_64_bit_addr_capable(PVOID msi) { return GET_BIT(((DWORD*)msi)[0], 23); }
-		inline BYTE msi_cap_per_vector_masking_capable(PVOID msi) { return GET_BIT(((DWORD*)msi)[0], 24); }
-		}
-	}
-
-	namespace pcie
-	{
-		namespace cap
-		{
-		inline BYTE pcie_cap_on(PVOID pcie) { return ((DWORD*)pcie)[0] != 0; }
-		inline BYTE pcie_cap_capability_id(PVOID pcie) { return GET_BITS(((DWORD*)pcie)[0], 7, 0); }
-		inline BYTE pcie_cap_nextptr(PVOID pcie) { return GET_BITS(((DWORD*)pcie)[0], 15, 8); }
-		inline BYTE pcie_cap_capability_version(PVOID pcie) { return GET_BITS(((DWORD*)pcie)[0], 19, 16); }
-		inline BYTE pcie_cap_device_port_type(PVOID pcie) { return GET_BITS(((DWORD*)pcie)[0], 23, 20); }
-		inline BYTE pcie_cap_slot_implemented(PVOID pcie) { return GET_BIT(((DWORD*)pcie)[0], 24); }
-		inline BYTE pcie_cap_interrupt_message_number(PVOID pcie) { return GET_BITS(((DWORD*)pcie)[0], 29,25); }
-		}
-	}
-
-	namespace dev
-	{
-		namespace cap
-		{
-		inline BYTE dev_cap_max_payload_supported(PVOID dev) { return GET_BITS(((DWORD*)dev)[0], 2, 0); }
-		inline BYTE dev_cap_phantom_functions_support(PVOID dev) { return GET_BITS(((DWORD*)dev)[0], 4, 3); }
-		inline BYTE dev_cap_ext_tag_supported(PVOID dev) { return GET_BIT(((DWORD*)dev)[0], 5); }
-		inline BYTE dev_cap_endpoint_l0s_latency(PVOID dev) { return GET_BITS(((DWORD*)dev)[0], 8, 6); }
-		inline BYTE dev_cap_endpoint_l1_latency(PVOID dev) { return GET_BITS(((DWORD*)dev)[0], 11, 9); }
-		inline BYTE dev_cap_role_based_error(PVOID dev) { return GET_BIT(((DWORD*)dev)[0], 15); }
-		inline BYTE dev_cap_enable_slot_pwr_limit_value(PVOID dev) { return GET_BITS(((DWORD*)dev)[0], 25, 18); }
-		inline BYTE dev_cap_enable_slot_pwr_limit_scale(PVOID dev) { return GET_BITS(((DWORD*)dev)[0], 27, 26); }
-		inline BYTE dev_cap_function_level_reset_capable(PVOID dev) { return GET_BIT(((DWORD*)dev)[0], 28); }
-		}
-		namespace ctrl
-		{
-		inline BYTE dev_ctrl_corr_err_reporting(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 0); }
-		inline BYTE dev_ctrl_non_fatal_reporting(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 1); }
-		inline BYTE dev_ctrl_fatal_err_reporting(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 2); }
-		inline BYTE dev_ctrl_ur_reporting(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 3); }
-		inline BYTE dev_ctrl_relaxed_ordering(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 4); }
-		inline BYTE dev_ctrl_max_payload_size(PVOID dev) { return GET_BITS(((DWORD*)dev)[1], 7, 5); }
-		inline BYTE dev_ctrl_ext_tag_default(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 8); }
-		inline BYTE dev_ctrl_phantom_func_enable(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 9); }
-		inline BYTE dev_ctrl_aux_power_enable(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 10); }
-		inline BYTE dev_ctrl_enable_no_snoop(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 11); }
-		inline BYTE dev_ctrl_max_read_request_size(PVOID dev) { return GET_BITS(((DWORD*)dev)[1], 14, 12); }
-		inline BYTE dev_ctrl_cfg_retry_status_enable(PVOID dev) { return GET_BIT(((DWORD*)dev)[1], 15); }
-		}
-
-		namespace cap2
-		{
-			inline BYTE cpl_timeout_ranges_supported(PVOID dev) { return GET_BITS(((DWORD*)dev)[8], 3, 0); }
-			inline BYTE cpl_timeout_disable_supported(PVOID dev) { return GET_BIT(((DWORD*)dev)[8], 4); }
-		}
-
-		namespace ctrl2
-		{
-			inline BYTE completiontimeoutvalue(PVOID dev) { return GET_BITS(((DWORD*)dev)[9], 3, 0); }
-			inline BYTE completiontimeoutdisable(PVOID dev) { return GET_BIT(((DWORD*)dev)[9], 4); }
-		}
-	}
-
-	namespace link
-	{
-		namespace cap
-		{
-		inline BYTE link_cap_max_link_speed(PVOID link)         { return GET_BITS(((DWORD*)link)[0], 3, 0); }
-		inline BYTE link_cap_max_link_width(PVOID link)         { return GET_BITS(((DWORD*)link)[0], 9, 4); }
-		inline BYTE link_cap_aspm_support(PVOID link)           { return GET_BITS(((DWORD*)link)[0], 11, 10); }
-		inline BYTE link_cap_l0s_exit_latency(PVOID link)       { return GET_BITS(((DWORD*)link)[0], 14, 12); }
-		inline BYTE link_cap_l1_exit_latency(PVOID link)        { return GET_BITS(((DWORD*)link)[0], 17, 15); }
-		inline BYTE link_cap_clock_power_management(PVOID link) { return GET_BITS(((DWORD*)link)[0], 19, 18); }
-		inline BYTE link_cap_aspm_optionality(PVOID link)       { return GET_BIT(((DWORD*)link)[0], 22); }
-		inline BYTE link_cap_rsvd_23(PVOID link)                { return GET_BITS(((DWORD*)link)[0], 23, 19); }
-		}
-
-		namespace ctrl
-		{
-		inline BYTE link_control_rcb(PVOID link)                { return GET_BIT(((DWORD*)link)[1], 3); }
-		}
-
-		namespace status
-		{
-		inline PVOID __status(PVOID link) { return (PVOID)((PBYTE)link+sizeof(DWORD)+sizeof(WORD)); }
-
-		typedef union _PCI_EXPRESS_LINK_STATUS_REGISTER {
-
-		    struct {
-
-			USHORT LinkSpeed:4;
-			USHORT LinkWidth:6;
-			USHORT Undefined:1;
-			USHORT LinkTraining:1;
-			USHORT SlotClockConfig:1;
-			USHORT DataLinkLayerActive:1;
-			USHORT Rsvd:2;
-		    } DUMMYSTRUCTNAME;
-
-		    USHORT AsUSHORT;
-
-		} PCI_EXPRESS_LINK_STATUS_REGISTER, *PPCI_EXPRESS_LINK_STATUS_REGISTER;
-
-		inline WORD link_status_slot_clock_config(PVOID link)
-		{
-			PVOID link_status = __status(link);
-			return ((PPCI_EXPRESS_LINK_STATUS_REGISTER)link_status)->SlotClockConfig;
-		}
-
-		inline WORD link_speed(PVOID link)
-		{
-			PVOID link_status = __status(link);
-			return ((PPCI_EXPRESS_LINK_STATUS_REGISTER)link_status)->LinkSpeed;
-		}
-
-		inline WORD link_width(PVOID link)
-		{
-			PVOID link_status = __status(link);
-			return ((PPCI_EXPRESS_LINK_STATUS_REGISTER)link_status)->LinkWidth;
-		}
-
-		}
-
-		namespace cap2
-		{
-			inline BYTE linkspeedssupported(PVOID link) { return GET_BITS(((DWORD*)link)[8], 3, 1); }
-		}
-
-		namespace ctrl2
-		{
-		inline BYTE link_ctrl2_target_link_speed(PVOID link) { return GET_BITS(((DWORD*)link)[9], 3, 0); }
-		inline BYTE entercompliance(PVOID link) { return GET_BIT(((DWORD*)link)[9], 4); }
-		inline BYTE link_ctrl2_hw_autonomous_speed_disable(PVOID link) { return GET_BIT(((DWORD*)link)[9], 5); }
-		inline BYTE link_ctrl2_deemphasis(PVOID link) { return GET_BIT(((DWORD*)link)[9], 6); }
-		inline BYTE transmitmargin(PVOID link) { return GET_BITS(((DWORD*)link)[9], 9, 7); }
-		inline BYTE entermodifiedcompliance(PVOID link) { return GET_BIT(((DWORD*)link)[9], 10); }
-		inline BYTE compliancesos(PVOID link) { return GET_BIT(((DWORD*)link)[9], 11); }
-		}
-
-		namespace status2
-		{
-		inline BYTE deemphasis(PVOID link) { return GET_BITS(((DWORD*)link)[9], 15, 12); }
-		inline BYTE deemphasislvl(PVOID link) { return GET_BIT(((DWORD*)link)[9], 16); }
-		inline BYTE equalizationcomplete(PVOID link) { return GET_BIT(((DWORD*)link)[9], 17); }
-		inline BYTE equalizationphase1successful(PVOID link) { return GET_BIT(((DWORD*)link)[9], 18); }
-		inline BYTE equalizationphase2successful(PVOID link) { return GET_BIT(((DWORD*)link)[9], 19); }
-		inline BYTE equalizationphase3successful(PVOID link) { return GET_BIT(((DWORD*)link)[9], 20); }
-		inline BYTE linkequalizationrequest(PVOID link) { return GET_BIT(((DWORD*)link)[9], 21); }
-		}
-	}
-
-	namespace dsn
-	{
-		inline BYTE dsn_cap_on(PVOID dsn) { return *(DWORD*)(dsn) != 0; }
-		inline WORD dsn_cap_nextptr(PVOID dsn) { return GET_BITS(((WORD*)dsn)[1], 15, 4); }
-		inline BYTE dsn_cap_id(PVOID dsn) { return *(BYTE*)(dsn) ; }
-	}
-
-	inline PVOID get_capabilities(PVOID cfg)
-	{
-		if (capabilities_ptr(cfg) == 0)
-		{
-			return 0;
-		}
-		return (PVOID)((PBYTE)cfg + capabilities_ptr(cfg));
-	}
-
-	inline PVOID get_capability_by_id(PVOID cfg, BYTE id)
-	{
-		PVOID cap_ptr = get_capabilities(cfg);
-		if (cap_ptr == 0)
-		{
-			return 0;
-		}
-		while (1)
-		{
 			//
-			// capability id
+			// type0   = endpoint
+			// type1   = port
+			// type2   = card reader
+			// type??? = invalid
 			//
-			if (GET_BITS(((DWORD*)cap_ptr)[0], 7, 0) == id)
-			{
-				break;
-			}
+			BYTE type() { return GET_BITS(raw, 6, 0); }
+		};
+
+		struct CapHdr {
+			WORD raw;
+			BYTE cap_id() { return GET_BITS(raw, 7, 0); }
+
 			//
-			// next ptr
+			// type0   = endpoint
+			// type1   = port
+			// type2   = card reader
+			// type??? = invalid
 			//
-			if (((unsigned char*)(cap_ptr))[1] == 0)
+			BYTE cap_next_ptr() { return GET_BITS(raw, 15, 8); }
+		};
+
+		struct CapExtHdr {
+			DWORD raw;
+			BYTE cap_id() { return GET_BITS(raw, 7, 0); }
+
+			//
+			// type0   = endpoint
+			// type1   = port
+			// type2   = card reader
+			// type??? = invalid
+			//
+			WORD cap_next_ptr() { return GET_BITS(raw, 31, 20); }
+		};
+
+		struct PmCap {
+			WORD raw;
+			BYTE pm_cap_version()    { return GET_BITS(raw, 2, 0); }
+			BYTE pm_cap_pme_clock()  { return GET_BIT(raw, 3); }
+			BYTE pm_cap_dsi()        { return GET_BIT(raw, 5); }
+			BYTE pm_cap_auxcurrent() { return GET_BITS(raw, 8, 6); }
+			BYTE pm_cap_d1support()  { return GET_BIT(raw, 9); }
+			BYTE pm_cap_d2support()  { return GET_BIT(raw, 10); }
+			BYTE pm_cap_pmesupport() { return GET_BITS(raw, 15, 11); }
+		};
+
+		struct PmCsr {
+			WORD raw;
+			BYTE pm_csr_power_state()  { return GET_BITS(raw, 1, 0); }
+			BYTE pm_csr_nosoftrst()    { return GET_BIT(raw, 3); }
+			BYTE pm_csr_dynamic_data() { return GET_BIT(raw, 4); }
+			BYTE pm_csr_pme_enabled()  { return GET_BIT(raw, 8); }
+			BYTE pm_csr_data_select()  { return GET_BITS(raw, 12, 9); }
+			BYTE pm_csr_data_scale()   { return GET_BITS(raw, 14, 13); }
+			BYTE pm_csr_pme_status()   { return GET_BIT(raw, 15); }
+		};
+
+		struct PM {
+			BOOL   cap_on;
+			BYTE   base_ptr;
+			CapHdr hdr;
+			PmCap  cap;
+			PmCsr  csr;
+		};
+
+		struct MsiCap {
+			WORD raw;
+			BYTE msi_cap_multimsgcap() { return GET_BITS(raw, 3, 1); }
+			BYTE msi_cap_multimsg_extension() { return GET_BITS(raw, 6, 4); }
+			BYTE msi_cap_64_bit_addr_capable() { return GET_BIT(raw, 7); }
+			BYTE msi_cap_per_vector_masking_capable() { return GET_BIT(raw, 8); }
+		};
+
+		struct MSI {
+			BOOL cap_on;
+			BYTE base_ptr;
+			CapHdr hdr;
+			MsiCap cap;
+		};
+
+		struct PciCap {
+			WORD raw;
+			BYTE pcie_cap_capability_version() { return GET_BITS(raw, 3, 0); }
+			BYTE pcie_cap_device_port_type() { return GET_BITS(raw, 7, 4); }
+			BYTE pcie_cap_slot_implemented() { return GET_BIT(raw, 8); }
+			BYTE pcie_cap_interrupt_message_number() { return GET_BITS(raw, 13, 9); }
+		};
+
+		struct DevCap {
+			DWORD raw;
+			BYTE dev_cap_max_payload_supported () { return GET_BITS(raw, 2, 0); }
+			BYTE dev_cap_phantom_functions_support () { return GET_BITS(raw, 4, 3); }
+			BYTE dev_cap_ext_tag_supported () { return GET_BIT(raw, 5); }
+			BYTE dev_cap_endpoint_l0s_latency () { return GET_BITS(raw, 8, 6); }
+			BYTE dev_cap_endpoint_l1_latency () { return GET_BITS(raw, 11, 9); }
+			BYTE dev_cap_role_based_error () { return GET_BIT(raw, 15); }
+			BYTE dev_cap_enable_slot_pwr_limit_value () { return GET_BITS(raw, 25, 18); }
+			BYTE dev_cap_enable_slot_pwr_limit_scale () { return GET_BITS(raw, 27, 26); }
+			BYTE dev_cap_function_level_reset_capable () { return GET_BIT(raw, 28); }
+		};
+
+		struct DevCap2 {
+			DWORD raw;
+			BYTE cpl_timeout_ranges_supported() { return GET_BITS(raw, 3, 0); }
+			BYTE cpl_timeout_disable_supported() { return GET_BIT(raw, 4); }
+		};
+
+		struct LinkCap {
+			DWORD raw;
+			BYTE link_cap_max_link_speed() { return GET_BITS(raw, 3, 0); }
+			BYTE link_cap_max_link_width() { return GET_BITS(raw, 9, 4); }
+			BYTE link_cap_aspm_support() { return GET_BITS(raw, 11, 10); }
+			BYTE link_cap_l0s_exit_latency() { return GET_BITS(raw, 14, 12); }
+			BYTE link_cap_l1_exit_latency() { return GET_BITS(raw, 17, 15); }
+			BYTE link_cap_clock_power_management() { return GET_BITS(raw, 19, 18); }
+			BYTE link_cap_aspm_optionality() { return GET_BIT(raw, 22); }
+			BYTE link_cap_rsvd_23() { return GET_BITS(raw, 23, 19); }
+		};
+
+		struct LinkCap2 {
+			DWORD raw;
+			BYTE link_cap2_linkspeedssupported() { return GET_BITS(raw, 3, 1); }
+		};
+
+		struct DevControl {
+			WORD raw;
+			BYTE dev_ctrl_corr_err_reporting() { return GET_BIT(raw, 0); }
+			BYTE dev_ctrl_non_fatal_reporting() { return GET_BIT(raw, 1); }
+			BYTE dev_ctrl_fatal_err_reporting() { return GET_BIT(raw, 2); }
+			BYTE dev_ctrl_ur_reporting() { return GET_BIT(raw, 3); }
+			BYTE dev_ctrl_relaxed_ordering() { return GET_BIT(raw, 4); }
+			BYTE dev_ctrl_max_payload_size() { return GET_BITS(raw, 7, 5); }
+			BYTE dev_ctrl_ext_tag_default() { return GET_BIT(raw, 8); }
+			BYTE dev_ctrl_phantom_func_enable() { return GET_BIT(raw, 9); }
+			BYTE dev_ctrl_aux_power_enable() { return GET_BIT(raw, 10); }
+			BYTE dev_ctrl_enable_no_snoop() { return GET_BIT(raw, 11); }
+			BYTE dev_ctrl_max_read_request_size() { return GET_BITS(raw, 14, 12); }
+			BYTE dev_ctrl_cfg_retry_status_enable() { return GET_BIT(raw, 15); }
+		};
+
+		struct DevStatus {
+			WORD raw;
+			BYTE correctable_error_detected() { return GET_BIT(raw, 0); }
+			BYTE non_fatal_error_detected() { return GET_BIT(raw, 1); }
+			BYTE fatal_error_detected() { return GET_BIT(raw, 2); }
+			BYTE unsupported_request_detected() { return GET_BIT(raw, 3); }
+			BYTE aux_power_detected() { return GET_BIT(raw, 4); }
+			BYTE transactions_pending() { return GET_BIT(raw, 5); }
+		};
+
+		struct DevControl2 {
+			WORD raw;
+			BYTE obff_enable() { return GET_BIT(raw, 0); }
+			BYTE latency_tolerance_reporting() { return GET_BIT(raw, 1); }
+			BYTE completion_timeout_disable() { return GET_BIT(raw, 2); }
+			BYTE completion_timeout_value() { return GET_BIT(raw, 3); }
+		};
+
+		struct DevStatus2 {
+			WORD raw;
+			BYTE correctable_error_detected() { return GET_BIT(raw, 0); }
+			BYTE non_fatal_error_detected() { return GET_BIT(raw, 1); }
+			BYTE fatal_error_detected() { return GET_BIT(raw, 2); }
+			BYTE unsupported_request_detected() { return GET_BIT(raw, 3); }
+			BYTE aux_power_detected() { return GET_BIT(raw, 4); }
+			BYTE transactions_pending() { return GET_BIT(raw, 5); }
+		};
+
+		struct LinkStatus {
+			WORD raw;
+			BYTE link_status_link_speed() { return GET_BITS(raw, 3, 0); }
+			BYTE link_status_link_width() { return GET_BITS(raw, 9, 4); }
+			BYTE link_status_slot_clock_config() { return GET_BIT(raw, 12); }
+		};
+
+		struct LinkControl {
+			WORD raw;
+			BYTE link_aspmc() { return GET_BIT(raw, 1); }
+			BYTE link_control_rcb() { return GET_BIT(raw, 3); }
+			BYTE link_common_control_configuration() { return GET_BIT(raw, 6); }
+			BYTE link_extended_synch() { return GET_BIT(raw, 7); }
+			BYTE link_enable_clock_power_management() { return GET_BIT(raw, 8); }
+			BYTE link_hardware_autonomous_width_disable() { return GET_BIT(raw, 9); }
+		};
+
+		struct LinkControl2 {
+			WORD raw;
+			BYTE link_ctrl2_target_link_speed() { return GET_BITS(raw, 3, 0); }
+			BYTE link_ctrl2_entercompliance() { return GET_BIT(raw, 4); }
+			BYTE link_ctrl2_hw_autonomous_speed_disable() { return GET_BIT(raw, 5); }
+			BYTE link_ctrl2_deemphasis() { return GET_BIT(raw, 6); }
+			BYTE link_ctrl2_transmitmargin() { return GET_BIT(raw, 7); }
+			BYTE link_ctrl2_entermodifiedcompliance() { return GET_BIT(raw, 10); }
+			BYTE link_ctrl2_compliancesos() { return GET_BIT(raw, 11); }
+		};
+
+		struct LinkStatus2 {
+			WORD raw;
+			BYTE link_status2_deemphasislvl() { return GET_BIT(raw, 0); }
+		};
+
+		struct DEV {
+			DevCap cap;
+			DevControl control;
+			DevStatus status;
+		};
+
+		struct DEV2 {
+			DevCap2 cap;
+			DevControl2 control;
+			DevStatus2 status;
+		};
+
+		struct LINK {
+			LinkCap cap;
+			LinkControl control;
+			LinkStatus status;
+		};
+
+		struct LINK2 {
+			LinkCap2 cap;
+			LinkControl2 control;
+			LinkStatus2 status;
+		};
+
+		struct PCIE {
+			BOOL cap_on;
+			BYTE base_ptr;
+			CapHdr hdr;
+			PciCap cap;
+			DEV dev;
+			DEV2 dev2;
+			LINK link;
+			LINK2 link2;
+		};
+
+		struct DSN {
+			BOOL cap_on;
+			WORD base_ptr;
+			CapExtHdr hdr;
+			UINT64    serial;
+		};
+
+		struct EmtpyExtPcieCap {
+			BOOL cap_on;
+			WORD base_ptr;
+			CapExtHdr hdr;
+		};
+
+		struct EmtpyPcieCap {
+			BOOL cap_on;
+			BYTE base_ptr;
+			CapHdr hdr;
+		};
+	}
+
+	struct Pci {
+		unsigned char raw[0x1000];
+		Pci() { memset(raw, 0, sizeof(raw)); }
+
+		Pci(unsigned char *buffer, int size)
+		{
+			if (size > 0x1000) size = 0x1000;
+			memcpy(raw, buffer, size);
+		}
+
+		auto vendor_id() -> WORD { return *(WORD*)(raw + 0x00); }
+		auto device_id() -> WORD { return *(WORD*)(raw + 0x02); }
+
+		auto subsystem_vendor_id() -> WORD { return *(WORD*)(raw + 0x2C); }
+		auto subsystem_device_id() -> WORD { return *(WORD*)(raw + 0x2E); }
+
+		auto command() -> pci::Command { return *(pci::Command*)(raw + 0x04); }
+		auto status() -> pci::Status { return  *(pci::Status*)(raw + 0x06); }
+		auto header() -> pci::HeaderType { return  *(pci::HeaderType*)(raw + 0x0E); }
+
+		auto bar(int index) -> DWORD {
+			auto ptr = (DWORD*)(raw + 0x10);
+
+			if (index > 6)
 			{
 				return 0;
 			}
-			cap_ptr = (PVOID)((PBYTE)cfg + ((unsigned char*)(cap_ptr))[1]);
-		}
-		return cap_ptr;
-	}
 
-	inline PVOID get_ext_capability_by_id(PVOID cfg, WORD id)
-	{
-		PVOID cap_ptr = (PVOID)((PBYTE)cfg + 0x100);
-		if (cap_ptr == 0)
-		{
-			return 0;
-		}
-		while (1)
-		{
-			//
-			// capability id
-			//
-			if (*(BYTE*)(cap_ptr) == id)
-			{
-				break;
-			}
-
-			//
-			// next ptr
-			//
-			if (GET_BITS(((WORD*)cap_ptr)[1], 15, 4) == 0)
+			if (header().type() == 1 && index > 2)
 			{
 				return 0;
 			}
-			cap_ptr = (PVOID)((PBYTE)cfg + GET_BITS(((WORD*)cap_ptr)[1], 15, 4));
+
+			return ptr[index];
 		}
-		return cap_ptr;
-	}
 
-	inline PVOID get_pm(PVOID cfg)
-	{
-		return get_capability_by_id(cfg, 0x01);
+		//
+		// type1
+		//
+		auto bus_number() -> BYTE {
+			if ( header().type() == 0 ) return 0;
+			return *(unsigned char*)(raw + 0x18);
+		}
 
-	}
-	inline PVOID get_msi(PVOID cfg)
-	{
-		return get_capability_by_id(cfg, 0x05);
-	}
-	inline PVOID get_pcie(PVOID cfg)
-	{
-		return get_capability_by_id(cfg, 0x10);
-	}
-	inline PVOID get_dev(PVOID cfg)
-	{
-		PVOID pcie = get_pcie(cfg);
-		if (pcie == 0)
+		auto secondary_bus() -> BYTE {
+			if ( header().type() == 0 ) return 0;
+			return *(unsigned char*)(raw + 0x19);
+		}
+
+		auto subordinate_bus() -> BYTE {
+			if ( header().type() == 0 ) return 0;
+			return *(unsigned char*)(raw + 0x1A);
+		}
+
+		auto revision_id() -> BYTE { return *(BYTE*)(raw + 0x08); }
+		auto class_code() -> DWORD { return ( *(BYTE*)(raw + 0x09 + 2) << 16 ) | ( *(BYTE*)(raw + 0x09 + 1) << 8 ) | *(BYTE*)(raw + 0x09); }
+		auto interrupt_line() -> BYTE { return *(BYTE*)(raw + 0x3C); }
+		auto interrupt_pin() -> BYTE { return *(BYTE*)(raw + 0x3D); }
+		auto capabilities_ptr() -> BYTE { return *(BYTE*)(raw + 0x34); }
+
+		auto get_capability_by_id(BYTE id) -> BYTE
 		{
+			BYTE off = capabilities_ptr();
+			if (off == 0)
+			{
+				return 0;
+			}
+
+			while (1)
+			{
+				auto cap = *(pci::CapHdr*)((raw + off));
+				if (cap.cap_id() == id)
+				{
+					return off;
+				}
+
+				BYTE next = cap.cap_next_ptr();
+				if (next == 0)
+				{
+					break;
+				}
+
+				off = next;
+			}
 			return 0;
 		}
-		return (PVOID)((PBYTE)pcie + sizeof(DWORD));
-	}
-	inline PVOID get_link(PVOID cfg)
-	{
-		PVOID pcie = get_pcie(cfg);
-		if (pcie == 0)
+
+		auto get_ext_capability_by_id(BYTE id) -> WORD
 		{
+			WORD off = 0x100;
+			while (1)
+			{
+				auto cap = *(pci::CapExtHdr*)((raw + off));
+				if (cap.cap_id() == id)
+				{
+					return off;
+				}
+
+				WORD next = cap.cap_next_ptr();
+				if (next == 0)
+				{
+					break;
+				}
+				off = next;
+			}
 			return 0;
 		}
-		return (PVOID)((PBYTE)pcie + 0xC);
-	}
-	inline PVOID get_dsn(PVOID cfg) { return pci::get_ext_capability_by_id(cfg , 0x0003); }
+
+		auto get_pm() -> pci::PM {
+			auto cap = get_capability_by_id(0x01);
+			auto res = pci::PM{};
+			if (cap != 0)
+			{
+				UINT64 val = *(UINT64*)(raw + cap);
+				res.cap_on   = val != 0;
+				res.base_ptr = cap;
+				res.hdr.raw  = val & 0xFFFF;
+				res.cap.raw  = (val >> 16) & 0xFFFF;
+				res.csr.raw  = (val >> 32) & 0xFFFF;
+			}
+			return res;
+		}
+
+		auto get_msi() -> pci::MSI {
+			auto cap = get_capability_by_id(0x05);
+			auto res = pci::MSI{};
+			if (cap != 0)
+			{
+				DWORD val = *(DWORD*)(raw + cap);
+				res.cap_on   = val != 0;
+				res.base_ptr = cap;
+				res.hdr.raw  = val & 0xFFFF;
+				res.cap.raw  = (val >> 16) & 0xFFFF;
+			}
+			return res;
+		}
+
+		auto get_pci() -> pci::PCIE {
+			auto cap = get_capability_by_id(0x10);
+			auto res = pci::PCIE{};
+			if (cap != 0)
+			{
+				auto pci =   *(DWORD*)(raw + cap);;
+				auto dev =   *(UINT64*)(raw + cap + 0x04);
+				auto dev2 =  *(UINT64*)(raw + cap + 0x04 + 0x20);
+				auto link =  *(UINT64*)(raw + cap + 0x0C);
+				auto link2 = *(UINT64*)(raw + cap + 0x0C + 0x20);
+
+				res.cap_on          = pci != 0;
+				res.base_ptr        = cap;
+				res.hdr.raw         = (pci & 0xFFFF);
+				res.cap.raw         = (pci >> 16) & 0xFFFF;
+
+				res.dev.cap.raw     = (dev & 0xFFFFFFFF);
+				res.dev.control.raw = (dev >> 32) & 0xFFFF;
+				res.dev.status.raw  = (dev >> 48) & 0xFFFF;
+
+				res.dev2.cap.raw     = (dev2 & 0xFFFFFFFF);
+				res.dev2.control.raw = (dev2 >> 32) & 0xFFFF;
+				res.dev2.status.raw  = (dev2 >> 48) & 0xFFFF;
+
+				res.link.cap.raw     = (link & 0xFFFFFFFF);
+				res.link.control.raw = (link >> 32) & 0xFFFF;
+				res.link.status.raw  = (link >> 48) & 0xFFFF;
+
+				res.link2.cap.raw     = (link2 & 0xFFFFFFFF);
+				res.link2.control.raw = (link2 >> 32) & 0xFFFF;
+				res.link2.status.raw  = (link2 >> 48) & 0xFFFF;
+			}
+			return res;
+		}
+
+		auto get_dsn() -> pci::DSN {
+			auto cap = get_ext_capability_by_id(0x03);
+			auto res = pci::DSN{};
+			if (cap != 0)
+			{
+				auto hdr = *(DWORD*)(raw + cap);
+				res.cap_on   = hdr != 0;
+				res.base_ptr = cap;
+				res.hdr.raw  = hdr;
+				res.serial   = *(UINT64*)(raw + cap + 0x04);
+			}
+			return res;
+		}
+
+		auto get_empty_extended_cap(BYTE id) -> pci::EmtpyExtPcieCap {
+			auto cap = get_ext_capability_by_id(id);
+			auto res = pci::EmtpyExtPcieCap{};
+			if (cap != 0)
+			{
+				auto hdr = *(DWORD*)(raw + cap);
+				res.cap_on   = hdr != 0;
+				res.base_ptr = cap;
+				res.hdr.raw  = hdr;
+			}
+			return res;
+		}
+
+		auto get_empty_cap(BYTE id) -> pci::EmtpyPcieCap {
+			auto cap = get_capability_by_id(id);
+			auto res = pci::EmtpyPcieCap{};
+			if (cap != 0)
+			{
+				auto hdr = *(WORD*)(raw + cap);
+				res.cap_on   = hdr != 0;
+				res.base_ptr = cap;
+				res.hdr.raw  = hdr;
+			}
+			return res;
+		}
+	} ;
 }
 
 typedef enum {

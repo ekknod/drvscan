@@ -79,7 +79,8 @@ typedef struct {
 } EFI_MODULE_INFO;
 
 typedef struct _DEVICE_INFO {
-	unsigned char  bus, slot, func, cfg[0x1000];
+	unsigned char  bus, slot, func;
+	config::Pci    cfg;
 	QWORD physical_address;
 } DEVICE_INFO;
 
