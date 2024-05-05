@@ -583,6 +583,20 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 	std::vector<PORT_DEVICE_INFO> ports;
 	for (auto& port : port_devices)
 	{
+		//
+		// add fake port, no matter if they are empty or not
+		//
+		if (port.self.bus != port.self.cfg.bus_number())
+		{
+			ports.push_back(port);
+			port.blk = 2;
+			port.blk_info = 4;
+			continue;
+		}
+
+		//
+		// add only ports, which contains endpont devices
+		//
 		if (!port.devices.empty())
 		{
 			ports.push_back(port);
