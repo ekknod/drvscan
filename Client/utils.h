@@ -554,28 +554,28 @@ namespace config {
 			auto res = pci::PCIE{};
 			if (cap != 0)
 			{
-				auto pci =   *(DWORD*)(raw + cap);;
-				auto dev =   *(UINT64*)(raw + cap + 0x04);
-				auto dev2 =  *(UINT64*)(raw + cap + 0x04 + 0x20);
-				auto link =  *(UINT64*)(raw + cap + 0x0C);
-				auto link2 = *(UINT64*)(raw + cap + 0x0C + 0x20);
+				auto pci              = *(UINT32*)(raw + cap);
+				auto dev              = *(UINT64*)(raw + cap + 0x04);
+				auto dev2             = *(UINT64*)(raw + cap + 0x04 + 0x20);
+				auto link             = *(UINT64*)(raw + cap + 0x0C);
+				auto link2            = *(UINT64*)(raw + cap + 0x0C + 0x20);
 
-				res.cap_on          = pci != 0;
-				res.base_ptr        = cap;
-				res.hdr.raw         = (pci & 0xFFFF);
-				res.cap.raw         = (pci >> 16) & 0xFFFF;
+				res.cap_on            = pci != 0;
+				res.base_ptr          = cap;
+				res.hdr.raw           = (pci & 0xFFFF);
+				res.cap.raw           = (pci >> 16) & 0xFFFF;
 
-				res.dev.cap.raw     = (dev & 0xFFFFFFFF);
-				res.dev.control.raw = (dev >> 32) & 0xFFFF;
-				res.dev.status.raw  = (dev >> 48) & 0xFFFF;
+				res.dev.cap.raw       = (dev & 0xFFFFFFFF);
+				res.dev.control.raw   = (dev >> 32) & 0xFFFF;
+				res.dev.status.raw    = (dev >> 48) & 0xFFFF;
 
-				res.dev2.cap.raw     = (dev2 & 0xFFFFFFFF);
-				res.dev2.control.raw = (dev2 >> 32) & 0xFFFF;
-				res.dev2.status.raw  = (dev2 >> 48) & 0xFFFF;
+				res.dev2.cap.raw      = (dev2 & 0xFFFFFFFF);
+				res.dev2.control.raw  = (dev2 >> 32) & 0xFFFF;
+				res.dev2.status.raw   = (dev2 >> 48) & 0xFFFF;
 
-				res.link.cap.raw     = (link & 0xFFFFFFFF);
-				res.link.control.raw = (link >> 32) & 0xFFFF;
-				res.link.status.raw  = (link >> 48) & 0xFFFF;
+				res.link.cap.raw      = (link & 0xFFFFFFFF);
+				res.link.control.raw  = (link >> 32) & 0xFFFF;
+				res.link.status.raw   = (link >> 48) & 0xFFFF;
 
 				res.link2.cap.raw     = (link2 & 0xFFFFFFFF);
 				res.link2.control.raw = (link2 >> 32) & 0xFFFF;
