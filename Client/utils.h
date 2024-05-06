@@ -141,91 +141,205 @@ namespace config {
 
 		struct Command {
 			WORD raw;
-			BYTE memory_space_enable( ) { return GET_BIT(raw, 1); };
-			BYTE bus_master_enable( ) { return GET_BIT(raw, 2); };
-			BYTE special_cycle_enable( ) { return GET_BIT(raw, 3); };
-			BYTE memory_write( ) { return GET_BIT(raw, 4); };
-			BYTE vga_enable( ) { return GET_BIT(raw, 5); };
-			BYTE parity_err_enable( ) { return GET_BIT(raw, 6); };
-			BYTE serr_enable( ) { return GET_BIT(raw, 8); };
-			BYTE b2b_enable( ) { return GET_BIT(raw, 9); };
-			BYTE interrupt_disable( ) { return GET_BIT(raw, 10); };
+			BYTE memory_space_enable( )                   { return GET_BIT(raw, 1); };
+			BYTE bus_master_enable( )                     { return GET_BIT(raw, 2); };
+			BYTE special_cycle_enable( )                  { return GET_BIT(raw, 3); };
+			BYTE memory_write( )                          { return GET_BIT(raw, 4); };
+			BYTE vga_enable( )                            { return GET_BIT(raw, 5); };
+			BYTE parity_err_enable( )                     { return GET_BIT(raw, 6); };
+			BYTE serr_enable( )                           { return GET_BIT(raw, 8); };
+			BYTE b2b_enable( )                            { return GET_BIT(raw, 9); };
+			BYTE interrupt_disable( )                     { return GET_BIT(raw, 10); };
 		};
 
 		struct Status {
 			WORD raw;
-			BYTE parity_error( ) { return GET_BIT(raw, 15); }
-			BYTE signaled_error( ) { return GET_BIT(raw, 14); }
-			BYTE master_abort( ) { return GET_BIT(raw, 13); }
-			BYTE target_abort( ) { return GET_BIT(raw, 12); }
-			BYTE signaled_abort( ) { return GET_BIT(raw, 11); }
-			BYTE devsel_timing( ) { return GET_BITS(raw, 10, 9); }
-			BYTE master_parity_error( ) { return GET_BIT(raw, 8); }
-			BYTE fast_b2b_capable( ) { return GET_BIT(raw, 7); }
-			BYTE c66_capable( ) { return GET_BIT(raw, 5); }
-			BYTE capabilities_list( ) { return GET_BIT(raw, 4); }
-			BYTE interrupt_status( ) { return GET_BIT(raw, 3); }
+			BYTE parity_error( )                          { return GET_BIT(raw, 15); }
+			BYTE signaled_error( )                        { return GET_BIT(raw, 14); }
+			BYTE master_abort( )                          { return GET_BIT(raw, 13); }
+			BYTE target_abort( )                          { return GET_BIT(raw, 12); }
+			BYTE signaled_abort( )                        { return GET_BIT(raw, 11); }
+			BYTE devsel_timing( )                         { return GET_BITS(raw, 10, 9); }
+			BYTE master_parity_error( )                   { return GET_BIT(raw, 8); }
+			BYTE fast_b2b_capable( )                      { return GET_BIT(raw, 7); }
+			BYTE c66_capable( )                           { return GET_BIT(raw, 5); }
+			BYTE capabilities_list( )                     { return GET_BIT(raw, 4); }
+			BYTE interrupt_status( )                      { return GET_BIT(raw, 3); }
 		};
 
 		struct HeaderType {
 			BYTE raw;
-			BYTE multifunc_device() { return GET_BIT(raw, 7); }
-
 			//
-			// type0   = endpoint
-			// type1   = port
-			// type2   = card reader
-			// type??? = invalid
+			// multifunc_device = multiple devices under same bus
 			//
-			BYTE type() { return GET_BITS(raw, 6, 0); }
+			BYTE multifunc_device()                       { return GET_BIT(raw, 7); }
+			//
+			// 0: endpoint, 1: port, 2: card reader, ?: invalid
+			//
+			BYTE type()                                   { return GET_BITS(raw, 6, 0); }
 		};
 
 		struct CapHdr {
 			WORD raw;
-			BYTE cap_id() { return GET_BITS(raw, 7, 0); }
-
-			//
-			// type0   = endpoint
-			// type1   = port
-			// type2   = card reader
-			// type??? = invalid
-			//
-			BYTE cap_next_ptr() { return GET_BITS(raw, 15, 8); }
+			BYTE cap_id()                                 { return GET_BITS(raw, 7, 0); }
+			BYTE cap_next_ptr()                           { return GET_BITS(raw, 15, 8); }
 		};
 
 		struct CapExtHdr {
 			DWORD raw;
-			BYTE cap_id() { return GET_BITS(raw, 7, 0); }
-
-			//
-			// type0   = endpoint
-			// type1   = port
-			// type2   = card reader
-			// type??? = invalid
-			//
-			WORD cap_next_ptr() { return GET_BITS(raw, 31, 20); }
+			BYTE cap_id()                                 { return GET_BITS(raw, 7, 0); }
+			WORD cap_next_ptr()                           { return GET_BITS(raw, 31, 20); }
 		};
 
 		struct PmCap {
 			WORD raw;
-			BYTE pm_cap_version()    { return GET_BITS(raw, 2, 0); }
-			BYTE pm_cap_pme_clock()  { return GET_BIT(raw, 3); }
-			BYTE pm_cap_dsi()        { return GET_BIT(raw, 5); }
-			BYTE pm_cap_auxcurrent() { return GET_BITS(raw, 8, 6); }
-			BYTE pm_cap_d1support()  { return GET_BIT(raw, 9); }
-			BYTE pm_cap_d2support()  { return GET_BIT(raw, 10); }
-			BYTE pm_cap_pmesupport() { return GET_BITS(raw, 15, 11); }
+			BYTE pm_cap_version()                         { return GET_BITS(raw, 2, 0); }
+			BYTE pm_cap_pme_clock()                       { return GET_BIT(raw, 3); }
+			BYTE pm_cap_dsi()                             { return GET_BIT(raw, 5); }
+			BYTE pm_cap_auxcurrent()                      { return GET_BITS(raw, 8, 6); }
+			BYTE pm_cap_d1support()                       { return GET_BIT(raw, 9); }
+			BYTE pm_cap_d2support()                       { return GET_BIT(raw, 10); }
+			BYTE pm_cap_pmesupport()                      { return GET_BITS(raw, 15, 11); }
 		};
 
 		struct PmCsr {
 			WORD raw;
-			BYTE pm_csr_power_state()  { return GET_BITS(raw, 1, 0); }
-			BYTE pm_csr_nosoftrst()    { return GET_BIT(raw, 3); }
-			BYTE pm_csr_dynamic_data() { return GET_BIT(raw, 4); }
-			BYTE pm_csr_pme_enabled()  { return GET_BIT(raw, 8); }
-			BYTE pm_csr_data_select()  { return GET_BITS(raw, 12, 9); }
-			BYTE pm_csr_data_scale()   { return GET_BITS(raw, 14, 13); }
-			BYTE pm_csr_pme_status()   { return GET_BIT(raw, 15); }
+			BYTE pm_csr_power_state()                     { return GET_BITS(raw, 1, 0); }
+			BYTE pm_csr_nosoftrst()                       { return GET_BIT(raw, 3); }
+			BYTE pm_csr_dynamic_data()                    { return GET_BIT(raw, 4); }
+			BYTE pm_csr_pme_enabled()                     { return GET_BIT(raw, 8); }
+			BYTE pm_csr_data_select()                     { return GET_BITS(raw, 12, 9); }
+			BYTE pm_csr_data_scale()                      { return GET_BITS(raw, 14, 13); }
+			BYTE pm_csr_pme_status()                      { return GET_BIT(raw, 15); }
+		};
+
+		struct MsiCap {
+			WORD raw;
+			BYTE msi_cap_multimsgcap()                    { return GET_BITS(raw, 3, 1); }
+			BYTE msi_cap_multimsg_extension()             { return GET_BITS(raw, 6, 4); }
+			BYTE msi_cap_64_bit_addr_capable()            { return GET_BIT(raw, 7); }
+			BYTE msi_cap_per_vector_masking_capable()     { return GET_BIT(raw, 8); }
+		};
+
+		struct PciCap {
+			WORD raw;
+			BYTE pcie_cap_capability_version()            { return GET_BITS(raw, 3, 0); }
+			BYTE pcie_cap_device_port_type()              { return GET_BITS(raw, 7, 4); }
+			BYTE pcie_cap_slot_implemented()              { return GET_BIT(raw, 8); }
+			BYTE pcie_cap_interrupt_message_number()      { return GET_BITS(raw, 13, 9); }
+		};
+
+		struct DevCap {
+			DWORD raw;
+			BYTE dev_cap_max_payload_supported ()         { return GET_BITS(raw, 2, 0); }
+			BYTE dev_cap_phantom_functions_support ()     { return GET_BITS(raw, 4, 3); }
+			BYTE dev_cap_ext_tag_supported ()             { return GET_BIT(raw, 5); }
+			BYTE dev_cap_endpoint_l0s_latency ()          { return GET_BITS(raw, 8, 6); }
+			BYTE dev_cap_endpoint_l1_latency ()           { return GET_BITS(raw, 11, 9); }
+			BYTE dev_cap_role_based_error ()              { return GET_BIT(raw, 15); }
+			BYTE dev_cap_enable_slot_pwr_limit_value ()   { return GET_BITS(raw, 25, 18); }
+			BYTE dev_cap_enable_slot_pwr_limit_scale ()   { return GET_BITS(raw, 27, 26); }
+			BYTE dev_cap_function_level_reset_capable ()  { return GET_BIT(raw, 28); }
+		};
+
+		struct DevCap2 {
+			DWORD raw;
+			BYTE cpl_timeout_ranges_supported()           { return GET_BITS(raw, 3, 0); }
+			BYTE cpl_timeout_disable_supported()          { return GET_BIT(raw, 4); }
+		};
+
+		struct LinkCap {
+			DWORD raw;
+			BYTE link_cap_max_link_speed()                { return GET_BITS(raw, 3, 0); }
+			BYTE link_cap_max_link_width()                { return GET_BITS(raw, 9, 4); }
+			BYTE link_cap_aspm_support()                  { return GET_BITS(raw, 11, 10); }
+			BYTE link_cap_l0s_exit_latency()              { return GET_BITS(raw, 14, 12); }
+			BYTE link_cap_l1_exit_latency()               { return GET_BITS(raw, 17, 15); }
+			BYTE link_cap_clock_power_management()        { return GET_BITS(raw, 19, 18); }
+			BYTE link_cap_aspm_optionality()              { return GET_BIT(raw, 22); }
+			BYTE link_cap_rsvd_23()                       { return GET_BITS(raw, 23, 19); }
+		};
+
+		struct DevControl {
+			WORD raw;
+			BYTE dev_ctrl_corr_err_reporting()            { return GET_BIT(raw, 0); }
+			BYTE dev_ctrl_non_fatal_reporting()           { return GET_BIT(raw, 1); }
+			BYTE dev_ctrl_fatal_err_reporting()           { return GET_BIT(raw, 2); }
+			BYTE dev_ctrl_ur_reporting()                  { return GET_BIT(raw, 3); }
+			BYTE dev_ctrl_relaxed_ordering()              { return GET_BIT(raw, 4); }
+			BYTE dev_ctrl_max_payload_size()              { return GET_BITS(raw, 7, 5); }
+			BYTE dev_ctrl_ext_tag_default()               { return GET_BIT(raw, 8); }
+			BYTE dev_ctrl_phantom_func_enable()           { return GET_BIT(raw, 9); }
+			BYTE dev_ctrl_aux_power_enable()              { return GET_BIT(raw, 10); }
+			BYTE dev_ctrl_enable_no_snoop()               { return GET_BIT(raw, 11); }
+			BYTE dev_ctrl_max_read_request_size()         { return GET_BITS(raw, 14, 12); }
+			BYTE dev_ctrl_cfg_retry_status_enable()       { return GET_BIT(raw, 15); }
+		};
+
+		struct DevStatus {
+			WORD raw;
+			BYTE correctable_error_detected()             { return GET_BIT(raw, 0); }
+			BYTE non_fatal_error_detected()               { return GET_BIT(raw, 1); }
+			BYTE fatal_error_detected()                   { return GET_BIT(raw, 2); }
+			BYTE unsupported_request_detected()           { return GET_BIT(raw, 3); }
+			BYTE aux_power_detected()                     { return GET_BIT(raw, 4); }
+			BYTE transactions_pending()                   { return GET_BIT(raw, 5); }
+		};
+
+		struct DevControl2 {
+			WORD raw;
+			BYTE obff_enable()                            { return GET_BIT(raw, 0); }
+			BYTE latency_tolerance_reporting()            { return GET_BIT(raw, 1); }
+			BYTE completion_timeout_disable()             { return GET_BIT(raw, 2); }
+			BYTE completion_timeout_value()               { return GET_BIT(raw, 3); }
+		};
+
+		struct DevStatus2 {
+			WORD raw;
+			BYTE correctable_error_detected()             { return GET_BIT(raw, 0); }
+			BYTE non_fatal_error_detected()               { return GET_BIT(raw, 1); }
+			BYTE fatal_error_detected()                   { return GET_BIT(raw, 2); }
+			BYTE unsupported_request_detected()           { return GET_BIT(raw, 3); }
+			BYTE aux_power_detected()                     { return GET_BIT(raw, 4); }
+			BYTE transactions_pending()                   { return GET_BIT(raw, 5); }
+		};
+
+		struct LinkStatus {
+			WORD raw;
+			BYTE link_status_link_speed()                 { return GET_BITS(raw, 3, 0); }
+			BYTE link_status_link_width()                 { return GET_BITS(raw, 9, 4); }
+			BYTE link_status_slot_clock_config()          { return GET_BIT(raw, 12); }
+		};
+
+		struct LinkControl {
+			WORD raw;
+			BYTE link_aspmc()                             { return GET_BIT(raw, 1); }
+			BYTE link_control_rcb()                       { return GET_BIT(raw, 3); }
+			BYTE link_common_control_configuration()      { return GET_BIT(raw, 6); }
+			BYTE link_extended_synch()                    { return GET_BIT(raw, 7); }
+			BYTE link_enable_clock_power_management()     { return GET_BIT(raw, 8); }
+			BYTE link_hardware_autonomous_width_disable() { return GET_BIT(raw, 9); }
+		};
+
+		struct LinkCap2 {
+			DWORD raw;
+			BYTE link_cap2_linkspeedssupported()          { return GET_BITS(raw, 3, 1); }
+		};
+
+		struct LinkControl2 {
+			WORD raw;
+			BYTE link_ctrl2_target_link_speed()           { return GET_BITS(raw, 3, 0); }
+			BYTE link_ctrl2_entercompliance()             { return GET_BIT(raw, 4); }
+			BYTE link_ctrl2_hw_autonomous_speed_disable() { return GET_BIT(raw, 5); }
+			BYTE link_ctrl2_deemphasis()                  { return GET_BIT(raw, 6); }
+			BYTE link_ctrl2_transmitmargin()              { return GET_BIT(raw, 7); }
+			BYTE link_ctrl2_entermodifiedcompliance()     { return GET_BIT(raw, 10); }
+			BYTE link_ctrl2_compliancesos()               { return GET_BIT(raw, 11); }
+		};
+
+		struct LinkStatus2 {
+			WORD raw;
+			BYTE link_status2_deemphasislvl() { return GET_BIT(raw, 0); }
 		};
 
 		struct PM {
@@ -236,140 +350,11 @@ namespace config {
 			PmCsr  csr;
 		};
 
-		struct MsiCap {
-			WORD raw;
-			BYTE msi_cap_multimsgcap() { return GET_BITS(raw, 3, 1); }
-			BYTE msi_cap_multimsg_extension() { return GET_BITS(raw, 6, 4); }
-			BYTE msi_cap_64_bit_addr_capable() { return GET_BIT(raw, 7); }
-			BYTE msi_cap_per_vector_masking_capable() { return GET_BIT(raw, 8); }
-		};
-
 		struct MSI {
 			BOOL cap_on;
 			BYTE base_ptr;
 			CapHdr hdr;
 			MsiCap cap;
-		};
-
-		struct PciCap {
-			WORD raw;
-			BYTE pcie_cap_capability_version() { return GET_BITS(raw, 3, 0); }
-			BYTE pcie_cap_device_port_type() { return GET_BITS(raw, 7, 4); }
-			BYTE pcie_cap_slot_implemented() { return GET_BIT(raw, 8); }
-			BYTE pcie_cap_interrupt_message_number() { return GET_BITS(raw, 13, 9); }
-		};
-
-		struct DevCap {
-			DWORD raw;
-			BYTE dev_cap_max_payload_supported () { return GET_BITS(raw, 2, 0); }
-			BYTE dev_cap_phantom_functions_support () { return GET_BITS(raw, 4, 3); }
-			BYTE dev_cap_ext_tag_supported () { return GET_BIT(raw, 5); }
-			BYTE dev_cap_endpoint_l0s_latency () { return GET_BITS(raw, 8, 6); }
-			BYTE dev_cap_endpoint_l1_latency () { return GET_BITS(raw, 11, 9); }
-			BYTE dev_cap_role_based_error () { return GET_BIT(raw, 15); }
-			BYTE dev_cap_enable_slot_pwr_limit_value () { return GET_BITS(raw, 25, 18); }
-			BYTE dev_cap_enable_slot_pwr_limit_scale () { return GET_BITS(raw, 27, 26); }
-			BYTE dev_cap_function_level_reset_capable () { return GET_BIT(raw, 28); }
-		};
-
-		struct DevCap2 {
-			DWORD raw;
-			BYTE cpl_timeout_ranges_supported() { return GET_BITS(raw, 3, 0); }
-			BYTE cpl_timeout_disable_supported() { return GET_BIT(raw, 4); }
-		};
-
-		struct LinkCap {
-			DWORD raw;
-			BYTE link_cap_max_link_speed() { return GET_BITS(raw, 3, 0); }
-			BYTE link_cap_max_link_width() { return GET_BITS(raw, 9, 4); }
-			BYTE link_cap_aspm_support() { return GET_BITS(raw, 11, 10); }
-			BYTE link_cap_l0s_exit_latency() { return GET_BITS(raw, 14, 12); }
-			BYTE link_cap_l1_exit_latency() { return GET_BITS(raw, 17, 15); }
-			BYTE link_cap_clock_power_management() { return GET_BITS(raw, 19, 18); }
-			BYTE link_cap_aspm_optionality() { return GET_BIT(raw, 22); }
-			BYTE link_cap_rsvd_23() { return GET_BITS(raw, 23, 19); }
-		};
-
-		struct LinkCap2 {
-			DWORD raw;
-			BYTE link_cap2_linkspeedssupported() { return GET_BITS(raw, 3, 1); }
-		};
-
-		struct DevControl {
-			WORD raw;
-			BYTE dev_ctrl_corr_err_reporting() { return GET_BIT(raw, 0); }
-			BYTE dev_ctrl_non_fatal_reporting() { return GET_BIT(raw, 1); }
-			BYTE dev_ctrl_fatal_err_reporting() { return GET_BIT(raw, 2); }
-			BYTE dev_ctrl_ur_reporting() { return GET_BIT(raw, 3); }
-			BYTE dev_ctrl_relaxed_ordering() { return GET_BIT(raw, 4); }
-			BYTE dev_ctrl_max_payload_size() { return GET_BITS(raw, 7, 5); }
-			BYTE dev_ctrl_ext_tag_default() { return GET_BIT(raw, 8); }
-			BYTE dev_ctrl_phantom_func_enable() { return GET_BIT(raw, 9); }
-			BYTE dev_ctrl_aux_power_enable() { return GET_BIT(raw, 10); }
-			BYTE dev_ctrl_enable_no_snoop() { return GET_BIT(raw, 11); }
-			BYTE dev_ctrl_max_read_request_size() { return GET_BITS(raw, 14, 12); }
-			BYTE dev_ctrl_cfg_retry_status_enable() { return GET_BIT(raw, 15); }
-		};
-
-		struct DevStatus {
-			WORD raw;
-			BYTE correctable_error_detected() { return GET_BIT(raw, 0); }
-			BYTE non_fatal_error_detected() { return GET_BIT(raw, 1); }
-			BYTE fatal_error_detected() { return GET_BIT(raw, 2); }
-			BYTE unsupported_request_detected() { return GET_BIT(raw, 3); }
-			BYTE aux_power_detected() { return GET_BIT(raw, 4); }
-			BYTE transactions_pending() { return GET_BIT(raw, 5); }
-		};
-
-		struct DevControl2 {
-			WORD raw;
-			BYTE obff_enable() { return GET_BIT(raw, 0); }
-			BYTE latency_tolerance_reporting() { return GET_BIT(raw, 1); }
-			BYTE completion_timeout_disable() { return GET_BIT(raw, 2); }
-			BYTE completion_timeout_value() { return GET_BIT(raw, 3); }
-		};
-
-		struct DevStatus2 {
-			WORD raw;
-			BYTE correctable_error_detected() { return GET_BIT(raw, 0); }
-			BYTE non_fatal_error_detected() { return GET_BIT(raw, 1); }
-			BYTE fatal_error_detected() { return GET_BIT(raw, 2); }
-			BYTE unsupported_request_detected() { return GET_BIT(raw, 3); }
-			BYTE aux_power_detected() { return GET_BIT(raw, 4); }
-			BYTE transactions_pending() { return GET_BIT(raw, 5); }
-		};
-
-		struct LinkStatus {
-			WORD raw;
-			BYTE link_status_link_speed() { return GET_BITS(raw, 3, 0); }
-			BYTE link_status_link_width() { return GET_BITS(raw, 9, 4); }
-			BYTE link_status_slot_clock_config() { return GET_BIT(raw, 12); }
-		};
-
-		struct LinkControl {
-			WORD raw;
-			BYTE link_aspmc() { return GET_BIT(raw, 1); }
-			BYTE link_control_rcb() { return GET_BIT(raw, 3); }
-			BYTE link_common_control_configuration() { return GET_BIT(raw, 6); }
-			BYTE link_extended_synch() { return GET_BIT(raw, 7); }
-			BYTE link_enable_clock_power_management() { return GET_BIT(raw, 8); }
-			BYTE link_hardware_autonomous_width_disable() { return GET_BIT(raw, 9); }
-		};
-
-		struct LinkControl2 {
-			WORD raw;
-			BYTE link_ctrl2_target_link_speed() { return GET_BITS(raw, 3, 0); }
-			BYTE link_ctrl2_entercompliance() { return GET_BIT(raw, 4); }
-			BYTE link_ctrl2_hw_autonomous_speed_disable() { return GET_BIT(raw, 5); }
-			BYTE link_ctrl2_deemphasis() { return GET_BIT(raw, 6); }
-			BYTE link_ctrl2_transmitmargin() { return GET_BIT(raw, 7); }
-			BYTE link_ctrl2_entermodifiedcompliance() { return GET_BIT(raw, 10); }
-			BYTE link_ctrl2_compliancesos() { return GET_BIT(raw, 11); }
-		};
-
-		struct LinkStatus2 {
-			WORD raw;
-			BYTE link_status2_deemphasislvl() { return GET_BIT(raw, 0); }
 		};
 
 		struct DEV {
