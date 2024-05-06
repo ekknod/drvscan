@@ -220,7 +220,7 @@ static void scan::check_hidden(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> 
 		if (!found)
 		{
 			port.blk = 2; port.blk_info = 5;
-			break;
+			return;
 		}
 	}
 }
@@ -250,47 +250,45 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 		//
 		// check that the device has a pointer to the capabilities list (status register bit 4 set to 1)
 		//
-		if (dev.cfg.status().capabilities_list())
+		auto pcie = dev.cfg.get_pci();
+		if (pcie.cap_on != 0)
 		{
-			auto pcie = dev.cfg.get_pci();
-			if (pcie.cap_on != 0)
-			{
-				auto pcie_port = port.self.cfg.get_pci();
-				//
-				// end point device never should be bridge/port
-				//
-				if (pcie.cap.pcie_cap_device_port_type() >= PciExpressRootPort)
-				{
-					port.blk = 2; port.blk_info = 14;
-					break;
-				}
-
-				//
-				// compare data between device data and port
-				//
-				if (pcie.link.status.link_status_link_speed() > pcie_port.link.status.link_status_link_speed())
-				{
-					port.blk = 2; port.blk_info = 15;
-					break;
-				}
-
-				if (pcie.link.status.link_status_link_width() > pcie_port.link.status.link_status_link_width())
-				{
-					port.blk = 2; port.blk_info = 15;
-					break;
-				}
-
-			}
-
+			auto pcie_port = port.self.cfg.get_pci();
 			//
-			// device reports to have capabilities, lets see if we got at least power management
+			// end point device never should be bridge/port
 			//
-			if (!dev.cfg.get_pm().cap_on)
+			if (pcie.cap.pcie_cap_device_port_type() >= PciExpressRootPort)
 			{
-				port.blk = 2; port.blk_info = 6;
+				port.blk = 2; port.blk_info = 14;
 				return;
 			}
+
+			//
+			// compare data between device data and port
+			//
+			if (pcie.link.status.link_status_link_speed() > pcie_port.link.status.link_status_link_speed())
+			{
+				port.blk = 2; port.blk_info = 15;
+				return;
+			}
+
+			if (pcie.link.status.link_status_link_width() > pcie_port.link.status.link_status_link_width())
+			{
+				port.blk = 2; port.blk_info = 15;
+				return;
+			}
+
 		}
+
+		//
+		// device reports to have capabilities, lets see if we got at least power management
+		//
+		if (dev.cfg.status().capabilities_list() && !dev.cfg.get_pm().cap_on)
+		{
+			port.blk = 2; port.blk_info = 6;
+			return;
+		}
+
 		if (dev.cfg.command().bus_master_enable())
 		{
 			//
@@ -302,7 +300,7 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 		if (dev.cfg.vendor_id() == 0x10EE)
 		{
 			port.blk = 1; port.blk_info = 3;
-			break;
+			return;
 		}
 
 		//
@@ -311,7 +309,7 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 		if (dev.cfg.device_id() == 0xFFFF && dev.cfg.vendor_id() == 0xFFFF)
 		{
 			port.blk  = 2; port.blk_info = 5;
-			break;
+			return;
 		}
 
 
@@ -321,7 +319,7 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 		if (dev.cfg.device_id() == 0x0000 && dev.cfg.vendor_id() == 0x0000)
 		{
 			port.blk  = 2; port.blk_info = 5;
-			break;
+			return;
 		}
 
 		//
@@ -338,7 +336,7 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 			if (port.devices.size() < 2)
 			{
 				port.blk = 2; port.blk_info = 9;
-				break;
+				return;
 			}
 		}
 
@@ -366,62 +364,69 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 			// invalid header type
 			//
 			port.blk = 2; port.blk_info = 12;
-			break;
+			return;
 		}
 	}
 
 	//
-	// not any device has bus master enabled
-	// we can safely block the port
+	// port was already blocked
 	//
-	if (bme_enabled == 0 && port.blk == 0)
+	if (port.blk)
+	{
+		return;
+	}
+
+	//
+	// not any device has bus master enabled, we can safely block the port
+	//
+	if (bme_enabled == 0)
 	{
 		port.blk = 1; port.blk_info = 2;
 		return;
 	}
 
 	for (auto &dev : port.devices)
-	if (dev.cfg.status().capabilities_list())
-	for (BYTE i = 0; i < config::MAX_CAPABILITIES; i++)
-	{
-		auto cap = dev.cfg.get_capability_by_id(i);
+		if (dev.cfg.status().capabilities_list())
+			for (BYTE i = 0; i < config::MAX_CAPABILITIES; i++)
+			{
+				auto cap = dev.cfg.get_capability_by_id(i);
 
-		if (!cap)
-			continue;
+				if (!cap)
+					continue;
 
-		if (*(DWORD*)(dev.cfg.raw + cap) == 0)
-		{
-			//
-			// device reports to have next cap, but it's empty (???)
-			//
-			port.blk_info = 7;
-			port.blk = 2;
-			return;
-		}
-	}
+				if (*(DWORD*)(dev.cfg.raw + cap) == 0)
+				{
+					//
+					// device reports to have next cap, but it's empty (???)
+					//
+					port.blk_info = 7;
+					port.blk = 2;
+					return;
+				}
+			}
 
 	//
 	// check ext capability list (https://pcisig.com/sites/default/files/files/PCI_Code-ID_r_1_12__v9_Jan_2020.pdf)
 	//
 	for (auto &dev : port.devices)
-	for (BYTE i = 0; i < config::MAX_EXTENDED_CAPABILITIES; i++)
-	{
-		auto ext_cap = dev.cfg.get_ext_capability_by_id(i);
-
-		if (!ext_cap)
-			continue;
-
-		if (*(DWORD*)(dev.cfg.raw + ext_cap) == 0)
+		for (BYTE i = 0; i < config::MAX_EXTENDED_CAPABILITIES; i++)
 		{
-			//
-			// device reports to have next cap, but it's empty (???)
-			// i don't have enough data to confirm if this is possible with legal devices too
-			//
-			port.blk_info = 8;
-			port.blk = 2;
-			return;
+			auto ext_cap = dev.cfg.get_ext_capability_by_id(i);
+
+			if (!ext_cap)
+				continue;
+
+			if (*(DWORD*)(dev.cfg.raw + ext_cap) == 0)
+			{
+				//
+				// device reports to have next cap, but it's empty (???)
+				// i don't have enough data to confirm if this is possible with legal devices too
+				//
+				port.blk_info = 8;
+				port.blk = 2;
+				return;
+			}
 		}
-	}
 }
 
 static void scan::check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters)
@@ -465,7 +470,7 @@ static void scan::check_shadowcfg(PORT_DEVICE_INFO &port)
 		{
 			port.blk = 2;
 			port.blk_info = 1;
-			break;
+			return;
 		}
 	}
 }
