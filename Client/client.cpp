@@ -499,6 +499,17 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 		{
 			continue;
 		}
+
+		if (entry.self.bus != entry.self.cfg.bus_number())
+		{
+			continue;
+		}
+
+		if (entry.self.bus > entry.self.cfg.secondary_bus())
+		{
+			continue;
+		}
+
 		BYTE max_bus = entry.self.cfg.subordinate_bus();
 		auto bridge_devices = get_devices_by_bus(entry.self.cfg.secondary_bus());
 		for (auto &bridge : bridge_devices)
