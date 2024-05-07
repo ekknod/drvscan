@@ -526,93 +526,90 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 
 std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 {
-	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_bridge_devices();
+	std::vector<ROOT_DEVICE_INFO> devices = get_root_bridge_devices();
 	std::vector<PORT_DEVICE_INFO> port_devices;
-	while (1)
+	std::vector<ROOT_DEVICE_INFO> endpoint_devices;
+	std::vector<PORT_DEVICE_INFO> ports;
+
+	//
+	// enumerate pci devices rootports->ports->devices
+	//
+	while (!devices.empty())
 	{
-		std::vector<ROOT_DEVICE_INFO> bridge_devices;
-		for (auto &dev : root_devices)
+		for (auto &device : devices)
 		{
-			if (!is_port_device(dev))
+			if (is_port_device(device))
 			{
-				for (auto &port : port_devices)
-				{
-					if (port.self.bus == dev.parent.bus &&
-						port.self.slot == dev.parent.slot &&
-						port.self.func == dev.parent.func
-						)
-					{
-						port.devices.push_back(dev.self);
-						break;
-					}
-				}
+				port_devices.push_back({0, 0, device.self, device.parent});
 			}
 			else
 			{
-				bridge_devices.push_back(dev);
+				endpoint_devices.push_back({device.self, device.parent});
 			}
 		}
+		devices = get_inner_devices(devices);
+	}
 
-		//
-		// get new devices
-		//
-		root_devices = get_inner_devices(root_devices);
-		if (!root_devices.size())
+	//
+	// add endpoint devices under correct port by using parent physical address
+	//
+	for (auto &end : endpoint_devices) {
+		for (auto &port : port_devices) {
+			if (port.self.physical_address == end.parent.physical_address) {
+				port.devices.push_back(end.self);
+			}
+		}
+	}
+
+	//
+	// add fake port devices under correct port
+	//
+	for (auto &port : port_devices)
+	{
+		if (port.devices.empty())
 		{
-
 			//
-			// append new fake devices
+			// are we root port?
 			//
-			for (auto &dev : bridge_devices)
+			if (port.self.bus == 0)
 			{
-				for (auto &port : port_devices)
-				{
-					if (port.self.bus == dev.parent.bus &&
-						port.self.slot == dev.parent.slot &&
-						port.self.func == dev.parent.func
-						)
-					{
-						port.devices.push_back(dev.self);
-						break;
-					}
+				continue;
+			}
+
+			BOOL not_empty = 0;
+			for (auto &port2 : port_devices) {
+				if (port.self.physical_address == port2.parent.physical_address) {
+					not_empty = 1;
+					break;
 				}
 			}
-			break;
-		}
-		else
-		{
+
 			//
-			// append new port devices
+			// we are good
 			//
-			for (auto &dev : bridge_devices)
+			if (not_empty)
 			{
-				port_devices.push_back({0, 0, dev.self});
+				continue;
+			}
+
+			//
+			// we are port, but without any device. add it under real port.
+			//
+			for (auto &port2 : port_devices)
+			{
+				if (port.parent.physical_address == port2.self.physical_address)
+				{
+					port2.devices.push_back(port.self);
+					break;
+				}
 			}
 		}
 	}
 
-	std::vector<PORT_DEVICE_INFO> ports;
-	for (auto& port : port_devices)
-	{
-		//
-		// add fake port, no matter if they are empty or not
-		//
-		if (port.self.bus != port.self.cfg.bus_number())
-		{
-			port.blk = 2;
-			port.blk_info = 4;
-			ports.push_back(port);
-			continue;
-		}
-
-		//
-		// add only ports, which contains endpont devices
-		//
-		if (!port.devices.empty())
-		{
-			ports.push_back(port);
-		}
-	}
+	//
+	// initialize filtered devices list
+	//
+	for (auto &port : port_devices) if (!port.devices.empty()) ports.push_back(port);
 
 	return ports;
 }
