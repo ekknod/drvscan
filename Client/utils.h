@@ -649,26 +649,5 @@ PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base = 0, QWORD memo
 void  FreeImageEx(PVOID ImageBase);
 
 
-namespace wmi
-{
-	QWORD                    open_table(PCSTR name);
-	void                     close_table(QWORD table);
-	QWORD                    next_entry(QWORD table, QWORD prev);
-
-	std::string              get_string(QWORD table_entry, PCSTR value);
-	int                      get_int(QWORD table_entry, PCSTR value);
-	bool                     get_bool(QWORD table_entry, PCSTR value);
-}
-
-typedef struct
-{
-	unsigned char bus, slot, func;
-	std::string   pnp_id;
-	std::string   driver;
-} PNP_ADAPTER;
-
-std::vector<PNP_ADAPTER> get_pnp_adapters();
-
-
 #endif /* UTILS_H */
 

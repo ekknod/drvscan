@@ -5,20 +5,16 @@ namespace scan
 	static void dumpcfg(std::vector<PORT_DEVICE_INFO> &devices);
 	static void dumpbar(std::vector<PORT_DEVICE_INFO> &devices);
 
-	static void check_hidden(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters);
+	static void check_hidden(PORT_DEVICE_INFO &port);
 	static void check_xilinx(PORT_DEVICE_INFO &port);
 	static void check_config(PORT_DEVICE_INFO &port);
-	static void check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters);
+	static void check_features(PORT_DEVICE_INFO &port);
 	static void check_shadowcfg(PORT_DEVICE_INFO &port);
 
 	static void PrintPcieInfo(PORT_DEVICE_INFO& port);
 	static void PrintPcieConfiguration(unsigned char *cfg, int size);
 	static void PrintPcieBarSpace(DWORD bar);
 	static void PrintPcieCfg(config::Pci cfg);
-
-	static void validate_pnp_device(PORT_DEVICE_INFO &port, DEVICE_INFO &dev, PNP_ADAPTER &pnp);
-	static void validate_usb_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp);
-	static void validate_network_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp);
 }
 
 void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
@@ -83,14 +79,9 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	}
 
 	//
-	// get list of device manager devices
-	//
-	std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
-
-	//
 	// check if devices are found from registry
 	//
-	for (auto &port : port_devices) if (!port.blk) check_hidden(port, pnp_adapters);
+	for (auto &port : port_devices) if (!port.blk) check_hidden(port);
 
 	//
 	// xilinx test
@@ -107,7 +98,7 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	// check device features
 	//
 	if (advanced)
-		for (auto &port : port_devices) if (!port.blk) check_features(port, pnp_adapters);
+		for (auto &port : port_devices) if (!port.blk) check_features(port);
 
 	//
 	// check shadow cfg
@@ -187,42 +178,8 @@ BOOL is_xilinx(unsigned char *cfg)
 	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
 }
 
-static void scan::check_hidden(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters)
+static void scan::check_hidden(PORT_DEVICE_INFO &port)
 {
-	for (auto& dev : port.devices)
-	{
-		BOOL found = 0;
-
-		for (auto& pnp : pnp_adapters)
-		{
-			if (pnp.bus == dev.bus &&
-				pnp.slot == dev.slot &&
-				pnp.func == dev.func
-				)
-			{
-				found = 1;
-				//
-				// check if device is bus mastering without driver
-				//
-				if (dev.cfg.command().bus_master_enable() && !pnp.driver.size() && port.devices.size() == 1)
-				{
-					port.blk = 2;
-					port.blk_info = 19;
-					return;
-				}
-				break;
-			}
-		}
-
-		//
-		// device is not found
-		//
-		if (!found)
-		{
-			port.blk = 2; port.blk_info = 5;
-			return;
-		}
-	}
 }
 
 static void scan::check_xilinx(PORT_DEVICE_INFO &port)
@@ -429,25 +386,8 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 		}
 }
 
-static void scan::check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters)
+static void scan::check_features(PORT_DEVICE_INFO &port)
 {
-	//
-	// check if device is backed by driver
-	//
-	for (auto& dev : port.devices)
-	{
-		for (auto& pnp : pnp_adapters)
-		{
-			if (pnp.bus == dev.bus &&
-				pnp.slot == dev.slot &&
-				pnp.func == dev.func
-				)
-			{
-				validate_pnp_device(port, dev, pnp);
-				break;
-			}
-		}
-	}
 }
 
 static void scan::check_shadowcfg(PORT_DEVICE_INFO &port)
@@ -652,122 +592,5 @@ static void scan::PrintPcieConfiguration(unsigned char *cfg, int size)
 
 static void scan::PrintPcieCfg(config::Pci cfg)
 {
-}
-
-static void scan::validate_network_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp)
-{
-	BOOL  found       = 0;
-	BOOL  status      = 0;
-
-	QWORD table       = wmi::open_table("SELECT * FROM Win32_NetworkAdapter where PNPDeviceID is not NULL and MACAddress is not NULL");
-	QWORD table_entry = wmi::next_entry(table, 0);
-	while (table_entry)
-	{
-		std::string pnp_id = wmi::get_string(table_entry, "PNPDeviceID");
-		if (pnp_id.size() && !_strcmpi(pnp_id.c_str(), pnp.pnp_id.c_str()))
-		{
-			found  = 1;
-			status = wmi::get_bool(table_entry, "NetEnabled");
-			break;
-		}
-		table_entry = wmi::next_entry(table, table_entry);
-	}
-	wmi::close_table(table);
-
-
-	if (found == 0)
-	{
-		//
-		// sus
-		//
-		port.blk_info = 17;
-		port.blk  = 2;
-		return;
-	}
-
-	if (status == 0)
-	{
-		port.blk_info = 18;
-		port.blk  = 1;
-		return;
-	}
-}
-
-static void scan::validate_usb_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp)
-{
-
-	BOOL  found = 0;
-	QWORD table = wmi::open_table("SELECT DeviceID FROM Win32_USBController where DeviceID is not NULL");
-	QWORD table_entry = wmi::next_entry(table, 0);
-	std::string devid;
-	while (table_entry)
-	{
-		std::string DeviceID = wmi::get_string(table_entry, "DeviceID");
-		if (!_strcmpi(DeviceID.c_str(), pnp.pnp_id.c_str()))
-		{
-			devid = DeviceID;
-			found = 1;
-			break;
-		}
-		table_entry = wmi::next_entry(table, table_entry);
-	}
-	wmi::close_table(table);
-
-	if (!found)
-	{
-		port.blk_info = 20;
-		port.blk  = 2;
-		return;
-	}
-
-	found           = 0;
-	table           = wmi::open_table("SELECT Antecedent FROM Win32_USBControllerDevice where Antecedent is not NULL");
-	table_entry     = wmi::next_entry(table, 0);
-	while (table_entry)
-	{
-		std::string Antecedent = wmi::get_string(table_entry, "Antecedent");
-
-		for (size_t pos = Antecedent.find("\\\\"); pos != std::string::npos; pos = Antecedent.find("\\\\", pos + 1)) {
-			Antecedent.replace(pos, 2, "\\");
-		}
-
-		if (strstr(Antecedent.c_str(), devid.c_str()))
-		{
-			found = 1;
-			break;
-		}
-
-		table_entry = wmi::next_entry(table, table_entry);
-	}
-	wmi::close_table(table);
-
-	if (found == 0)
-	{
-		port.blk_info = 21;
-		port.blk = 1;
-		return;
-	}
-}
-
-static void scan::validate_pnp_device(PORT_DEVICE_INFO &port, DEVICE_INFO &dev, PNP_ADAPTER &pnp)
-{
-	switch (dev.cfg.class_code())
-	{
-	//
-	// validate network adapters
-	//
-	case 0x020000:
-	case 0x028000:
-		validate_network_adapters(port, pnp);
-		break;
-	//
-	// XHCI
-	//
-	case 0x0C0330:
-		validate_usb_adapters(port, pnp);
-		break;
-	default:
-		break;
-	}
 }
 
