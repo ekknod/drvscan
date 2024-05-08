@@ -93,6 +93,7 @@ typedef struct _PORT_DEVICE_INFO {
 	unsigned char                 blk;       // info is port blocked
 	unsigned char                 blk_info;  // reason for blocking
 	DEVICE_INFO                   self;      // port device
+	DEVICE_INFO                   parent;    // parent
 	std::vector<DEVICE_INFO>      devices;   // devices in port
 } PORT_DEVICE_INFO;
 
