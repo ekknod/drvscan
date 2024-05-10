@@ -436,6 +436,13 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 			device.func = func;
 			device.physical_address = entry;
 
+
+			//
+			// just in case empty the cfg buffer
+			//
+			memset(device.cfg.raw, 0, sizeof(device.cfg.raw));
+
+
 			WORD optimize_ptr = 0x100 + 2;
 			WORD max_size     = sizeof(device.cfg.raw);
 			for (int i = 0; i < max_size; i+= 2)
