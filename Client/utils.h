@@ -483,6 +483,12 @@ namespace config {
 			while (1)
 			{
 				auto cap = *(pci::CapHdr*)((raw + off));
+
+				if (cap.raw == 0)
+				{
+					break;
+				}
+
 				if (cap.cap_id() == id)
 				{
 					return off;
@@ -505,6 +511,12 @@ namespace config {
 			while (1)
 			{
 				auto cap = *(pci::CapExtHdr*)((raw + off));
+
+				if (cap.raw == 0)
+				{
+					break;
+				}
+
 				if (cap.cap_id() == id)
 				{
 					return off;
