@@ -18,6 +18,7 @@ public:
 	QWORD get_physical_address(QWORD virtual_address);
 	PVOID __get_memory_map(QWORD* size);
 	PVOID __get_memory_pages(QWORD* size);
+	void  get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out);
 private:
 	BOOL  copy_memory(PVOID dest, PVOID src, QWORD length);
 	QWORD map_mmio(QWORD physical_address, DWORD size);

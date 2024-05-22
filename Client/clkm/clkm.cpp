@@ -187,3 +187,36 @@ PVOID cl::clkm::__get_memory_pages(QWORD* size)
 	return buffer;
 }
 
+#pragma pack(push, 1)
+typedef struct {
+	BYTE     bus, slot, func;
+	BYTE     offset;
+	DWORD    loops;
+	QWORD    *tsc;
+	DWORD    *tsc_overhead;
+} DRIVER_PCITSC ;
+#pragma pack(pop)
+
+void cl::clkm::get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out)
+{
+	if (!cl::initialize())
+	{
+		return;
+	}
+
+	DWORD overhead=0;
+	QWORD tscqw=0;
+	DRIVER_PCITSC tsc{};
+
+	tsc.bus = bus;
+	tsc.slot = slot;
+	tsc.func = func;
+	tsc.offset = offset;
+	tsc.loops = loops;
+	tsc.tsc_overhead = &overhead;
+	tsc.tsc = &tscqw;
+	DeviceIoControl(hDriver, 0xECAC14, &tsc, sizeof(DRIVER_PCITSC), &tsc, sizeof(DRIVER_PCITSC), 0, 0);
+	out->tsc = tscqw;
+	out->tsc_overhead = overhead;
+}
+

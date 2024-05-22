@@ -624,6 +624,11 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 	return ports;
 }
 
+void cl::pci::get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out)
+{
+	cl::controller->get_pci_latency(bus, slot, func, offset, loops, out);
+}
+
 static PVOID cl::efi::__get_memory_map(QWORD* size)
 {
 	return controller->__get_memory_map(size);

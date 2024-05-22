@@ -116,6 +116,17 @@ PVOID cl::clint::__get_memory_pages(QWORD* size)
 	return 0;
 }
 
+void cl::clint::get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out)
+{
+	UNREFERENCED_PARAMETER(bus);
+	UNREFERENCED_PARAMETER(slot);
+	UNREFERENCED_PARAMETER(func);
+	UNREFERENCED_PARAMETER(offset);
+	UNREFERENCED_PARAMETER(loops);
+	UNREFERENCED_PARAMETER(out);
+	unsupported_error();
+}
+
 BOOL cl::clint::copy_memory(PVOID dest, PVOID src, QWORD length)
 {
 	typedef struct

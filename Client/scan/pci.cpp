@@ -174,6 +174,7 @@ BOOL is_xilinx(unsigned char *cfg)
 	a0 = cfg + a0[1];
 	if (a0[1] == 0)
 		return 0;
+
 	DWORD a1 = *(DWORD*)(cfg + a0[1] + 0x0C);
 	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
 }
@@ -186,14 +187,28 @@ static void scan::check_xilinx(PORT_DEVICE_INFO &port)
 {
 	for (auto& dev : port.devices)
 	{
+		if (port.devices.size() > 1)
+		{
+			continue;
+		}
+
 		//
-		// device says i'm not xilinx
+		// device says i'm not xilinx, config latency test
 		//
-		if (!is_xilinx(dev.cfg.raw))
+		// if (!is_xilinx(dev.cfg.raw))
 		{
 			//
-			// check if its still xilinx, but claiming otherwise
+			// config latency test
 			//
+			DRIVER_TSC latency{};
+			cl::pci::get_pci_latency(dev.bus, dev.slot, dev.func, 0x00, 1024, &latency);
+
+			DRIVER_TSC shadow_cfg{};
+			cl::pci::get_pci_latency(dev.bus, dev.slot, dev.func, 0xA8, 1024, &shadow_cfg);
+
+			QWORD shadow_delta = shadow_cfg.tsc - latency.tsc;
+
+			LOG_DEBUG("[%d:%d:%d] delta: %lld, tsc: %lld\n", dev.bus, dev.slot, dev.func, shadow_delta, latency.tsc);
 		}
 	}
 }

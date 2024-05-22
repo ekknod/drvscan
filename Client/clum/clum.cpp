@@ -87,3 +87,14 @@ PVOID cl::clum::__get_memory_pages(QWORD* size)
 	return PVOID();
 }
 
+void cl::clum::get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out)
+{
+	UNREFERENCED_PARAMETER(bus);
+	UNREFERENCED_PARAMETER(slot);
+	UNREFERENCED_PARAMETER(func);
+	UNREFERENCED_PARAMETER(offset);
+	UNREFERENCED_PARAMETER(loops);
+	UNREFERENCED_PARAMETER(out);
+	unsupported_error();
+}
+

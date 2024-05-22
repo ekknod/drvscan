@@ -11,6 +11,7 @@ typedef int BOOL;
 typedef unsigned short WORD;
 typedef ULONG_PTR QWORD;
 typedef ULONG DWORD;
+typedef unsigned char BYTE;
 
 #define IOCTL_READMEMORY 0xECAC00
 #define IOCTL_IO_READ 0xECAC02
@@ -19,6 +20,11 @@ typedef ULONG DWORD;
 #define IOCTL_REQUEST_PAGES 0xECAC06
 #define IOCTL_READMEMORY_PROCESS 0xECAC08
 #define IOCTL_GET_PHYSICAL 0xECAC10
+#define IOCTL_GET_PCITSC 0xECAC14
+
+#define OVERHEAD_MEASURE_LOOPS	1000000
+
+static DWORD get_tsc_overhead(void);
 
 #pragma pack(push, 1)
 typedef struct {
@@ -48,6 +54,15 @@ typedef struct {
 typedef struct {
 	PVOID InOutPhysical;
 } DRIVER_GET_PHYSICAL;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct {
+	BYTE     bus, slot, func, offset;
+	DWORD    loops;
+	QWORD    *tsc;
+	DWORD    *tsc_overhead;
+} DRIVER_PCITSC ;
 #pragma pack(pop)
 
 typedef struct {
@@ -84,6 +99,15 @@ PDEVICE_OBJECT  gDeviceObject;
 UNICODE_STRING  gDeviceName;
 UNICODE_STRING  gDosDeviceName;
 
+DWORD           tsc_overhead;
+
+WORD read_pci_u16(BYTE bus, BYTE slot, BYTE func, BYTE offset)
+{
+	__outdword(0xCF8, 0x80000000 | bus << 16 | slot << 11 | func <<  8 | offset);
+	return (__indword(0xCFC) >> ((offset & 2) * 8)) & 0xFFFF;
+}
+
+void get_pci_latency(DWORD loops, BYTE bus, BYTE slot, BYTE func, BYTE offset , QWORD *tsc);
 
 NTSTATUS dummy_io(PDEVICE_OBJECT DriverObject, PIRP irp)
 {
@@ -262,6 +286,15 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 
 		irp->IoStatus.Information = sizeof(DRIVER_GET_PHYSICAL);
 	}
+
+	else if (ioctl_code == IOCTL_GET_PCITSC)
+	{
+		DRIVER_PCITSC *mem = (DRIVER_PCITSC*)buffer;
+		get_pci_latency(mem->loops, mem->bus, mem->slot, mem->func, mem->offset, mem->tsc);
+		*(DWORD*)mem->tsc_overhead = tsc_overhead;
+		irp->IoStatus.Status = STATUS_SUCCESS;
+		irp->IoStatus.Information = sizeof(DRIVER_PCITSC);
+	}
 E0:
 	IoCompleteRequest(irp, IO_NO_INCREMENT);
 	return STATUS_SUCCESS;
@@ -306,6 +339,11 @@ extern "C" NTSTATUS DriverEntry(
 {
 	UNREFERENCED_PARAMETER(RegistryPath);
 
+
+	//
+	// used for timing check https://github.com/andre-richter/pcie-lat/blob/master/pcie-lat.c
+	//
+	tsc_overhead = get_tsc_overhead();
 
 	//
 	// resolve KeLoaderBlock address
@@ -522,5 +560,101 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info)
 	}
 	*info->total_count = index;
 	return index != 0;
+}
+
+inline void get_tsc_top(DWORD *high, DWORD *low)
+{
+	int buffer[4]{};
+	__cpuid(buffer, 0);
+
+	QWORD tsc  = __rdtsc();
+
+	*high = (DWORD)(tsc >> 32);
+	*low  = (DWORD)(tsc & 0xFFFFFFFF);
+}
+
+inline void get_tsc_bottom(DWORD *high, DWORD *low)
+{
+	DWORD aux;
+	QWORD tsc  = __rdtscp((unsigned int*)&aux);
+
+	*high = (unsigned int)(tsc >> 32);
+	*low = (unsigned int)(tsc & 0xFFFFFFFF);
+
+	int buffer[4]{};
+	__cpuid(buffer, 0);
+}
+
+static DWORD get_tsc_overhead(void)
+{
+	QWORD sum;
+	DWORD tsc_high_before, tsc_high_after;
+	DWORD tsc_low_before, tsc_low_after;
+	DWORD i;
+
+	get_tsc_top(&tsc_high_before, &tsc_low_before);
+	get_tsc_bottom(&tsc_high_after, &tsc_low_after);
+	get_tsc_top(&tsc_high_before, &tsc_low_before);
+	get_tsc_bottom(&tsc_high_after, &tsc_low_after);
+
+	sum = 0;
+	for (i = 0; i < OVERHEAD_MEASURE_LOOPS; i++) {
+		KIRQL old;
+		KeRaiseIrql(DISPATCH_LEVEL, &old);
+
+		get_tsc_top(&tsc_high_before, &tsc_low_before);
+		get_tsc_bottom(&tsc_high_after, &tsc_low_after);
+
+		KeLowerIrql(old);
+
+		/* Calculate delta; lower 32 Bit should be enough here */
+	        sum += tsc_low_after - tsc_low_before;
+	}
+	return (DWORD)(sum / OVERHEAD_MEASURE_LOOPS);
+}
+
+void get_pci_latency(DWORD loops, BYTE bus, BYTE slot, BYTE func, BYTE offset , QWORD *tsc)
+{
+	QWORD sum;
+	DWORD tsc_high_before, tsc_high_after;
+	DWORD tsc_low_before, tsc_low_after;
+	QWORD tsc_start, tsc_end, tsc_diff;
+	DWORD i;
+
+	/*
+	 * "Warmup" of the benchmarking code.
+	 * This will put instructions into cache.
+	 */
+	get_tsc_top(&tsc_high_before, &tsc_low_before);
+	get_tsc_bottom(&tsc_high_after, &tsc_low_after);
+	get_tsc_top(&tsc_high_before, &tsc_low_before);
+	get_tsc_bottom(&tsc_high_after, &tsc_low_after);
+
+        /* Main latency measurement loop */
+	sum = 0;
+	for (i = 0; i < loops; i++) {
+
+		KIRQL old;
+		KeRaiseIrql(DISPATCH_LEVEL, &old);
+
+		get_tsc_top(&tsc_high_before, &tsc_low_before);
+
+		/*** Function to measure execution time for ***/
+		read_pci_u16(bus, slot, func, offset);
+		/***************************************/
+
+		get_tsc_bottom(&tsc_high_after, &tsc_low_after);
+
+		KeLowerIrql(old);
+
+		/* Calculate delta */
+		tsc_start = ((QWORD) tsc_high_before << 32) | tsc_low_before;
+		tsc_end = ((QWORD) tsc_high_after << 32) | tsc_low_after;
+	        tsc_diff = tsc_end  - tsc_start;
+
+		sum += tsc_diff;
+	}
+
+	*tsc = (sum / loops);
 }
 

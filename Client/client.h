@@ -32,6 +32,13 @@ FontColor(3); \
 printf(__VA_ARGS__); \
 FontColor(7); \
 
+
+#define LOG_DEBUG(...) \
+FontColor(3); \
+printf("[debug] "); \
+FontColor(7); \
+printf(__VA_ARGS__); \
+
 #define DEBUG
 #define LOG(...) printf("[drvscan] "  __VA_ARGS__)
 #ifdef DEBUG
@@ -39,6 +46,21 @@ FontColor(7); \
 #else
 #define DEBUG_LOG(...) // __VA_ARGS__
 #endif
+
+
+#pragma pack(push, 1)
+typedef struct {
+	QWORD tsc_start;
+	QWORD tsc_diff;
+} TSC_DATA ;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct {
+	QWORD    tsc;
+	DWORD    tsc_overhead;
+} DRIVER_TSC ;
+#pragma pack(pop)
 
 namespace cl
 {
@@ -55,6 +77,7 @@ namespace cl
 		virtual QWORD get_physical_address(QWORD virtual_address) = 0;
 		virtual PVOID __get_memory_map(QWORD* size) = 0;
 		virtual PVOID __get_memory_pages(QWORD* size) = 0;
+		virtual void  get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out) = 0;
 	};
 }
 
@@ -96,7 +119,6 @@ typedef struct _PORT_DEVICE_INFO {
 	DEVICE_INFO                   parent;    // parent
 	std::vector<DEVICE_INFO>      devices;   // devices in port
 } PORT_DEVICE_INFO;
-
 
 #define DMP_FULL     0x0001
 #define DMP_CODEONLY 0x0002
@@ -181,6 +203,8 @@ namespace cl
 		// gets every active port from the system with devices
 		//
 		std::vector<PORT_DEVICE_INFO> get_port_devices(void);
+
+		void get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out);
 	}
 
 	namespace efi
