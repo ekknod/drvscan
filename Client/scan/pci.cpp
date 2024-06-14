@@ -5,7 +5,7 @@ namespace scan
 	static void dumpcfg(std::vector<PORT_DEVICE_INFO> &devices);
 	static void dumpbar(std::vector<PORT_DEVICE_INFO> &devices);
 
-	static void check_hidden(PORT_DEVICE_INFO &port);
+	static void check_driver(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters);
 	static void check_xilinx(PORT_DEVICE_INFO &port);
 	static void check_config(PORT_DEVICE_INFO &port);
 	static void check_features(PORT_DEVICE_INFO &port);
@@ -79,9 +79,14 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	}
 
 	//
+	// get list of device manager devices
+	//
+	std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
+
+	//
 	// check if devices are found from registry
 	//
-	for (auto &port : port_devices) if (!port.blk) check_hidden(port);
+	for (auto &port : port_devices) if (!port.blk) check_driver(port, pnp_adapters);
 
 	//
 	// xilinx test
@@ -179,8 +184,55 @@ BOOL is_xilinx(unsigned char *cfg)
 	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
 }
 
-static void scan::check_hidden(PORT_DEVICE_INFO &port)
+static void scan::check_driver(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters)
 {
+	for (auto& dev : port.devices)
+	{
+		BOOL found = 0;
+
+		for (auto& pnp : pnp_adapters)
+		{
+			if (pnp.bus == dev.bus &&
+				pnp.slot == dev.slot &&
+				pnp.func == dev.func
+				)
+			{
+				found = 1;
+				//
+				// check if device is bus mastering without driver
+				//
+				if (dev.cfg.command().bus_master_enable() && pnp.driver_status != 0 && port.devices.size() == 1)
+				{
+					port.blk = 2;
+					port.blk_info = 22;
+					return;
+				}
+				break;
+			}
+		}
+
+		//
+		// device is not found
+		//
+		if (!found)
+		{
+			//
+			// driverless card with bus master enable
+			//
+			if (dev.cfg.command().bus_master_enable())
+			{
+				port.blk = 2; port.blk_info = 19;
+			}
+			//
+			// driverless card
+			//
+			else
+			{
+				port.blk = 1; port.blk_info = 16;
+			}
+			return;
+		}
+	}
 }
 
 static void scan::check_xilinx(PORT_DEVICE_INFO &port)
@@ -520,6 +572,7 @@ inline const char *blkinfo(unsigned char info)
 	case 19: return "driverless card with bus master";
 	case 20: return "invalid usb controller";
 	case 21: return "no attached USB devices";
+	case 22: return "driver status failed";
 	}
 	return "OK";
 }

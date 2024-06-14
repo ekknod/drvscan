@@ -661,5 +661,16 @@ PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base = 0, QWORD memo
 void  FreeImageEx(PVOID ImageBase);
 
 
+typedef struct
+{
+	unsigned char bus, slot, func;
+	std::string   pnp_id;
+	std::string   driver;
+	DWORD         driver_status;
+} PNP_ADAPTER;
+
+std::vector<PNP_ADAPTER> get_pnp_adapters();
+
+
 #endif /* UTILS_H */
 
