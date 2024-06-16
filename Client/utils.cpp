@@ -835,7 +835,7 @@ std::vector<PNP_ADAPTER> get_pnp_adapters()
 		unsigned char bus,slot,func;
 		convert_location(buffer, &bus, &slot, &func);
 
-		printf("%s [%d:%d:%d]\n", buffer, bus, slot, func);
+		// printf("%s [%d:%d:%d]\n", buffer, bus, slot, func);
 
 		SetupDiGetDeviceRegistryProperty(device_info, &data, SPDRP_DRIVER, &data_type, (BYTE*)buffer, sizeof(buffer), &len);
 		std::string driver = std::string(buffer, len);
