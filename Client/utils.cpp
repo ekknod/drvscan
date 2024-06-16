@@ -775,12 +775,19 @@ void FreeImageEx(PVOID ImageBase)
 const DEVPROPKEY DEVPKEY_Device_ProblemCode = {
 0x4340a6c5, 0x93fa, 0x4706, 0x97, 0x2c, 0x7b, 0x64, 0x80, 0x08, 0xa5, 0xa7, 3 }; // DEVPROP_TYPE_UINT32
 
+#include <ctype.h>
+
 inline void convert_location(PCSTR location_str, unsigned char *bus, unsigned char *slot, unsigned char *func)
 {
 	*bus = 0; *slot = 0; *func = 0;
 	if (location_str && (location_str = strchr(location_str, ' ')))
 	{
 		location_str = location_str + 1;
+		if (!isdigit(*location_str))
+		{
+			location_str = strchr(location_str, ' ') + 1;
+			if (location_str == (PCSTR)1) return;
+		}
 		*bus = (BYTE)atoi(location_str);
 	}
 	location_str = strchr(location_str, ' ') + 1;
@@ -827,6 +834,8 @@ std::vector<PNP_ADAPTER> get_pnp_adapters()
 
 		unsigned char bus,slot,func;
 		convert_location(buffer, &bus, &slot, &func);
+
+		printf("%s [%d:%d:%d]\n", buffer, bus, slot, func);
 
 		SetupDiGetDeviceRegistryProperty(device_info, &data, SPDRP_DRIVER, &data_type, (BYTE*)buffer, sizeof(buffer), &len);
 		std::string driver = std::string(buffer, len);
