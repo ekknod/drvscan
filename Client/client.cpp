@@ -383,6 +383,16 @@ static BOOL is_port_device(ROOT_DEVICE_INFO& dev)
 		return 0;
 	}
 
+	if (dev.self.bus != dev.self.cfg.bus_number())
+	{
+		return 0;
+	}
+
+	if (dev.self.bus > dev.self.cfg.secondary_bus())
+	{
+		return 0;
+	}
+
 	return 1;
 }
 
@@ -507,16 +517,6 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 			continue;
 		}
 
-		if (entry.self.bus != entry.self.cfg.bus_number())
-		{
-			continue;
-		}
-
-		if (entry.self.bus > entry.self.cfg.secondary_bus())
-		{
-			continue;
-		}
-
 		BYTE max_bus = entry.self.cfg.subordinate_bus();
 		auto bridge_devices = get_devices_by_bus(entry.self.cfg.secondary_bus());
 		for (auto &bridge : bridge_devices)
@@ -534,93 +534,72 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 {
 	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_bridge_devices();
-	std::vector<PORT_DEVICE_INFO> port_devices;
+	if (!root_devices.size())
+		return {};
+
+	//
+	// add all ports
+	//
+	std::vector<PORT_DEVICE_INFO> port_list;
 	while (1)
 	{
-		std::vector<ROOT_DEVICE_INFO> bridge_devices;
-		for (auto &dev : root_devices)
+		for (auto& dev : root_devices)
 		{
-			if (!is_port_device(dev))
+			if (is_port_device(dev))
 			{
-				for (auto &port : port_devices)
-				{
-					if (port.self.bus == dev.parent.bus &&
-						port.self.slot == dev.parent.slot &&
-						port.self.func == dev.parent.func
-						)
-					{
-						port.devices.push_back(dev.self);
-						break;
-					}
-				}
+				port_list.push_back({ 0, 0, dev.self, dev.parent });
 			}
-			else
+
+			for (auto& port : port_list)
 			{
-				bridge_devices.push_back(dev);
+				if (
+					port.self.bus  == dev.parent.bus  &&
+					port.self.slot == dev.parent.slot &&
+					port.self.func == dev.parent.func
+					)
+				{
+					port.devices.push_back(dev.self);
+					break;
+				}
 			}
 		}
 
-		//
-		// get new devices
-		//
 		root_devices = get_inner_devices(root_devices);
 		if (!root_devices.size())
 		{
-
-			//
-			// append new fake devices
-			//
-			for (auto &dev : bridge_devices)
-			{
-				for (auto &port : port_devices)
-				{
-					if (port.self.bus == dev.parent.bus &&
-						port.self.slot == dev.parent.slot &&
-						port.self.func == dev.parent.func
-						)
-					{
-						port.devices.push_back(dev.self);
-						break;
-					}
-				}
-			}
 			break;
 		}
-		else
+	}
+
+	//
+	// remove useless ports
+	//
+	std::vector<PORT_DEVICE_INFO> ports;
+	for (auto& port : port_list)
+	{
+		BOOL has_port = 0;
+
+		for (auto& dev : port.devices)
 		{
-			//
-			// append new port devices
-			//
-			for (auto &dev : bridge_devices)
+			for (auto& port2 : port_list)
 			{
-				port_devices.push_back({0, 0, dev.self});
+				if (
+					dev.bus  == port2.self.bus  &&
+					dev.slot == port2.self.slot &&
+					dev.func == port2.self.func
+					)
+				{
+					has_port = 1;
+					break;
+				}
 			}
 		}
-	}
 
-	std::vector<PORT_DEVICE_INFO> ports;
-	for (auto& port : port_devices)
-	{
-		//
-		// add fake port, no matter if they are empty or not
-		//
-		if (port.self.bus != port.self.cfg.bus_number())
-		{
-			port.blk = 2;
-			port.blk_info = 4;
-			ports.push_back(port);
-			continue;
-		}
-
-		//
-		// add only ports, which contains endpont devices
-		//
-		if (!port.devices.empty())
+		if (!has_port)
 		{
 			ports.push_back(port);
 		}
 	}
-
 	return ports;
 }
 
