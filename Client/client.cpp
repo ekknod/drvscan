@@ -393,6 +393,16 @@ static BOOL is_port_device(ROOT_DEVICE_INFO& dev)
 		return 0;
 	}
 
+	if (dev.parent.physical_address != 0)
+	{
+		BYTE parent_max_bus = dev.parent.cfg.subordinate_bus();
+		BYTE max_bus        = dev.self.cfg.subordinate_bus();
+		if (max_bus > parent_max_bus)
+		{
+			return 0;
+		}
+	}
+
 	return 1;
 }
 
@@ -484,7 +494,7 @@ E0:
 	return devices;
 }
 
-static std::vector<ROOT_DEVICE_INFO> get_root_bridge_devices(void)
+static std::vector<ROOT_DEVICE_INFO> get_root_ports(void)
 {
 	std::vector<ROOT_DEVICE_INFO> devices;
 	for (auto &dev : get_devices_by_class(0, 0x060400)) devices.push_back({dev});
@@ -518,14 +528,13 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 		}
 
 		BYTE max_bus = entry.self.cfg.subordinate_bus();
-		auto bridge_devices = get_devices_by_bus(entry.self.cfg.secondary_bus());
-		for (auto &bridge : bridge_devices)
+		for (auto &port : get_devices_by_bus(entry.self.cfg.secondary_bus()))
 		{
-			if (bridge.bus > max_bus)
+			if (port.bus > max_bus)
 			{
 				continue;
 			}
-			devs.push_back({bridge, entry.self});
+			devs.push_back({port, entry.self});
 		}
 	}
 	return devs;
@@ -533,12 +542,12 @@ static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_I
 
 std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 {
-	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_bridge_devices();
+	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_ports();
 	if (!root_devices.size())
 		return {};
 
 	//
-	// add all ports
+	// add to port_list every port device, and childrens they contain
 	//
 	std::vector<PORT_DEVICE_INFO> port_list;
 	while (1)
@@ -572,12 +581,12 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 	}
 
 	//
-	// remove useless ports
+	// remove switches
 	//
 	std::vector<PORT_DEVICE_INFO> ports;
 	for (auto& port : port_list)
 	{
-		BOOL has_port = 0;
+		BOOL contains_port = 0;
 
 		for (auto& dev : port.devices)
 		{
@@ -589,15 +598,21 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 					dev.func == port2.self.func
 					)
 				{
-					has_port = 1;
+					contains_port = 1;
 					break;
 				}
 			}
 		}
 
-		if (!has_port)
+		if (!contains_port)
 		{
-			ports.push_back(port);
+			//
+			// only add ports with x8 or less (optional)
+			// there can be pcileech devices like zync 7000 too (x16)
+			// however 7 series PCIe block only supports max (x8).
+			//
+			if (port.self.cfg.get_pci().link.cap.link_cap_max_link_width() <= 8)
+				ports.push_back(port);
 		}
 	}
 	return ports;
