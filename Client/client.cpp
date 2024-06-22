@@ -611,7 +611,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 			// there can be pcileech devices like zync 7000 too (x16)
 			// however 7 series PCIe block only supports max (x8).
 			//
-			if (port.self.cfg.get_pci().link.cap.link_cap_max_link_width() <= 8)
+			if (port.self.cfg.get_pci().link.status.link_status_link_width() <= 8)
 				ports.push_back(port);
 		}
 	}
