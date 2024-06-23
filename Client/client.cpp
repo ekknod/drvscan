@@ -378,22 +378,12 @@ static BOOL is_port_device(ROOT_DEVICE_INFO& dev)
 		return 0;
 	}
 
-	if (!dev.self.cfg.command().bus_master_enable())
-	{
-		return 0;
-	}
-
 	if (dev.self.cfg.header().type() == 0)
 	{
 		return 0;
 	}
 
 	if (dev.self.bus != dev.self.cfg.bus_number())
-	{
-		return 0;
-	}
-
-	if (dev.self.cfg.secondary_bus() == 0)
 	{
 		return 0;
 	}
@@ -625,7 +615,19 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 				ports.push_back(port);
 		}
 	}
-	return ports;
+
+	//
+	// remove empty ports
+	//
+	std::vector<PORT_DEVICE_INFO> ports_with_devices;
+	for (auto& port : ports)
+	{
+		if (port.devices.size())
+		{
+			ports_with_devices.push_back(port);
+		}
+	}
+	return ports_with_devices;
 }
 
 void cl::pci::get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out)
