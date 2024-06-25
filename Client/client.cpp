@@ -497,7 +497,11 @@ E0:
 static std::vector<ROOT_DEVICE_INFO> get_root_ports(void)
 {
 	std::vector<ROOT_DEVICE_INFO> devices;
-	for (auto &dev : get_devices_by_class(0, 0x060400)) devices.push_back({dev});
+	for (auto &dev : get_devices_by_class(0, 0x060400))
+	{
+		if (dev.cfg.bus_number() != dev.cfg.secondary_bus())
+			devices.push_back({dev});
+	}
 	return devices;
 }
 
@@ -561,6 +565,9 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 
 			for (auto& port : port_list)
 			{
+				//
+				// if port device location is same as endpoint parent location
+				//
 				if (
 					port.self.bus  == dev.parent.bus  &&
 					port.self.slot == dev.parent.slot &&
@@ -569,6 +576,18 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 				{
 					port.devices.push_back(dev.self);
 					break;
+				}
+
+				//
+				// add root port devices by secondary bus
+				//
+				if (dev.parent.bus == 0 && dev.parent.slot == 0 && dev.parent.func == 0 && is_port_device(dev))
+				{
+					if (port.self.cfg.secondary_bus() == dev.self.bus)
+					{
+						port.devices.push_back(dev.self);
+						break;
+					}
 				}
 			}
 		}
@@ -581,7 +600,8 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 	}
 
 	//
-	// remove switches
+	// remove mitm switches
+	// e.g. port->port(removed)->port->device
 	//
 	std::vector<PORT_DEVICE_INFO> ports;
 	for (auto& port : port_list)
@@ -615,19 +635,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 				ports.push_back(port);
 		}
 	}
-
-	//
-	// remove empty ports
-	//
-	std::vector<PORT_DEVICE_INFO> ports_with_devices;
-	for (auto& port : ports)
-	{
-		if (port.devices.size())
-		{
-			ports_with_devices.push_back(port);
-		}
-	}
-	return ports_with_devices;
+	return ports;
 }
 
 void cl::pci::get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out)
