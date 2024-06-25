@@ -83,10 +83,6 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	//
 	std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
 
-	//
-	// check if devices are found from registry
-	//
-	for (auto &port : port_devices) if (!port.blk) check_driver(port, pnp_adapters);
 
 	//
 	// xilinx test
@@ -109,6 +105,12 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	// check shadow cfg
 	//
 	for (auto &port : port_devices) if (!port.blk) check_shadowcfg(port);
+
+
+	//
+	// check if devices are found from registry
+	//
+	for (auto &port : port_devices) if (!port.blk) check_driver(port, pnp_adapters);
 
 
 	int block_cnt = 0;
