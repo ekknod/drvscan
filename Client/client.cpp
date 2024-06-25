@@ -499,8 +499,8 @@ static std::vector<ROOT_DEVICE_INFO> get_root_ports(void)
 	std::vector<ROOT_DEVICE_INFO> devices;
 	for (auto &dev : get_devices_by_class(0, 0x060400))
 	{
-		if (dev.cfg.bus_number() != dev.cfg.secondary_bus())
-			devices.push_back({dev});
+		if (dev.cfg.command().bus_master_enable() && dev.bus != dev.cfg.secondary_bus())
+			devices.push_back({ dev });
 	}
 	return devices;
 }
@@ -576,18 +576,6 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 				{
 					port.devices.push_back(dev.self);
 					break;
-				}
-
-				//
-				// add root port devices by secondary bus
-				//
-				if (dev.parent.bus == 0 && dev.parent.slot == 0 && dev.parent.func == 0 && is_port_device(dev))
-				{
-					if (port.self.cfg.secondary_bus() == dev.self.bus)
-					{
-						port.devices.push_back(dev.self);
-						break;
-					}
 				}
 			}
 		}
