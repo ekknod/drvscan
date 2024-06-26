@@ -388,7 +388,7 @@ static BOOL is_port_device(ROOT_DEVICE_INFO& dev)
 		return 0;
 	}
 
-	if (dev.self.bus > dev.self.cfg.secondary_bus())
+	if (dev.self.bus >= dev.self.cfg.secondary_bus())
 	{
 		return 0;
 	}
@@ -587,18 +587,21 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		}
 	}
 
+	std::vector<PORT_DEVICE_INFO> ports_with_devices;
+	for (auto &port : port_list) if (port.devices.size()) ports_with_devices.push_back(port);
+
 	//
 	// remove mitm switches
 	// e.g. port->port(removed)->port->device
 	//
 	std::vector<PORT_DEVICE_INFO> ports;
-	for (auto& port : port_list)
+	for (auto& port : ports_with_devices)
 	{
 		BOOL contains_port = 0;
 
 		for (auto& dev : port.devices)
 		{
-			for (auto& port2 : port_list)
+			for (auto& port2 : ports_with_devices)
 			{
 				if (
 					dev.bus  == port2.self.bus  &&
