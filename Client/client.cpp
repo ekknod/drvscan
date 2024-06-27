@@ -371,36 +371,36 @@ BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 	return io::write(device + offset, buffer, size);
 }
 
-static BOOL is_port_device(ROOT_DEVICE_INFO& dev)
+static BOOL is_port_device(DEVICE_INFO &dev, BYTE max_bus)
 {
-	if (dev.self.cfg.class_code() != 0x060400)
+	if (dev.cfg.class_code() != 0x060400)
 	{
 		return 0;
 	}
 
-	if (dev.self.cfg.header().type() == 0)
+	if (dev.cfg.header().type() == 0)
 	{
 		return 0;
 	}
 
-	if (dev.self.bus != dev.self.cfg.bus_number())
+	if (dev.bus != dev.cfg.bus_number())
 	{
 		return 0;
 	}
 
-	if (dev.self.bus >= dev.self.cfg.secondary_bus())
+	if (dev.bus >= dev.cfg.secondary_bus())
 	{
 		return 0;
 	}
 
-	if (dev.parent.physical_address != 0)
+	if (dev.cfg.secondary_bus() > max_bus)
 	{
-		BYTE parent_max_bus = dev.parent.cfg.subordinate_bus();
-		BYTE max_bus        = dev.self.cfg.subordinate_bus();
-		if (max_bus > parent_max_bus)
-		{
-			return 0;
-		}
+		return 0;
+	}
+
+	if (dev.cfg.subordinate_bus() > max_bus)
+	{
+		return 0;
 	}
 
 	return 1;
@@ -494,17 +494,6 @@ E0:
 	return devices;
 }
 
-static std::vector<ROOT_DEVICE_INFO> get_root_ports(void)
-{
-	std::vector<ROOT_DEVICE_INFO> devices;
-	for (auto &dev : get_devices_by_class(0, 0x060400))
-	{
-		if (dev.cfg.command().bus_master_enable() && dev.bus != dev.cfg.secondary_bus())
-			devices.push_back({ dev });
-	}
-	return devices;
-}
-
 static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
 {
 	//
@@ -519,111 +508,56 @@ static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
 	return get_devices_by_class(bus, 0);
 }
 
-static std::vector<ROOT_DEVICE_INFO> get_inner_devices(std::vector<ROOT_DEVICE_INFO> &devices)
+std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 {
-	std::vector<ROOT_DEVICE_INFO> devs;
+	typedef struct _BUS_DEVICES {
+		BYTE max_bus;
+		std::vector<DEVICE_INFO> devices;
+	} BUS_DEVICES;
 
-
-	for (auto &entry : devices)
+	std::vector<BUS_DEVICES> bus_devices;
+	for (auto &port : get_devices_by_class(0, 0x060400))
 	{
-		if (!is_port_device(entry))
+		if (port.cfg.subordinate_bus() == 0)
+			continue;
+
+		BUS_DEVICES bus_entry{};
+		bus_entry.max_bus = port.cfg.subordinate_bus();
+		bus_entry.devices.push_back( port );
+
+		for (BYTE bus = port.cfg.secondary_bus(); bus < port.cfg.subordinate_bus() + 1; bus++)
 		{
+			for (auto &dev : get_devices_by_bus(bus))
+			{
+				bus_entry.devices.push_back(dev);
+			}
+		}
+		bus_devices.push_back(bus_entry);
+	}
+
+	std::vector<PORT_DEVICE_INFO> ports;
+	for (auto &bus    : bus_devices)
+	for (auto &device : bus.devices)
+	{
+		//
+		// ignore switches
+		//
+		if (is_port_device(device, bus.max_bus) &&
+			device.cfg.subordinate_bus() == device.cfg.secondary_bus())
+		{
+			ports.push_back({ 0, 0,device });
 			continue;
 		}
 
-		BYTE max_bus = entry.self.cfg.subordinate_bus();
-		for (auto &port : get_devices_by_bus(entry.self.cfg.secondary_bus()))
+		//
+		// add device to parent port
+		//
+		for (auto& port : ports)
 		{
-			if (port.bus > max_bus)
+			if (port.self.cfg.secondary_bus() == device.bus)
 			{
-				continue;
+				port.devices.push_back(device);
 			}
-			devs.push_back({port, entry.self});
-		}
-	}
-	return devs;
-}
-
-std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
-{
-	std::vector<ROOT_DEVICE_INFO> root_devices = get_root_ports();
-	if (!root_devices.size())
-		return {};
-
-	//
-	// add to port_list every port device, and childrens they contain
-	//
-	std::vector<PORT_DEVICE_INFO> port_list;
-	while (1)
-	{
-		for (auto& dev : root_devices)
-		{
-			if (is_port_device(dev))
-			{
-				port_list.push_back({ 0, 0, dev.self, dev.parent });
-			}
-
-			for (auto& port : port_list)
-			{
-				//
-				// if port device location is same as endpoint parent location
-				//
-				if (
-					port.self.bus  == dev.parent.bus  &&
-					port.self.slot == dev.parent.slot &&
-					port.self.func == dev.parent.func
-					)
-				{
-					port.devices.push_back(dev.self);
-					break;
-				}
-			}
-		}
-
-		root_devices = get_inner_devices(root_devices);
-		if (!root_devices.size())
-		{
-			break;
-		}
-	}
-
-	std::vector<PORT_DEVICE_INFO> ports_with_devices;
-	for (auto &port : port_list) if (port.devices.size()) ports_with_devices.push_back(port);
-
-	//
-	// remove mitm switches
-	// e.g. port->port(removed)->port->device
-	//
-	std::vector<PORT_DEVICE_INFO> ports;
-	for (auto& port : ports_with_devices)
-	{
-		BOOL contains_port = 0;
-
-		for (auto& dev : port.devices)
-		{
-			for (auto& port2 : ports_with_devices)
-			{
-				if (
-					dev.bus  == port2.self.bus  &&
-					dev.slot == port2.self.slot &&
-					dev.func == port2.self.func
-					)
-				{
-					contains_port = 1;
-					break;
-				}
-			}
-		}
-
-		if (!contains_port)
-		{
-			//
-			// only add ports with x8 or less (optional)
-			// there can be pcileech devices like zync 7000 too (x16)
-			// however 7 series PCIe block only supports max (x8).
-			//
-			if (port.self.cfg.get_pci().link.status.link_status_link_width() <= 8)
-				ports.push_back(port);
 		}
 	}
 	return ports;
