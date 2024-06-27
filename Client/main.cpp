@@ -1,5 +1,6 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "scan/scan.h"
+#include <chrono>
 
 int main(int argc, char **argv)
 {
@@ -108,11 +109,13 @@ int main(int argc, char **argv)
 		}
 	}
 
+	auto timer_start = std::chrono::high_resolution_clock::now();
+
 	if (scanpci)
 	{
 		LOG("scanning PCIe devices\n");
+
 		scan::pci(block, advanced, cfg, bar);
-		LOG("scan is complete\n");
 	}
 
 	if (scan)
@@ -133,20 +136,25 @@ int main(int argc, char **argv)
 		{
 			scan::image(savecache, modules, pid, mod, use_cache);
 		}
-		LOG("scan is complete\n");
 	}
 
 	if (scanefi)
 	{
 		LOG("scanning EFI\n");
 		scan::efi(dump);
-		LOG("scan is complete\n");
 	}
+
+	auto timer_end = std::chrono::high_resolution_clock::now() - timer_start;
+
+	if (scanefi+scan+scanpci)
+		LOG("scan is complete [%lldms]\n",
+			std::chrono::duration_cast<std::chrono::milliseconds>(timer_end).count());
 
 	//
 	// add watermark
 	//
 	PRINT_GREEN("\nbuild date: %s, %s\n", __DATE__, __TIME__);
+
 
 	return 0;
 }

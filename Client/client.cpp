@@ -535,29 +535,55 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		bus_devices.push_back(bus_entry);
 	}
 
-	std::vector<PORT_DEVICE_INFO> ports;
+	std::vector<PORT_DEVICE_INFO> port_list;
 	for (auto &bus    : bus_devices)
 	for (auto &device : bus.devices)
 	{
-		//
-		// ignore switches
-		//
-		if (is_port_device(device, bus.max_bus) &&
-			device.cfg.subordinate_bus() == device.cfg.secondary_bus())
+		if (is_port_device(device, bus.max_bus))
 		{
-			ports.push_back({ 0, 0,device });
-			continue;
+			port_list.push_back({ 0, 0,device });
 		}
 
 		//
 		// add device to parent port
 		//
-		for (auto& port : ports)
+		for (auto& port : port_list)
 		{
 			if (port.self.cfg.secondary_bus() == device.bus)
 			{
 				port.devices.push_back(device);
 			}
+		}
+	}
+
+	//
+	// remove mitm switches
+	// e.g. port->port(removed)->port->device
+	//
+	std::vector<PORT_DEVICE_INFO> ports;
+	for (auto& port : port_list)
+	{
+		BOOL contains_port = 0;
+
+		for (auto& dev : port.devices)
+		{
+			for (auto& port2 : port_list)
+			{
+				if (
+					dev.bus  == port2.self.bus  &&
+					dev.slot == port2.self.slot &&
+					dev.func == port2.self.func
+					)
+				{
+					contains_port = 1;
+					break;
+				}
+			}
+		}
+
+		if (!contains_port)
+		{
+			ports.push_back(port);
 		}
 	}
 	return ports;
