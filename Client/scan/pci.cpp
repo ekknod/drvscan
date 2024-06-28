@@ -10,6 +10,34 @@ namespace scan
 
 	static void PrintPcieInfo(PORT_DEVICE_INFO& port);
 	static void PrintPcieConfiguration(unsigned char *cfg, int size);
+
+	std::wstring get_driver_name(DEVICE_INFO &dev)
+	{
+		if (!dev.drv_device_object)
+			return L"NO_DRIVER";
+
+		QWORD driver_object = cl::vm::read<QWORD>(4, dev.drv_device_object + 0x08);
+		if (!driver_object)
+			return L"???";
+
+		QWORD stradr = cl::vm::read<QWORD>(4, driver_object + 0x38 + 0x08);
+		if (stradr == 0)
+			return L"";
+
+		WORD  length = cl::vm::read<WORD>(4, driver_object + 0x38);
+		if (length == 0)
+			return L"";
+
+		WORD* buffer = (WORD*)malloc(length + 2);
+		memset(buffer, 0, length+2);
+		cl::vm::read(4, stradr, buffer, length);
+
+		std::wstring out = std::wstring((const WCHAR*)buffer, length + 2);
+
+		free(buffer);
+
+		return out;
+	}
 }
 
 void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
@@ -410,17 +438,21 @@ static void scan::PrintPcieInfo(PORT_DEVICE_INFO &port)
 	//
 	// print port information
 	//
-	printf("[%s] [%02d:%02d:%02d] [%04X:%04X] (%s)\n",
+	printf("[%s] [%02d:%02d:%02d] [%04X:%04X] (%s) [%S]\n",
 		get_port_type_str(port.self.cfg), port.self.bus, port.self.slot, port.self.func,
-		port.self.cfg.vendor_id(), port.self.cfg.device_id(), blkinfo(port.blk_info));
+		port.self.cfg.vendor_id(), port.self.cfg.device_id(), blkinfo(port.blk_info),
+		get_driver_name(port.self).c_str()
+	);
 
 	//
 	// print device PCIe device information
 	//
 	for (auto &dev : port.devices)
 	{
-		printf("	[%s] [%02d:%02d:%02d] [%04X:%04X]\n",
-			get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, dev.cfg.vendor_id(), dev.cfg.device_id());
+		printf("	[%s] [%02d:%02d:%02d] [%04X:%04X] [%S]\n",
+			get_port_type_str(dev.cfg), dev.bus, dev.slot, dev.func, dev.cfg.vendor_id(), dev.cfg.device_id(),
+			get_driver_name(dev).c_str()
+		);
 	}
 
 	printf("\n");
