@@ -13,31 +13,24 @@
 
 typedef ULONG_PTR QWORD;
 
-#pragma pack(push, 1)
 typedef struct {
 	std::string             path;
 	std::string             name;
 	QWORD                   base;
 	QWORD                   size;
 } FILE_INFO ;
-#pragma pack(pop)
 
-#pragma pack(push, 1)
 typedef struct {
 	DWORD                  process_id;
 	std::vector<FILE_INFO> process_modules;
 } PROCESS_INFO;
-#pragma pack(pop)
 
-#pragma pack(push, 1)
 typedef struct {
 	QWORD                  address;
 	QWORD                  length;
 	DWORD                  tag;
 } BIGPOOL_INFO;
-#pragma pack(pop)
 
-#pragma pack(push, 1)
 typedef struct {
 	DWORD                  pid;
 	BYTE                   object_type;
@@ -46,7 +39,6 @@ typedef struct {
 	QWORD                  object;
 	ACCESS_MASK            access_mask;
 } HANDLE_INFO;
-#pragma pack(pop)
 
 #define GET_BIT(data, bit) ((data >> bit) & 1)
 #define GET_BITS(data, high, low) ((data >> low) & ((1 << (high - low + 1)) - 1))
@@ -659,17 +651,6 @@ std::vector<HANDLE_INFO>  get_system_handle_information(void);
 PVOID LoadFileEx(PCSTR path, DWORD *out_len);
 PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base = 0, QWORD memory_image=0);
 void  FreeImageEx(PVOID ImageBase);
-
-
-typedef struct
-{
-	unsigned char bus, slot, func;
-	std::string   pnp_id;
-	std::string   driver;
-	DWORD         driver_status;
-} PNP_ADAPTER;
-
-std::vector<PNP_ADAPTER> get_pnp_adapters();
 
 
 #endif /* UTILS_H */

@@ -5,6 +5,9 @@
 #include <chrono>
 
 QWORD cl::ntoskrnl_base;
+
+
+
 std::vector<QWORD> cl::global_export_list;
 
 
@@ -24,6 +27,13 @@ namespace cl
 
 	QWORD MmPfnDatabase;
 	QWORD MmPteBase;
+
+	//
+	// if drvscan would be less retarded, it would use
+	// \Driver\pci & \Driver\acpi instead
+	//
+	QWORD PciDriverObject;
+	QWORD AcpiDriverObject;
 
 	namespace efi
 	{
@@ -101,6 +111,86 @@ cleanup:
 	return export_address;
 }
 
+static int CheckMask(unsigned char* base, unsigned char* pattern, unsigned char* mask)
+{
+	for (; *mask; ++base, ++pattern, ++mask)
+		if (*mask == 'x' && *base != *pattern)
+			return 0;
+	return 1;
+}
+
+void *FindPatternEx(unsigned char* base, QWORD size, unsigned char* pattern, unsigned char* mask)
+{
+	size -= strlen((const char *)mask);
+	for (QWORD i = 0; i <= size; ++i) {
+		void* addr = &base[i];
+		if (CheckMask((unsigned char *)addr, pattern, mask))
+			return addr;
+	}
+	return 0;
+}
+
+QWORD FindPattern(QWORD base, unsigned char* pattern, unsigned char* mask)
+{
+	if (base == 0)
+	{
+		return 0;
+	}
+
+	QWORD nt_header = (QWORD)*(DWORD*)(base + 0x03C) + base;
+	if (nt_header == base)
+	{
+		return 0;
+	}
+
+	WORD machine = *(WORD*)(nt_header + 0x4);
+	QWORD section_header = machine == 0x8664 ?
+		nt_header + 0x0108 :
+		nt_header + 0x00F8;
+
+	for (WORD i = 0; i < *(WORD*)(nt_header + 0x06); i++) {
+		QWORD section = section_header + ((QWORD)i * 40);
+
+		DWORD section_characteristics = *(DWORD*)(section + 0x24);
+
+		if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
+		{
+			QWORD virtual_address = base + (QWORD)*(DWORD*)(section + 0x0C);
+			DWORD virtual_size = *(DWORD*)(section + 0x08);
+
+			void *found_pattern = FindPatternEx( (unsigned char*)virtual_address, virtual_size, pattern, mask);
+			if (found_pattern)
+			{
+				return (QWORD)found_pattern;
+			}
+		}
+	}
+	return 0;
+}
+
+static QWORD get_kernel_pattern(PCSTR name, QWORD kernel_base, unsigned char* pattern, unsigned char* mask)
+{
+	HMODULE ntos = LoadLibraryA(name);
+
+	if (ntos == 0)
+	{
+		return 0;
+	}
+
+	QWORD export_address = (QWORD)FindPattern((QWORD)ntos, pattern, mask);
+	if (export_address == 0)
+	{
+		goto cleanup;
+	}
+
+	export_address = export_address - (QWORD)ntos;
+	export_address = export_address + kernel_base;
+
+cleanup:
+	FreeLibrary(ntos);
+	return export_address;
+}
+
 BOOL cl::initialize(void)
 {
 	if (controller != 0)
@@ -108,16 +198,28 @@ BOOL cl::initialize(void)
 		return 1;
 	}
 
+	QWORD pci_base = 0, acpi_base = 0;
+	std::string pci_path, acpi_path;
+
 	for (auto &drv : get_kernel_modules())
 	{
 		if (!_strcmpi(drv.name.c_str(), "ntoskrnl.exe"))
 		{
 			ntoskrnl_base = drv.base;
-			break;
+		}
+		if (!_strcmpi(drv.name.c_str(), "pci.sys"))
+		{
+			pci_base = drv.base;
+			pci_path = drv.path;
+		}
+		if (!_strcmpi(drv.name.c_str(), "acpi.sys"))
+		{
+			acpi_base = drv.base;
+			acpi_path = drv.path;
 		}
 	}
 
-	if (ntoskrnl_base == 0)
+	if (ntoskrnl_base == 0 || pci_base == 0 || acpi_base == 0)
 	{
 		return 0;
 	}
@@ -133,7 +235,19 @@ BOOL cl::initialize(void)
 			return 0;
 		}
 	}
-	
+
+	PciDriverObject = get_kernel_pattern(
+		pci_path.c_str(), pci_base, (BYTE*)"\x48\x8B\x1D\x00\x00\x00\x00\x75", (BYTE*)"xxx????x");
+
+	AcpiDriverObject = get_kernel_pattern(
+		acpi_path.c_str(), acpi_base, (BYTE*)"\x48\x8B\x0D\x00\x00\x00\x00\xB2\x00\x48\xFF\x15", (BYTE*)"xxx????x?xxx");
+
+	if (PciDriverObject == 0 || AcpiDriverObject == 0)
+	{
+		LOG("OS is not currently supported\n");
+		return 0;
+	}
+
 	clkm *km = new clkm();
 	clint *intel = new clint();
 	clum *um = new clum();
@@ -200,6 +314,9 @@ BOOL cl::initialize(void)
 
 		MmPfnDatabase         = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x0E + 0x02);
 		MmPteBase             = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x20 + 0x02);
+
+		AcpiDriverObject      = vm::read<QWORD>(4, vm::get_relative_address(4, AcpiDriverObject, 3, 7));
+		PciDriverObject       = vm::read<QWORD>(4, vm::get_relative_address(4, PciDriverObject, 3, 7));
 	}
 	return 1;
 }
@@ -351,7 +468,7 @@ QWORD cl::pci::get_physical_address(ULONG bus, ULONG slot)
 	return vm::read<QWORD>(4, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
 }
 
-BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
+BOOL cl::pci::read(BYTE bus, BYTE slot, DWORD offset, PVOID buffer, DWORD size)
 {
 	QWORD device = get_physical_address(bus, slot);
 
@@ -361,7 +478,7 @@ BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
 	return io::read(device + offset, buffer, size);
 }
 
-BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size)
+BOOL cl::pci::write(BYTE bus, BYTE slot, DWORD offset, PVOID buffer, DWORD size)
 {
 	QWORD device = get_physical_address(bus, slot);
 
@@ -450,7 +567,7 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 				}
 			}
 
-			DEVICE_INFO device;
+			DEVICE_INFO device{};
 			device.bus = bus;
 			device.slot = slot;
 			device.func = func;
@@ -465,7 +582,7 @@ static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD cl
 
 			WORD optimize_ptr = 0x100 + 2;
 			WORD max_size     = sizeof(device.cfg.raw);
-			for (int i = 0; i < max_size; i+= 2)
+			for (WORD i = 0; i < max_size; i+= 2)
 			{
 				*(WORD*)((PBYTE)device.cfg.raw + i) = cl::io::read<WORD>(entry + i);
 				if (i >= optimize_ptr)
@@ -586,6 +703,68 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 			ports.push_back(port);
 		}
 	}
+
+	typedef struct _PCI_SLOT_NUMBER {
+		union {
+		struct {
+			ULONG   DeviceNumber:5;
+			ULONG   FunctionNumber:3;
+			ULONG   Reserved:24;
+		} bits;
+		ULONG   AsULONG;
+		} u;
+	} PCI_SLOT_NUMBER, *PPCI_SLOT_NUMBER;
+
+	//
+	// add device objects
+	//
+	QWORD pci = PciDriverObject;
+	QWORD pci_dev = vm::read<QWORD>(4, pci + 0x08);
+	while (pci_dev)
+	{
+		QWORD pci_ext = vm::read<QWORD>(4, pci_dev + 0x40);
+		if (pci_ext && vm::read<DWORD>(4, pci_ext) == 0x44696350)
+		{
+			DWORD bus = vm::read<DWORD>(4, pci_ext + 0x1C);
+			PCI_SLOT_NUMBER slot{};
+			slot.u.AsULONG = vm::read<DWORD>(4, pci_ext + 0x20);
+
+			for (auto &port : ports)
+			{
+				if (port.self.bus == bus &&
+					port.self.slot == slot.u.bits.DeviceNumber &&
+					port.self.func == slot.u.bits.FunctionNumber)
+				{
+					port.self.pci_device_object = pci_dev;
+					goto next_device;
+				}
+				for (auto &dev  : port.devices)
+				{
+					if (dev.bus == bus &&
+						dev.slot == slot.u.bits.DeviceNumber &&
+						dev.func == slot.u.bits.FunctionNumber)
+					{
+						dev.pci_device_object = pci_dev;
+
+						QWORD attached_device = cl::vm::read<QWORD>(4, dev.pci_device_object + 0x18);
+						if (!attached_device)
+							goto next_device;
+
+						QWORD driver_object = cl::vm::read<QWORD>(4, attached_device + 0x08);
+						if (driver_object == AcpiDriverObject)
+							attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
+
+						dev.drv_device_object = attached_device;
+
+						goto next_device;
+					}
+				}
+			}
+		}
+	next_device:
+		pci_dev = vm::read<QWORD>(4, pci_dev + 0x10);
+	}
+
 	return ports;
 }
 

@@ -88,33 +88,30 @@ BOOL cl::clkm::read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length
 
 		return status;
 	}
+
+	DRIVER_READMEMORY_PROCESS io{};
+	io.src = (PVOID)address;
+
+	PVOID tmp_buffer = (PVOID)malloc(length);
+
+	io.dst = tmp_buffer;
+	io.length = length;
+	io.pid = pid;
+
+	BOOL status = DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
+
+	if (status)
+	{
+		memcpy(buffer, tmp_buffer, length);
+	}
 	else
 	{
-		DRIVER_READMEMORY_PROCESS io{};
-		io.src = (PVOID)address;
-
-		PVOID tmp_buffer = (PVOID)malloc(length);
-
-		io.dst = tmp_buffer;
-		io.length = length;
-		io.pid = pid;
-
-		BOOL status = DeviceIoControl(hDriver, IOCTL_READMEMORY_PROCESS, &io, sizeof(io), &io, sizeof(io), 0, 0);
-
-		if (status)
-		{
-			memcpy(buffer, tmp_buffer, length);
-		}
-		else
-		{
-			memset(buffer, 0, length);
-		}
-
-		free(tmp_buffer);
-
-		return status;
+		memset(buffer, 0, length);
 	}
-	return 0;
+
+	free(tmp_buffer);
+
+	return status;
 }
 
 BOOL cl::clkm::read_mmio(QWORD address, PVOID buffer, QWORD length)

@@ -3,22 +3,19 @@
 namespace scan
 {
 	static void dumpcfg(std::vector<PORT_DEVICE_INFO> &devices);
-	static void dumpbar(std::vector<PORT_DEVICE_INFO> &devices);
 
-	static void check_driver(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters);
-	static void check_xilinx(PORT_DEVICE_INFO &port);
+	static void check_driver(PORT_DEVICE_INFO &port);
+	static void check_hidden(PORT_DEVICE_INFO &port);
 	static void check_config(PORT_DEVICE_INFO &port);
-	static void check_features(PORT_DEVICE_INFO &port);
-	static void check_shadowcfg(PORT_DEVICE_INFO &port);
 
 	static void PrintPcieInfo(PORT_DEVICE_INFO& port);
 	static void PrintPcieConfiguration(unsigned char *cfg, int size);
-	static void PrintPcieBarSpace(DWORD bar);
-	static void PrintPcieCfg(config::Pci cfg);
 }
 
-void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
+void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 {
+	UNREFERENCED_PARAMETER(advanced);
+
 	std::vector<PORT_DEVICE_INFO> port_devices = cl::pci::get_port_devices();
 
 	if (dump_cfg)
@@ -27,68 +24,10 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 		return;
 	}
 
-	if (dump_bar)
-	{
-		dumpbar(port_devices);
-		return;
-	}
-
 	//
-	// duplicated ports
+	// hidden test
 	//
-	{
-		std::vector<BYTE> nums;
-		for (auto &port : port_devices)
-		{
-			BYTE secondary_bus = port.self.cfg.secondary_bus() ;
-
-			for (auto &num : nums)
-			{
-				if (num == secondary_bus)
-				{
-					port.blk = 2;
-					port.blk_info = 4;
-				}
-			}
-
-			nums.push_back(secondary_bus);
-		}
-	}
-
-	//
-	// duplicated port devices
-	//
-	{
-		for (auto &port : port_devices)
-		{
-			std::vector<DWORD> nums;
-			for (auto &dev : port.devices)
-			{
-				DWORD location = (dev.bus << 16) | (dev.slot << 8) | dev.func;
-				for (auto &num : nums)
-				{
-					if (location == num)
-					{
-						port.blk = 2;
-						port.blk_info = 4;
-					}
-				}
-				nums.push_back(location);
-			}
-		}
-	}
-
-	//
-	// get list of device manager devices
-	//
-	std::vector<PNP_ADAPTER> pnp_adapters = get_pnp_adapters();
-
-
-	//
-	// xilinx test
-	//
-	if (advanced)
-		for (auto &port : port_devices) if (!port.blk) check_xilinx(port);
+	for (auto &port : port_devices) if (!port.blk) check_hidden(port);
 
 	//
 	// check device config
@@ -96,21 +35,9 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	for (auto &port : port_devices) if (!port.blk) check_config(port);
 
 	//
-	// check device features
+	// check if device has driver
 	//
-	if (advanced)
-		for (auto &port : port_devices) if (!port.blk) check_features(port);
-
-	//
-	// check shadow cfg
-	//
-	for (auto &port : port_devices) if (!port.blk) check_shadowcfg(port);
-
-
-	//
-	// check if devices are found from registry
-	//
-	for (auto &port : port_devices) if (!port.blk) check_driver(port, pnp_adapters);
+	for (auto &port : port_devices) if (!port.blk) check_driver(port);
 
 
 	int block_cnt = 0;
@@ -172,51 +99,16 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg, BOOL dump_bar)
 	}
 }
 
-BOOL is_xilinx(unsigned char *cfg)
+static void scan::check_driver(PORT_DEVICE_INFO &port)
 {
-	unsigned char *a0 = cfg + *(BYTE*)(cfg + 0x34);
-	if (a0[1] == 0)
-		return 0;
+	BOOL driver_installed=0;
 
-	a0 = cfg + a0[1];
-	if (a0[1] == 0)
-		return 0;
-
-	DWORD a1 = *(DWORD*)(cfg + a0[1] + 0x0C);
-	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
-}
-
-static void scan::check_driver(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters)
-{
 	for (auto& dev : port.devices)
 	{
-		BOOL found = 0;
-
-		for (auto& pnp : pnp_adapters)
-		{
-			if (pnp.bus == dev.bus &&
-				pnp.slot == dev.slot &&
-				pnp.func == dev.func
-				)
-			{
-				found = 1;
-				//
-				// check if device is bus mastering without driver
-				//
-				if (dev.cfg.command().bus_master_enable() && pnp.driver_status != 0 && port.devices.size() == 1)
-				{
-					port.blk = 2;
-					port.blk_info = 22;
-					return;
-				}
-				break;
-			}
-		}
-
 		//
 		// device is not found
 		//
-		if (!found)
+		if (!dev.drv_device_object)
 		{
 			//
 			// driverless card with bus master enable
@@ -224,45 +116,29 @@ static void scan::check_driver(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> 
 			if (dev.cfg.command().bus_master_enable())
 			{
 				port.blk = 2; port.blk_info = 19;
+				return;
 			}
-			//
-			// driverless card
-			//
-			else
-			{
-				port.blk = 1; port.blk_info = 16;
-			}
-			return;
 		}
+		else
+		{
+			driver_installed = 1;
+		}
+	}
+
+	if (!driver_installed)
+	{
+		port.blk = 1; port.blk_info = 16;
 	}
 }
 
-static void scan::check_xilinx(PORT_DEVICE_INFO &port)
+static void scan::check_hidden(PORT_DEVICE_INFO &port)
 {
 	for (auto& dev : port.devices)
 	{
-		if (port.devices.size() > 1)
+		if (!dev.pci_device_object)
 		{
-			continue;
-		}
-
-		//
-		// device says i'm not xilinx, config latency test
-		//
-		// if (!is_xilinx(dev.cfg.raw))
-		{
-			//
-			// config latency test
-			//
-			DRIVER_TSC latency{};
-			cl::pci::get_pci_latency(dev.bus, dev.slot, dev.func, 0x00, 1024, &latency);
-
-			DRIVER_TSC shadow_cfg{};
-			cl::pci::get_pci_latency(dev.bus, dev.slot, dev.func, 0xA8, 1024, &shadow_cfg);
-
-			QWORD shadow_delta = shadow_cfg.tsc - latency.tsc;
-
-			LOG_DEBUG("[%d:%d:%d] delta: %lld, tsc: %lld\n", dev.bus, dev.slot, dev.func, shadow_delta, latency.tsc);
+			port.blk = 2; port.blk_info = 5;
+			break;
 		}
 	}
 }
@@ -455,35 +331,6 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 		}
 }
 
-static void scan::check_features(PORT_DEVICE_INFO &port)
-{
-}
-
-static void scan::check_shadowcfg(PORT_DEVICE_INFO &port)
-{
-	//
-	// test shadow cfg (pcileech-fpga 4.11 and lower)
-	//
-	for (auto& dev : port.devices)
-	{
-		DWORD tick = GetTickCount();
-		cl::pci::write<WORD>(dev.bus, dev.slot, 0xA0, *(WORD*)(dev.cfg.raw + 0xA0));
-		tick = GetTickCount() - tick;
-		if (tick > 100)
-			continue;
-
-		tick = GetTickCount();
-		cl::pci::write<WORD>(dev.bus, dev.slot, 0xA8, *(WORD*)(dev.cfg.raw + 0xA8));
-		tick = GetTickCount() - tick;
-		if (tick > 100)
-		{
-			port.blk = 2;
-			port.blk_info = 1;
-			return;
-		}
-	}
-}
-
 static void scan::dumpcfg(std::vector<PORT_DEVICE_INFO> &devices)
 {
 	for (auto& entry : devices)
@@ -493,60 +340,8 @@ static void scan::dumpcfg(std::vector<PORT_DEVICE_INFO> &devices)
 			printf("[%d:%d:%d] [%02X:%02X]", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg.raw), *(WORD*)(dev.cfg.raw + 0x02));
 			PrintPcieConfiguration(dev.cfg.raw, sizeof(dev.cfg));
 			printf("\n");
-			PrintPcieCfg(dev.cfg);
-			printf("\n");
 		}
 	}
-}
-
-static void scan::dumpbar(std::vector<PORT_DEVICE_INFO> &devices)
-{
-	for (auto& entry : devices)
-	for (auto& dev : entry.devices)
-	{
-		if (!dev.cfg.command().bus_master_enable())
-		{
-			continue;
-		}
-
-		for (DWORD i = 0; i < 6; i++)
-		{
-			DWORD bar = dev.cfg.bar(i);
-			if (bar > 0x10000000)
-			{
-				printf("[%d:%d:%d] [%02X:%02X]\n",
-					dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg.raw), *(WORD*)(dev.cfg.raw + 0x02));
-				PrintPcieBarSpace(bar);
-				printf("\n\n\n\n");
-			}
-		}
-
-	}
-}
-
-static void scan::PrintPcieBarSpace(DWORD bar)
-{
-	int line_counter=0;
-	int row_max_count=0;
-	for (int i = 0; i < 0x1000; i+=4)
-	{
-		unsigned int cfg = cl::io::read<unsigned int>(bar + i);
-		line_counter++;
-		printf("%08X,", cfg);
-		if (line_counter == 4)
-		{
-			printf("\n");
-			line_counter=0;
-		}
-		row_max_count++;
-
-		if (row_max_count == (16*4))
-		{
-			printf("\n");
-			row_max_count=0;
-		}
-	}
-	printf("\n");
 }
 
 inline const char *blkinfo(unsigned char info)
@@ -659,8 +454,3 @@ static void scan::PrintPcieConfiguration(unsigned char *cfg, int size)
 	}
 	printf("\n");
 }
-
-static void scan::PrintPcieCfg(config::Pci cfg)
-{
-}
-

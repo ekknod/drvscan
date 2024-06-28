@@ -3,7 +3,7 @@
 
 #include "utils.h"
 
-inline void FontColor(int color=0x07) { SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), color); }
+inline void FontColor(WORD color=0x07) { SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), color); }
 
 #define LOG_RED(...) \
 printf("[drvscan] "); \
@@ -105,6 +105,8 @@ typedef struct _DEVICE_INFO {
 	unsigned char  bus, slot, func;
 	config::Pci    cfg;
 	QWORD physical_address;
+	QWORD pci_device_object;
+	QWORD drv_device_object;
 } DEVICE_INFO;
 
 typedef struct _PORT_DEVICE_INFO {
@@ -173,11 +175,11 @@ namespace cl
 	namespace pci
 	{
 		QWORD get_physical_address(ULONG bus, ULONG slot);
-		BOOL  read(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size);
-		BOOL  write(BYTE bus, BYTE slot, BYTE offset, PVOID buffer, QWORD size);
+		BOOL  read(BYTE bus, BYTE slot, DWORD offset, PVOID buffer, DWORD size);
+		BOOL  write(BYTE bus, BYTE slot, DWORD offset, PVOID buffer, DWORD size);
 
 		template <typename t>
-		t read(BYTE bus, BYTE slot, BYTE offset)
+		t read(BYTE bus, BYTE slot, DWORD offset)
 		{
 			t b;
 			if (!read(bus, slot, offset, &b, sizeof(b)))
@@ -188,7 +190,7 @@ namespace cl
 		}
 
 		template <typename t>
-		BOOL write(BYTE bus, BYTE slot, BYTE offset, t value)
+		BOOL write(BYTE bus, BYTE slot, DWORD offset, t value)
 		{
 			return write(bus, slot, offset, &value, sizeof(t));
 		}

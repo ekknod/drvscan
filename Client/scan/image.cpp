@@ -74,10 +74,6 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 		return;
 	}
 
-	QWORD image_dos_header = (QWORD)local_image;
-	QWORD image_nt_header = *(DWORD*)(image_dos_header + 0x03C) + image_dos_header;
-	unsigned short machine = *(WORD*)(image_nt_header + 0x4);
-
 	DWORD min_difference = 1;
 
 	LOG("scanning: %s\n", file.path.c_str());
@@ -87,12 +83,6 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 	cl::vm::free_module((PVOID)runtime_image);
 
 	FreeImageEx((void *)local_image);
-}
-
-static BOOLEAN IsAddressEqual(QWORD address0, QWORD address2, INT64 cnt)
-{
-	INT64 res = abs(  (INT64)(address2 - address0)  );
-	return res <= cnt;
 }
 
 static void scan_section(DWORD diff, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address)

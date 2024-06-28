@@ -22,7 +22,7 @@ int main(int argc, char **argv)
 		return getchar();
 	}
 
-	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, advanced=0, block=0, cfg=0, bar=0, use_cache = 0, scanefi = 0, dump = 0;
+	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, advanced=0, block=0, cfg=0, use_cache = 0, scanefi = 0, dump = 0;
 	for (int i = 1; i < argc; i++)
 	{
 		if (!strcmp(argv[i], "--help"))
@@ -39,8 +39,7 @@ int main(int argc, char **argv)
 				"--scanpci              scan pci cards from the system\n"
 				"    --advanced         (optional) test pci features\n"
 				"    --block            (optional) block illegal cards\n"
-				"    --cfg              (optional) print out every card cfg space\n"
-				"    --bar              (optional) print out every card bar space\n\n\n"
+				"    --cfg              (optional) print out every card cfg space\n\n\n"
 			);
 
 			printf("\nExample (verifying modules integrity by using cache):\n"
@@ -88,11 +87,6 @@ int main(int argc, char **argv)
 			cfg = 1;
 		}
 
-		else if (!strcmp(argv[i], "--bar"))
-		{
-			bar = 1;
-		}
-
 		else if (!strcmp(argv[i], "--scanefi"))
 		{
 			scanefi = 1;
@@ -115,7 +109,7 @@ int main(int argc, char **argv)
 	{
 		LOG("scanning PCIe devices\n");
 
-		scan::pci(block, advanced, cfg, bar);
+		scan::pci(block, advanced, cfg);
 	}
 
 	if (scan)
