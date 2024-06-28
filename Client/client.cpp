@@ -736,6 +736,16 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 					port.self.func == slot.u.bits.FunctionNumber)
 				{
 					port.self.pci_device_object = pci_dev;
+					QWORD attached_device = cl::vm::read<QWORD>(4, port.self.pci_device_object + 0x18);
+					if (!attached_device)
+						goto next_device;
+
+					QWORD driver_object = cl::vm::read<QWORD>(4, attached_device + 0x08);
+					if (driver_object == AcpiDriverObject)
+						attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
+
+					port.self.drv_device_object = attached_device;
+
 					goto next_device;
 				}
 				for (auto &dev  : port.devices)
