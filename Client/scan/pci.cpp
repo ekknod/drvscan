@@ -177,9 +177,6 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 
 	for (auto &dev : port.devices)
 	{
-		//
-		// check that the device has a pointer to the capabilities list (status register bit 4 set to 1)
-		//
 		auto pcie = dev.cfg.get_pci();
 		if (pcie.cap_on != 0)
 		{
@@ -230,25 +227,6 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 		if (dev.cfg.vendor_id() == 0x10EE)
 		{
 			port.blk = 1; port.blk_info = 3;
-			return;
-		}
-
-		//
-		// hidden device, LUL.
-		//
-		if (dev.cfg.device_id() == 0xFFFF && dev.cfg.vendor_id() == 0xFFFF)
-		{
-			port.blk  = 2; port.blk_info = 5;
-			return;
-		}
-
-
-		//
-		// invalid VID/PID
-		//
-		if (dev.cfg.device_id() == 0x0000 && dev.cfg.vendor_id() == 0x0000)
-		{
-			port.blk  = 2; port.blk_info = 5;
 			return;
 		}
 
@@ -314,49 +292,6 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 		port.blk = 1; port.blk_info = 2;
 		return;
 	}
-
-	for (auto &dev : port.devices)
-		if (dev.cfg.status().capabilities_list())
-			for (BYTE i = 0; i < config::MAX_CAPABILITIES; i++)
-			{
-				auto cap = dev.cfg.get_capability_by_id(i);
-
-				if (!cap)
-					continue;
-
-				if (*(DWORD*)(dev.cfg.raw + cap) == 0)
-				{
-					//
-					// device reports to have next cap, but it's empty (???)
-					//
-					port.blk_info = 7;
-					port.blk = 2;
-					return;
-				}
-			}
-
-	//
-	// check ext capability list (https://pcisig.com/sites/default/files/files/PCI_Code-ID_r_1_12__v9_Jan_2020.pdf)
-	//
-	for (auto &dev : port.devices)
-		for (BYTE i = 0; i < config::MAX_EXTENDED_CAPABILITIES; i++)
-		{
-			auto ext_cap = dev.cfg.get_ext_capability_by_id(i);
-
-			if (!ext_cap)
-				continue;
-
-			if (*(DWORD*)(dev.cfg.raw + ext_cap) == 0)
-			{
-				//
-				// device reports to have next cap, but it's empty (???)
-				// i don't have enough data to confirm if this is possible with legal devices too
-				//
-				port.blk_info = 8;
-				port.blk = 2;
-				return;
-			}
-		}
 }
 
 static void scan::dumpcfg(std::vector<PORT_DEVICE_INFO> &devices)
