@@ -857,16 +857,17 @@ std::vector<EFI_MODULE_INFO> cl::efi::get_dxe_modules(std::vector<EFI_MEMORY_DES
 
 		for (DWORD page_num = 0; page_num < page.NumberOfPages; page_num++)
 		{
-			QWORD module_base = page.VirtualStart + (page_num * 0x1000);
-			if (vm::read<WORD>(4, module_base) == IMAGE_DOS_SIGNATURE)
+			QWORD module_base = page.PhysicalStart + (page_num * 0x1000);
+			if (io::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
 			{
-				QWORD nt = vm::read<DWORD>(4, module_base + 0x03C) + module_base;
-				if (vm::read<WORD>(4, nt) != IMAGE_NT_SIGNATURE)
+				QWORD nt = io::read<DWORD>(module_base + 0x03C) + module_base;
+				if (io::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
 				{
 					continue;
 				}
+				QWORD module_base_virt = page.VirtualStart  + (page_num * 0x1000);
 				QWORD module_base_phys = page.PhysicalStart + (page_num * 0x1000);
-				modules.push_back({ module_base, module_base_phys, vm::read<DWORD>(4, nt + 0x050) });
+				modules.push_back({ module_base_virt, module_base_phys, io::read<DWORD>(nt + 0x050) });
 			}
 		}
 
