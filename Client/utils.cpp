@@ -560,25 +560,15 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 	//
 	// https://denuvosoftwaresolutions.github.io/DVRT/dvrt.html
 	//
-
-	//
-	// validate target module
-	//
-	if (!pe::nt::get_image_section(nt, "GFIDS") && !strstr(path, "UCPD.sys"))
-		return new_image;
-
 	IMAGE_DATA_DIRECTORY* data_dir = (IMAGE_DATA_DIRECTORY*)pe::optional::get_data_directory(opt, 10);
-	if (data_dir->VirtualAddress == 0)
+
+	if (data_dir->VirtualAddress == 0 || data_dir->Size < 0x108 || data_dir->VirtualAddress > image_size)
 		return new_image;
-
-	if (data_dir->Size == 0)
-		return new_image;
-
-
 
 	IMAGE_LOAD_CONFIG_DIRECTORY* dir = (IMAGE_LOAD_CONFIG_DIRECTORY*)((QWORD)new_image + data_dir->VirtualAddress);
-
-
+	if (dir->Size != data_dir->Size)
+		return new_image;
+		
 	if (dir->DynamicValueRelocTableOffset == 0)
 		return new_image;
 
