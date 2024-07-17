@@ -1,6 +1,6 @@
-sc create intdriver binPath="%~dp0\x64\Release\iqww64e.sys" type=kernel
-sc start intdriver
+sc create rtcorevln binPath="%~dp0\x64\Release\rtcore.sys" type=kernel
+sc start rtcorevln
 pause
-sc stop intdriver
-sc delete intdriver
+sc stop rtcorevln
+sc delete rtcorevln
 

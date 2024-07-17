@@ -13,12 +13,13 @@ public:
 	~clum() {}
 	BOOL  initialize(void);
 	BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length);
+	BOOL  write_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length);
 	BOOL  read_mmio(QWORD address, PVOID buffer, QWORD length);
 	BOOL  write_mmio(QWORD address, PVOID buffer, QWORD length);
+	BOOL  read_pci(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD length);
+	BOOL  write_pci(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD length);
 	QWORD get_physical_address(QWORD virtual_address);
-	PVOID __get_memory_map(QWORD* size);
-	PVOID __get_memory_pages(QWORD* size);
-	void  get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out);
+	std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map();
 };
 
 }

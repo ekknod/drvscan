@@ -3,7 +3,9 @@
 namespace scan
 {
 	static void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff);
-	static BOOL dump_module_to_file(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file);
+	static BOOL dump_module_to_file(std::vector<FILE_INFO> &modules, DWORD pid, FILE_INFO file);
+	static void scan_w32khooks(QWORD win32k_dmp, FILE_INFO &win32k, std::vector<FILE_INFO> &modules);
+	static void scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &modules);
 }
 
 void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, BOOL use_cache)
@@ -14,7 +16,6 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 		return;
 	}
 
-
 	//
 	// dump image
 	//
@@ -23,6 +24,19 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 	{
 		LOG_RED("failed to scan %s\n", file.path.c_str());
 		return;
+	}
+
+	if (pid == 4 || pid == 0)
+	{
+		if (!_strcmpi(file.name.c_str(), "win32k.sys"))
+		{
+			scan_w32khooks(runtime_image, file, modules);
+		}
+
+		if (!_strcmpi(file.name.c_str(), "ntoskrnl.exe"))
+		{
+			scan_krnlhooks(runtime_image, modules);
+		}
 	}
 
 
@@ -83,6 +97,243 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 	cl::vm::free_module((PVOID)runtime_image);
 
 	FreeImageEx((void *)local_image);
+}
+
+QWORD get_dump_export(PVOID dumped_module, PCSTR export_name)
+{
+	QWORD a0;
+	DWORD a1[4]{};
+
+
+	QWORD base = (QWORD)dumped_module;
+
+
+	a0 = base + *(WORD*)(base + 0x3C);
+	if (a0 == base)
+	{
+		return 0;
+	}
+
+	DWORD wow64_off = *(WORD*)(a0 + 0x4) == 0x8664 ? 0x88 : 0x78;
+
+	a0 = base + (QWORD)*(DWORD*)(a0 + wow64_off);
+	if (a0 == base)
+	{
+		return 0;
+	}
+
+	static int cnt=0;
+	cnt++;
+
+	memcpy(&a1, (const void *)(a0 + 0x18), sizeof(a1));
+	while (a1[0]--)
+	{
+		a0 = (QWORD)*(DWORD*)(base + a1[2] + ((QWORD)a1[0] * 4));
+		if (a0 == 0)
+		{
+			continue;
+		}
+
+		if (!_strcmpi((const char*)(base + a0), export_name))
+		{
+			a0 = *(WORD*)(base + a1[3] + ((QWORD)a1[0] * 2)) * 4;
+			a0 = *(DWORD*)(base + a1[1] + a0);
+			return (QWORD)((QWORD)dumped_module + a0);
+		}
+	}
+	return 0;
+}
+
+QWORD find_table_by_function(QWORD win32k, QWORD win32k_dmp, QWORD Win32kApiSetTable, QWORD func)
+{
+	for (int i = 0; i < 60; i++)
+	{
+		QWORD table = *(QWORD*)(Win32kApiSetTable + (i * sizeof(QWORD)));
+		if (table == 0)
+			continue;
+
+		table = table - win32k;
+		table = table + win32k_dmp;
+		if (*(QWORD*)table == func)
+		{
+			return table;
+		}
+	}
+	return 0;
+}
+
+static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO &win32k, std::vector<FILE_INFO> &modules)
+{
+	FILE_INFO win32kfull{};
+
+	for (auto &mod : modules)
+	{
+		if (!_strcmpi(mod.name.c_str(), "win32kfull.sys"))
+		{
+			win32kfull = mod;
+			break;
+		}
+	}
+
+	if (win32kfull.base == 0)
+		return;
+
+	QWORD Win32kApiSetTable = get_dump_export((PVOID)win32k_dmp, "ext_ms_win_moderncore_win32k_base_sysentry_l1_table");
+	Win32kApiSetTable =  Win32kApiSetTable + 0x70;
+
+	QWORD win32kfull_dmp = (QWORD)cl::vm::dump_module(4, win32kfull.base, DMP_FULL | DMP_RUNTIME);
+	QWORD *table0  = (QWORD*)get_dump_export((PVOID)win32kfull_dmp, "ext_ms_win_core_win32k_fulluser_l1_table");
+	QWORD *table1  = (QWORD*)find_table_by_function(win32k.base, win32k_dmp, Win32kApiSetTable, *(QWORD*)table0);
+	QWORD lastadr = (QWORD)table0 + win32kfull.base - (QWORD)win32kfull_dmp;
+
+	// LOG("scanning win32k hooks\n");
+
+	int index=0;
+	while (1)
+	{
+		if (table0[index] == lastadr)
+		{
+			break;
+		}
+
+		if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
+		{
+			LOG("win32k hook [%d] [%llX]\n", index, table1[index]);
+		}
+
+		if (table0[index] != table1[index])
+		{
+			LOG("win32k hook [%d] [%llX]\n", index, table1[index]);
+		}
+
+		index++;
+	}
+
+	// LOG("ext_ms_win_core_win32k_fulluser_l1_table total entries: %ld\n", index);
+
+	index   = 0;
+	table0  = (QWORD*)get_dump_export((PVOID)win32kfull_dmp, "ext_ms_win_core_win32k_fullgdi_l1_table");
+	table1  = (QWORD*)find_table_by_function(win32k.base, win32k_dmp, Win32kApiSetTable, *(QWORD*)table0);
+	lastadr = (QWORD)table0 + win32kfull.base - (QWORD)win32kfull_dmp;
+	while (1)
+	{
+		if (table0[index] == lastadr)
+		{
+			break;
+		}
+
+		if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
+		{
+			LOG("win32k hook [%d] [%llX]\n", index, table1[index]);
+		}
+
+		if (table0[index] != table1[index])
+		{
+			LOG("win32k hook [%d] [%llX]\n", index, table1[index]);
+		}
+
+		index++;
+	}
+
+	// LOG("ext_ms_win_core_win32k_fullgdi_l1_table total entries: %ld\n", index);
+
+	cl::vm::free_module((PVOID)win32kfull_dmp);
+}
+
+static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &modules)
+{
+	LOG("scanning ntoskrnl hooks\n");
+	QWORD *table = (QWORD*)get_dump_export((PVOID)ntoskrnl_dmp, "HalPrivateDispatchTable");
+
+
+	std::vector<FILE_INFO> valid_modules;
+	for (auto &mod : modules)
+	{
+		if (!_strcmpi(mod.name.c_str(), "ntoskrnl.exe"))
+		{
+			valid_modules.push_back(mod);
+		}
+		else if (!_strcmpi(mod.name.c_str(), "pci.sys"))
+		{
+			valid_modules.push_back(mod);
+		}
+		else if (!_strcmpi(mod.name.c_str(), "ACPI.sys"))
+		{
+			valid_modules.push_back(mod);
+		}
+		else if (!_strcmpi(mod.name.c_str(), "hal.dll"))
+		{
+			valid_modules.push_back(mod);
+		}
+
+		if (valid_modules.size() == 4)
+		{
+			break;
+		}
+	}
+
+	int index = 1;
+	while (1)
+	{
+		if (table[index] == 0 && table[index + 1] == 0 && index > 100)
+			break;
+
+		QWORD table_address = table[index];
+
+		if (table_address)
+		{
+			BOOL found = 0;
+			for (auto &mod : valid_modules)
+			{
+
+				if (table_address >= mod.base &&
+					table_address <= (mod.base + mod.size)
+					)
+				{
+					found = 1;
+					break;
+				}
+			}
+
+			if (!found)
+			{
+				LOG("HalPrivateDispatchTable hook [%ld] [%llx]\n", index, table_address);
+			}
+		}
+
+		index++;
+	}
+
+	table = (QWORD*)get_dump_export((PVOID)ntoskrnl_dmp, "HalDispatchTable");
+	index = 1;
+	while (1)
+	{
+		if (table[index] < 0xffff800000000000 && index > 20)
+			break;
+
+		QWORD table_address = table[index];
+		if (table_address)
+		{
+			BOOL found = 0;
+			for (auto &mod : valid_modules)
+			{
+
+				if (table_address >= mod.base &&
+					table_address <= (mod.base + mod.size)
+					)
+				{
+					found = 1;
+					break;
+				}
+			}
+
+			if (!found)
+			{
+				LOG("HalDispatchTable hook [%ld] [%llx]\n", index, table_address);
+			}
+		}
+		index++;
+	}
 }
 
 static void scan_section(DWORD diff, CHAR *section_name, QWORD local_image, QWORD runtime_image, QWORD size, QWORD section_address)
@@ -188,7 +439,7 @@ static BOOL write_dump_file(std::string name, PVOID buffer, QWORD size)
 	return 0;
 }
 
-static BOOL scan::dump_module_to_file(std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file)
+static BOOL scan::dump_module_to_file(std::vector<FILE_INFO> &modules, DWORD pid, FILE_INFO file)
 {
 	const char *sub_str = strstr(file.path.c_str(), "\\dump_");
 

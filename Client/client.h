@@ -47,20 +47,13 @@ printf(__VA_ARGS__); \
 #define DEBUG_LOG(...) // __VA_ARGS__
 #endif
 
-
-#pragma pack(push, 1)
 typedef struct {
-	QWORD tsc_start;
-	QWORD tsc_diff;
-} TSC_DATA ;
-#pragma pack(pop)
-
-#pragma pack(push, 1)
-typedef struct {
-	QWORD    tsc;
-	DWORD    tsc_overhead;
-} DRIVER_TSC ;
-#pragma pack(pop)
+	QWORD                 Type;
+	QWORD                 PhysicalStart;
+	QWORD                 VirtualStart;
+	UINT64                NumberOfPages;
+	UINT64                Attribute;
+} EFI_MEMORY_DESCRIPTOR;
 
 namespace cl
 {
@@ -72,22 +65,16 @@ namespace cl
 		//
 		virtual BOOL  initialize(void) = 0;
 		virtual BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length) = 0;
+		virtual BOOL  write_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length) = 0;
 		virtual BOOL  read_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
 		virtual BOOL  write_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
+		virtual BOOL  read_pci (BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD length) = 0;
+		virtual BOOL  write_pci(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD length) = 0;
 		virtual QWORD get_physical_address(QWORD virtual_address) = 0;
-		virtual PVOID __get_memory_map(QWORD* size) = 0;
-		virtual PVOID __get_memory_pages(QWORD* size) = 0;
-		virtual void  get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out) = 0;
+		virtual std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map() = 0;
 	};
 }
 
-typedef struct {
-  QWORD                 Type;
-  QWORD                 PhysicalStart;
-  QWORD                 VirtualStart;
-  UINT64                NumberOfPages;
-  UINT64                Attribute;
-} EFI_MEMORY_DESCRIPTOR;
 
 typedef struct
 {
@@ -101,19 +88,18 @@ typedef struct {
 	DWORD size;
 } EFI_MODULE_INFO;
 
-typedef struct _DEVICE_INFO {
-	unsigned char  bus, slot, func;
-	config::Pci    cfg;
-	QWORD physical_address;
+typedef struct {
+	BYTE  bus,slot,func;
+	config::Pci cfg;
 	QWORD pci_device_object;
 	QWORD drv_device_object;
 } DEVICE_INFO;
 
-typedef struct _PORT_DEVICE_INFO {
-	unsigned char                 blk;       // info is port blocked
-	unsigned char                 blk_info;  // reason for blocking
-	DEVICE_INFO                   self;      // port device
-	std::vector<DEVICE_INFO>      devices;   // devices in port
+typedef struct {
+	unsigned char  blk;       // is port blocked
+	unsigned char  blk_info;  // reason for blocking
+	DEVICE_INFO    self;      // self data
+	std::vector<DEVICE_INFO> devices;
 } PORT_DEVICE_INFO;
 
 #define DMP_FULL     0x0001
@@ -127,6 +113,7 @@ namespace cl
 	BOOL initialize(void);
 
 	QWORD get_physical_address(QWORD virtual_address);
+	QWORD get_virtual_address(QWORD physical_address);
 
 	namespace vm
 	{
@@ -175,14 +162,14 @@ namespace cl
 	namespace pci
 	{
 		QWORD get_physical_address(ULONG bus, ULONG slot);
-		BOOL  read(BYTE bus, BYTE slot, DWORD offset, PVOID buffer, DWORD size);
-		BOOL  write(BYTE bus, BYTE slot, DWORD offset, PVOID buffer, DWORD size);
+		BOOL  read(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD size);
+		BOOL  write(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD size);
 
 		template <typename t>
-		t read(BYTE bus, BYTE slot, DWORD offset)
+		t read(BYTE bus, BYTE slot, BYTE func, DWORD offset)
 		{
 			t b;
-			if (!read(bus, slot, offset, &b, sizeof(b)))
+			if (!read(bus, slot, func, offset, &b, sizeof(b)))
 			{
 				b = 0;
 			}
@@ -190,26 +177,19 @@ namespace cl
 		}
 
 		template <typename t>
-		BOOL write(BYTE bus, BYTE slot, DWORD offset, t value)
+		BOOL write(BYTE bus, BYTE slot, BYTE func, DWORD offset, t value)
 		{
-			return write(bus, slot, offset, &value, sizeof(t));
+			return write(bus, slot,func, offset, &value, sizeof(t));
 		}
 
 		//
 		// gets every active port from the system with devices
 		//
 		std::vector<PORT_DEVICE_INFO> get_port_devices(void);
-
-		void get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out);
 	}
 
 	namespace efi
 	{
-		//
-		// gets efi allocations by searching them from page table
-		//
-		std::vector<EFI_PAGE_TABLE_ALLOCATION> get_page_table_allocations();
-
 		//
 		// KeLoaderBlock EfiMemoryMap
 		//
@@ -223,9 +203,9 @@ namespace cl
 		//
 		// every dxe module is loaded in one big memory range, we can resolve it by giving any module information
 		//
-		EFI_PAGE_TABLE_ALLOCATION get_dxe_range(
+		EFI_MEMORY_DESCRIPTOR get_dxe_range(
 			EFI_MODULE_INFO module,
-			std::vector<EFI_PAGE_TABLE_ALLOCATION> &page_table_list
+			std::vector<EFI_MEMORY_DESCRIPTOR> &page_table_list
 			);
 
 		//
@@ -263,6 +243,15 @@ EXTERN_NTOSKRNL_EXPORT(PsGetProcessId);
 EXTERN_NTOSKRNL_EXPORT(KeQueryPrcbAddress);
 EXTERN_NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
 EXTERN_NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
+EXTERN_NTOSKRNL_EXPORT(ExAllocatePool2);
+EXTERN_NTOSKRNL_EXPORT(ExFreePool);
+EXTERN_NTOSKRNL_EXPORT(MmGetPhysicalAddress);
+EXTERN_NTOSKRNL_EXPORT(MmIsAddressValid);
+
+namespace kernel
+{
+	EXTERN_NTOSKRNL_EXPORT(memcpy);
+}
 
 #endif /* KM_H */
 

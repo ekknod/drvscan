@@ -16,15 +16,9 @@ typedef unsigned char BYTE;
 #define IOCTL_READMEMORY 0xECAC00
 #define IOCTL_IO_READ 0xECAC02
 #define IOCTL_IO_WRITE 0xECAC12
-#define IOCTL_REQUEST_MMAP 0xECAC04
 #define IOCTL_REQUEST_PAGES 0xECAC06
 #define IOCTL_READMEMORY_PROCESS 0xECAC08
 #define IOCTL_GET_PHYSICAL 0xECAC10
-#define IOCTL_GET_PCITSC 0xECAC14
-
-#define OVERHEAD_MEASURE_LOOPS	1000000
-
-static DWORD get_tsc_overhead(void);
 
 #pragma pack(push, 1)
 typedef struct {
@@ -56,15 +50,6 @@ typedef struct {
 } DRIVER_GET_PHYSICAL;
 #pragma pack(pop)
 
-#pragma pack(push, 1)
-typedef struct {
-	BYTE     bus, slot, func, offset;
-	DWORD    loops;
-	QWORD    *tsc;
-	DWORD    *tsc_overhead;
-} DRIVER_PCITSC ;
-#pragma pack(pop)
-
 typedef struct {
 	PVOID page_address_buffer;
 	PVOID page_count_buffer;
@@ -88,9 +73,6 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info);
 //
 // global variables
 //
-PVOID           gEfiMemoryMap;
-DWORD           gEfiMemoryMapSize;
-
 QWORD           efi_pages[100];
 QWORD           efi_num_pages[100];
 DWORD           efi_page_count;
@@ -98,16 +80,6 @@ DWORD           efi_page_count;
 PDEVICE_OBJECT  gDeviceObject;
 UNICODE_STRING  gDeviceName;
 UNICODE_STRING  gDosDeviceName;
-
-DWORD           tsc_overhead;
-
-WORD read_pci_u16(BYTE bus, BYTE slot, BYTE func, BYTE offset)
-{
-	__outdword(0xCF8, 0x80000000 | bus << 16 | slot << 11 | func <<  8 | offset);
-	return (__indword(0xCFC) >> ((offset & 2) * 8)) & 0xFFFF;
-}
-
-void get_pci_latency(DWORD loops, BYTE bus, BYTE slot, BYTE func, BYTE offset , QWORD *tsc);
 
 NTSTATUS dummy_io(PDEVICE_OBJECT DriverObject, PIRP irp)
 {
@@ -120,6 +92,12 @@ NTSTATUS dummy_io(PDEVICE_OBJECT DriverObject, PIRP irp)
 NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 {
 	UNREFERENCED_PARAMETER(DriverObject);
+
+
+	//
+	// empty always success
+	//
+	irp->IoStatus.Status = STATUS_SUCCESS;
 
 	//
 	// irp->IoStatus.Information : WE NEED CHANGE THIS DEPENDING ON CONTEXT
@@ -199,29 +177,16 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 		irp->IoStatus.Information = sizeof(DRIVER_READMEMORY);
 	}
 
-	else if (ioctl_code == IOCTL_REQUEST_MMAP)
-	{
-		DRIVER_REQUEST_MAP *mem = (DRIVER_REQUEST_MAP*)buffer;
-		PVOID address=0;
-		QWORD size = gEfiMemoryMapSize;
-
-		irp->IoStatus.Status = ZwAllocateVirtualMemory(NtCurrentProcess(), &address, 0, &size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-		if (NT_SUCCESS(irp->IoStatus.Status))
-		{
-			memcpy(address, gEfiMemoryMap, gEfiMemoryMapSize);
-			*(PVOID*)mem->buffer      = address;
-			*(QWORD*)mem->buffer_size = gEfiMemoryMapSize;
-		}
-		else
-		{
-			*(PVOID*)mem->buffer      = 0;
-			*(QWORD*)mem->buffer_size = 0;
-		}
-		irp->IoStatus.Information = sizeof(DRIVER_REQUEST_MAP);
-	}
-
 	else if (ioctl_code == IOCTL_REQUEST_PAGES)
 	{
+		efi_page_count = 100;
+		EFI_MEMORY_PAGES info{};
+		info.page_address_buffer = (PVOID)efi_pages;
+		info.page_count_buffer = (PVOID)efi_num_pages;
+		info.total_count = &efi_page_count;
+		get_efi_memory_pages(&info);
+
+
 		DRIVER_REQUEST_MAP *mem = (DRIVER_REQUEST_MAP*)buffer;
 		PVOID address = 0;
 		QWORD size    = (efi_page_count * 16) + 4;
@@ -259,10 +224,37 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 
 		__try {
 			PEPROCESS eprocess;
-			irp->IoStatus.Status = PsLookupProcessByProcessId((HANDLE)mem->pid, &eprocess);
-			if (irp->IoStatus.Status == 0)
+
+			if (mem->pid == 0)
 			{
-				irp->IoStatus.Status = MmCopyVirtualMemory( eprocess, mem->src, PsGetCurrentProcess(), mem->dst, mem->length, KernelMode, &mem->length);
+				memcpy( mem->dst, mem->src, mem->length );
+				irp->IoStatus.Status = STATUS_SUCCESS;
+			}
+			else if (mem->pid == 4)
+			{
+				PVOID virtual_buffer = ExAllocatePoolWithTag(NonPagedPoolNx, mem->length, POOLTAG);
+				MM_COPY_ADDRESS virtual_address;
+				virtual_address.VirtualAddress = mem->src;
+
+				irp->IoStatus.Status = MmCopyMemory( virtual_buffer, virtual_address, mem->length, MM_COPY_MEMORY_VIRTUAL, &mem->length);
+				if (NT_SUCCESS(irp->IoStatus.Status))
+				{
+					memcpy(mem->dst, virtual_buffer, mem->length);
+				}
+				else
+				{
+					memset(mem->dst, 0, mem->length);
+				}
+				ExFreePoolWithTag(virtual_buffer, POOLTAG);
+			}
+			else
+			{
+				irp->IoStatus.Status = PsLookupProcessByProcessId((HANDLE)mem->pid, &eprocess);
+				if (irp->IoStatus.Status == 0)
+				{
+					ObDereferenceObject(eprocess);
+					irp->IoStatus.Status = MmCopyVirtualMemory( eprocess, mem->src, PsGetCurrentProcess(), mem->dst, mem->length, KernelMode, &mem->length);
+				}
 			}
 		} __except (1)
 		{
@@ -286,18 +278,9 @@ NTSTATUS IoControl(PDEVICE_OBJECT DriverObject, PIRP irp)
 
 		irp->IoStatus.Information = sizeof(DRIVER_GET_PHYSICAL);
 	}
-
-	else if (ioctl_code == IOCTL_GET_PCITSC)
-	{
-		DRIVER_PCITSC *mem = (DRIVER_PCITSC*)buffer;
-		get_pci_latency(mem->loops, mem->bus, mem->slot, mem->func, mem->offset, mem->tsc);
-		*(DWORD*)mem->tsc_overhead = tsc_overhead;
-		irp->IoStatus.Status = STATUS_SUCCESS;
-		irp->IoStatus.Information = sizeof(DRIVER_PCITSC);
-	}
 E0:
 	IoCompleteRequest(irp, IO_NO_INCREMENT);
-	return STATUS_SUCCESS;
+	return irp->IoStatus.Status;
 }
 
 extern "C" VOID DriverUnload(
@@ -305,32 +288,10 @@ extern "C" VOID DriverUnload(
 )
 {
 	UNREFERENCED_PARAMETER(DriverObject);
-	if (gEfiMemoryMap)
-	{
-		ExFreePoolWithTag(gEfiMemoryMap, POOLTAG);
-		IoDeleteSymbolicLink(&gDosDeviceName);
-		IoDeleteDevice(gDeviceObject);
-	}
+	IoDeleteSymbolicLink(&gDosDeviceName);
+	IoDeleteDevice(gDeviceObject);
 }
 
-extern "C" __declspec(dllimport) LIST_ENTRY * PsLoadedModuleList;
-QWORD get_ntoskrnl_entry(void)
-{
-	typedef struct _KLDR_DATA_TABLE_ENTRY
-	{
-		struct _LIST_ENTRY InLoadOrderLinks;                                    //0x0
-		VOID* ExceptionTable;                                                   //0x10
-		ULONG ExceptionTableSize;                                               //0x18
-		VOID* GpValue;                                                          //0x20
-		struct _NON_PAGED_DEBUG_INFO* NonPagedDebugInfo;                        //0x28
-		VOID* DllBase;                                                          //0x30
-		VOID* EntryPoint;                                                       //0x38
-	} KLDR_DATA_TABLE_ENTRY;
-
-	KLDR_DATA_TABLE_ENTRY* module_entry =
-		CONTAINING_RECORD(PsLoadedModuleList, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-	return (QWORD)module_entry->EntryPoint;
-}
 
 extern "C" NTSTATUS DriverEntry(
 	_In_ PDRIVER_OBJECT  DriverObject,
@@ -338,28 +299,6 @@ extern "C" NTSTATUS DriverEntry(
 )
 {
 	UNREFERENCED_PARAMETER(RegistryPath);
-
-
-	//
-	// used for timing check https://github.com/andre-richter/pcie-lat/blob/master/pcie-lat.c
-	//
-	tsc_overhead = get_tsc_overhead();
-
-	//
-	// resolve KeLoaderBlock address
-	//
-	QWORD KeLoaderBlock = get_ntoskrnl_entry();
-	KeLoaderBlock += 0x0C;
-	KeLoaderBlock = (KeLoaderBlock + 7) + *(int*)(KeLoaderBlock + 3);
-	KeLoaderBlock = *(QWORD*)(KeLoaderBlock);
-	if (KeLoaderBlock == 0)
-	{
-		LOG("Error: Launch driver as boot start\n");
-
-		return STATUS_FAILED_DRIVER_ENTRY;
-	}
-
-
 	//
 	// setup driver comms
 	//
@@ -383,35 +322,6 @@ extern "C" NTSTATUS DriverEntry(
 	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = IoControl;
 	DriverObject->DriverUnload = DriverUnload;
 	ClearFlag(gDeviceObject->Flags, DO_DEVICE_INITIALIZING);
-	
-
-	//
-	// copy all efi memory pages from page tables
-	//
-	efi_page_count = 100;
-	EFI_MEMORY_PAGES info{};
-	info.page_address_buffer = (PVOID)efi_pages;
-	info.page_count_buffer = (PVOID)efi_num_pages;
-	info.total_count = &efi_page_count;
-	if (!get_efi_memory_pages(&info))
-	{
-		return STATUS_FAILED_DRIVER_ENTRY;
-	}
-
-
-	//
-	// copy efi memory map for later use
-	//
-	QWORD FirmwareInformation        = KeLoaderBlock + 0x108;
-	QWORD EfiInformation             = FirmwareInformation + 0x08;
-	QWORD EfiMemoryMap               = *(QWORD*)(EfiInformation + 0x28);
-	DWORD EfiMemoryMapSize           = *(DWORD*)(EfiInformation + 0x30);
-
-
-	gEfiMemoryMap     = ExAllocatePool2(POOL_FLAG_NON_PAGED, EfiMemoryMapSize, POOLTAG);
-	gEfiMemoryMapSize = EfiMemoryMapSize;
-	memcpy(gEfiMemoryMap, (const void *)EfiMemoryMap, EfiMemoryMapSize);
-
 	return STATUS_SUCCESS;
 }
 
@@ -464,7 +374,7 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info)
 			}
 
 
-
+			BOOL  page_accessed = 0;
 			DWORD page_count=0;
 			QWORD previous_address=0;
 			for (int pde_index = 0; pde_index < 512; pde_index++) {
@@ -473,13 +383,14 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info)
 				if (!pde[pde_index].present)
 				{
 
-					if (page_count > 2 && *info->total_count > index)
+					if (page_count > 2 && *info->total_count > index && page_accessed)
 					{
 						*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
 						*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count + 1;
 						index++;
 					}
 					page_count = 0;
+					page_accessed = 0;
 					previous_address = 0;
 					continue;
 				}
@@ -487,13 +398,14 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info)
 				pte_64* pte = (pte_64*)(MmGetVirtualForPhysical(*(PHYSICAL_ADDRESS*)&physical_address));
 				if (!MmIsAddressValid(pte) || !pte)
 				{
-					if (page_count > 2 && *info->total_count > index)
+					if (page_count > 2 && *info->total_count > index && page_accessed)
 					{
 						*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
 						*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count + 1;
 						index++;
 					}
 					page_count = 0;
+					page_accessed = 0;
 					previous_address = 0;
 					continue;
 				}
@@ -503,13 +415,14 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info)
 					//
 					// we dont need add 2mb pages
 					//
-					if (page_count > 2 && *info->total_count > index)
+					if (page_count > 2 && *info->total_count > index && page_accessed)
 					{
 						*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
 						*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count + 1;
 						index++;
 					}
 					page_count = 0;
+					page_accessed = 0;
 					previous_address = physical_address;	
 					continue;
 				}
@@ -530,6 +443,13 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info)
 							goto add_page;
 						continue;
 					}
+
+					if (pte[pte_index].page_level_cache_disable)
+					{
+						if (page_count > 2)
+							goto add_page;
+						continue;
+					}
 					
 					if (PAGE_ALIGN(MmGetVirtualForPhysical(*(PHYSICAL_ADDRESS*)&physical_address)) != 0)
 					{
@@ -541,17 +461,22 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info)
 					if ((physical_address - previous_address) == 0x1000)
 					{
 						page_count++;
+						if (pte[pte_index].accessed)
+						{
+							page_accessed = 1;
+						}
 					}
 					else
 					{
 					add_page:
-						if (page_count > 2 && *info->total_count > index)
+						if (page_count > 2 && *info->total_count > index && page_accessed)
 						{
 							*(QWORD*)((QWORD)info->page_address_buffer + (index * 8)) = previous_address - (page_count * 0x1000);
 							*(QWORD*)((QWORD)info->page_count_buffer + (index * 8)) = page_count + 1;
 							index++;
 						}
 						page_count = 0;
+						page_accessed = 0;
 					}
 					previous_address = physical_address;
 				}
@@ -560,101 +485,5 @@ BOOL get_efi_memory_pages(EFI_MEMORY_PAGES *info)
 	}
 	*info->total_count = index;
 	return index != 0;
-}
-
-inline void get_tsc_top(DWORD *high, DWORD *low)
-{
-	int buffer[4]{};
-	__cpuid(buffer, 0);
-
-	QWORD tsc  = __rdtsc();
-
-	*high = (DWORD)(tsc >> 32);
-	*low  = (DWORD)(tsc & 0xFFFFFFFF);
-}
-
-inline void get_tsc_bottom(DWORD *high, DWORD *low)
-{
-	DWORD aux;
-	QWORD tsc  = __rdtscp((unsigned int*)&aux);
-
-	*high = (unsigned int)(tsc >> 32);
-	*low = (unsigned int)(tsc & 0xFFFFFFFF);
-
-	int buffer[4]{};
-	__cpuid(buffer, 0);
-}
-
-static DWORD get_tsc_overhead(void)
-{
-	QWORD sum;
-	DWORD tsc_high_before, tsc_high_after;
-	DWORD tsc_low_before, tsc_low_after;
-	DWORD i;
-
-	get_tsc_top(&tsc_high_before, &tsc_low_before);
-	get_tsc_bottom(&tsc_high_after, &tsc_low_after);
-	get_tsc_top(&tsc_high_before, &tsc_low_before);
-	get_tsc_bottom(&tsc_high_after, &tsc_low_after);
-
-	sum = 0;
-	for (i = 0; i < OVERHEAD_MEASURE_LOOPS; i++) {
-		KIRQL old;
-		KeRaiseIrql(DISPATCH_LEVEL, &old);
-
-		get_tsc_top(&tsc_high_before, &tsc_low_before);
-		get_tsc_bottom(&tsc_high_after, &tsc_low_after);
-
-		KeLowerIrql(old);
-
-		/* Calculate delta; lower 32 Bit should be enough here */
-	        sum += tsc_low_after - tsc_low_before;
-	}
-	return (DWORD)(sum / OVERHEAD_MEASURE_LOOPS);
-}
-
-void get_pci_latency(DWORD loops, BYTE bus, BYTE slot, BYTE func, BYTE offset , QWORD *tsc)
-{
-	QWORD sum;
-	DWORD tsc_high_before, tsc_high_after;
-	DWORD tsc_low_before, tsc_low_after;
-	QWORD tsc_start, tsc_end, tsc_diff;
-	DWORD i;
-
-	/*
-	 * "Warmup" of the benchmarking code.
-	 * This will put instructions into cache.
-	 */
-	get_tsc_top(&tsc_high_before, &tsc_low_before);
-	get_tsc_bottom(&tsc_high_after, &tsc_low_after);
-	get_tsc_top(&tsc_high_before, &tsc_low_before);
-	get_tsc_bottom(&tsc_high_after, &tsc_low_after);
-
-        /* Main latency measurement loop */
-	sum = 0;
-	for (i = 0; i < loops; i++) {
-
-		KIRQL old;
-		KeRaiseIrql(DISPATCH_LEVEL, &old);
-
-		get_tsc_top(&tsc_high_before, &tsc_low_before);
-
-		/*** Function to measure execution time for ***/
-		read_pci_u16(bus, slot, func, offset);
-		/***************************************/
-
-		get_tsc_bottom(&tsc_high_after, &tsc_low_after);
-
-		KeLowerIrql(old);
-
-		/* Calculate delta */
-		tsc_start = ((QWORD) tsc_high_before << 32) | tsc_low_before;
-		tsc_end = ((QWORD) tsc_high_after << 32) | tsc_low_after;
-	        tsc_diff = tsc_end  - tsc_start;
-
-		sum += tsc_diff;
-	}
-
-	*tsc = (sum / loops);
 }
 

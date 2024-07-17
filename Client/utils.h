@@ -11,6 +11,10 @@
 #include <intrin.h>
 #include <iostream>
 
+#define PAGE_SHIFT 12l
+#define PAGE_SIZE  0x1000
+#define PAGE_ALIGN(Va) ((PVOID)((ULONG_PTR)(Va) & ~(PAGE_SIZE - 1)))
+
 typedef ULONG_PTR QWORD;
 
 typedef struct {
@@ -207,10 +211,16 @@ namespace config {
 
 		struct MsiCap {
 			WORD raw;
+			BYTE msi_enabled()                            { return GET_BIT(raw, 0); }
 			BYTE msi_cap_multimsgcap()                    { return GET_BITS(raw, 3, 1); }
 			BYTE msi_cap_multimsg_extension()             { return GET_BITS(raw, 6, 4); }
 			BYTE msi_cap_64_bit_addr_capable()            { return GET_BIT(raw, 7); }
 			BYTE msi_cap_per_vector_masking_capable()     { return GET_BIT(raw, 8); }
+		};
+
+		struct MsixCap {
+			WORD raw;
+			BYTE msix_enabled()                            { return GET_BIT(raw, 15); }
 		};
 
 		struct PciCap {
@@ -307,6 +317,8 @@ namespace config {
 			WORD raw;
 			BYTE link_aspmc()                             { return GET_BIT(raw, 1); }
 			BYTE link_control_rcb()                       { return GET_BIT(raw, 3); }
+			BYTE link_disable()                           { return GET_BIT(raw, 4); }
+			BYTE link_retrain()                           { return GET_BIT(raw, 5); }
 			BYTE link_common_control_configuration()      { return GET_BIT(raw, 6); }
 			BYTE link_extended_synch()                    { return GET_BIT(raw, 7); }
 			BYTE link_enable_clock_power_management()     { return GET_BIT(raw, 8); }
@@ -347,6 +359,13 @@ namespace config {
 			BYTE base_ptr;
 			CapHdr hdr;
 			MsiCap cap;
+		};
+
+		struct MSIX {
+			BOOL cap_on;
+			BYTE base_ptr;
+			CapHdr hdr;
+			MsixCap cap;
 		};
 
 		struct DEV {
@@ -405,12 +424,12 @@ namespace config {
 	}
 
 	struct Pci {
-		unsigned char raw[0x1000];
+		unsigned char raw[0x100];
 		Pci() { memset(raw, 0, sizeof(raw)); }
 
 		Pci(unsigned char *buffer, int size)
 		{
-			if (size > 0x1000) size = 0x1000;
+			if (size > sizeof(raw)) size = sizeof(raw);
 			memcpy(raw, buffer, size);
 		}
 
@@ -497,33 +516,6 @@ namespace config {
 			return 0;
 		}
 
-		auto get_ext_capability_by_id(BYTE id) -> WORD
-		{
-			WORD off = 0x100;
-			while (1)
-			{
-				auto cap = *(pci::CapExtHdr*)((raw + off));
-
-				if (cap.raw == 0)
-				{
-					break;
-				}
-
-				if (cap.cap_id() == id)
-				{
-					return off;
-				}
-
-				WORD next = cap.cap_next_ptr();
-				if (next == 0)
-				{
-					break;
-				}
-				off = next;
-			}
-			return 0;
-		}
-
 		auto get_pm() -> pci::PM {
 			auto cap = get_capability_by_id(0x01);
 			auto res = pci::PM{};
@@ -542,6 +534,20 @@ namespace config {
 		auto get_msi() -> pci::MSI {
 			auto cap = get_capability_by_id(0x05);
 			auto res = pci::MSI{};
+			if (cap != 0)
+			{
+				DWORD val = *(DWORD*)(raw + cap);
+				res.cap_on   = val != 0;
+				res.base_ptr = cap;
+				res.hdr.raw  = val & 0xFFFF;
+				res.cap.raw  = (val >> 16) & 0xFFFF;
+			}
+			return res;
+		}
+
+		auto get_msix() -> pci::MSIX {
+			auto cap = get_capability_by_id(0x11);
+			auto res = pci::MSIX{};
 			if (cap != 0)
 			{
 				DWORD val = *(DWORD*)(raw + cap);
@@ -588,18 +594,31 @@ namespace config {
 			return res;
 		}
 
-		auto get_dsn() -> pci::DSN {
-			auto cap = get_ext_capability_by_id(0x03);
-			auto res = pci::DSN{};
-			if (cap != 0)
+		auto get_ext_capability_by_id(BYTE id) -> WORD
+		{
+			WORD off = 0x100;
+			while (1)
 			{
-				auto hdr = *(DWORD*)(raw + cap);
-				res.cap_on   = hdr != 0;
-				res.base_ptr = cap;
-				res.hdr.raw  = hdr;
-				res.serial   = *(UINT64*)(raw + cap + 0x04);
+				auto cap = *(pci::CapExtHdr*)((raw + off));
+
+				if (cap.raw == 0)
+				{
+					break;
+				}
+
+				if (cap.cap_id() == id)
+				{
+					return off;
+				}
+
+				WORD next = cap.cap_next_ptr();
+				if (next == 0)
+				{
+					break;
+				}
+				off = next;
 			}
-			return res;
+			return 0;
 		}
 
 		auto get_empty_extended_cap(BYTE id) -> pci::EmtpyExtPcieCap {

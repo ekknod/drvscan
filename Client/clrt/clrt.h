@@ -1,16 +1,16 @@
-#ifndef CLINT_H
-#define CLINT_H
+#ifndef CLRT_H
+#define CLRT_H
 
 #include "../client.h"
 
 namespace cl
 {
-class clint : public client
+class clrt : public client
 {
 	HANDLE driver_handle = 0;
 public:
-	clint()  {}
-	~clint() {};
+	clrt()  {}
+	~clrt() {}
 	BOOL  initialize(void);
 	BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length);
 	BOOL  write_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length);
@@ -20,12 +20,8 @@ public:
 	BOOL  write_pci(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD length);
 	QWORD get_physical_address(QWORD virtual_address);
 	std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map();
-private:
-	BOOL  copy_memory(PVOID dest, PVOID src, QWORD length);
-	QWORD map_mmio(QWORD physical_address, DWORD size);
-	BOOL  unmap_mmio(QWORD address, DWORD size);
 };
 }
 
-#endif /* CLINT_H */
+#endif /* CLRT_H */
 

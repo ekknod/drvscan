@@ -1,8 +1,12 @@
 #include "client.h"
 #include "clkm/clkm.h"
 #include "clint/clint.h"
+#include "clrt/clrt.h"
 #include "clum/clum.h"
 #include <chrono>
+#pragma warning (disable: 4201)
+#pragma warning (disable: 4996)
+#include "..\Driver\ia32.hpp"
 
 QWORD cl::ntoskrnl_base;
 
@@ -17,6 +21,17 @@ std::vector<QWORD> cl::global_export_list;
 NTOSKRNL_EXPORT(HalPrivateDispatchTable);
 NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
 NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
+NTOSKRNL_EXPORT(KeQueryPrcbAddress);
+NTOSKRNL_EXPORT(ExAllocatePool2);
+NTOSKRNL_EXPORT(ExFreePool);
+NTOSKRNL_EXPORT(MmGetPhysicalAddress);
+NTOSKRNL_EXPORT(MmIsAddressValid);
+NTOSKRNL_EXPORT(PsInitialSystemProcess);
+
+namespace kernel
+{
+	NTOSKRNL_EXPORT(memcpy);
+}
 
 namespace cl
 {
@@ -25,8 +40,19 @@ namespace cl
 	QWORD HalpPciMcfgTableCount;
 	QWORD HalpPciMcfgTable;
 
+
+	QWORD PciIoAddressPhysical;
+	QWORD PciIoAddressVirtual;
+
+
 	QWORD MmPfnDatabase;
 	QWORD MmPteBase;
+
+	QWORD wdf01000_base, wdf01000_size;
+	QWORD dxgkrnl_base,  dxgkrnl_size;
+
+	QWORD system_cr3;
+	BOOL  has_io_access = 0;
 
 	//
 	// if drvscan would be less retarded, it would use
@@ -35,58 +61,20 @@ namespace cl
 	QWORD PciDriverObject;
 	QWORD AcpiDriverObject;
 
-	namespace efi
+	#define MiGetVirtualAddressMappedByPte(PteAddress) (PVOID)((LONG_PTR)(((LONG_PTR)(PteAddress) - (ULONG_PTR)(MmPteBase)) << 25L) >> 16)
+	QWORD get_virtual_address(QWORD physical_address)
 	{
-		static PVOID __get_memory_map(QWORD *size);
-		static PVOID __get_memory_pages(QWORD* size);
+		QWORD index     = physical_address >> PAGE_SHIFT;
+		QWORD pfn_entry = (MmPfnDatabase + (index * 0x30));
+		QWORD pte       = vm::read<QWORD>(0, pfn_entry + 0x08);
+		if (pte == 0)
+		{
+			return 0;
+		}
+		QWORD va = (QWORD)MiGetVirtualAddressMappedByPte((QWORD)pte);
+		return (physical_address & 0xFFF) + va;
 	}
 }
-
-#pragma pack(push, 1)
-typedef struct {
-	PVOID address;
-	PVOID buffer;
-	ULONG_PTR length;
-} DRIVER_READMEMORY;
-#pragma pack(pop)
-
-#pragma pack(push, 1)
-typedef struct {
-	PVOID buffer;
-	QWORD buffer_size;
-} DRIVER_REQUEST_MAP;
-#pragma pack(pop)
-
-#pragma pack(push, 1)
-typedef struct {
-	PVOID src;
-	PVOID dst;
-	ULONG_PTR length;
-	ULONG pid;
-} DRIVER_READMEMORY_PROCESS;
-#pragma pack(pop)
-
-#pragma pack(push, 1)
-typedef struct {
-	PVOID InOutPhysical;
-} DRIVER_GET_PHYSICAL;
-#pragma pack(pop)
-
-#define IOCTL_READMEMORY 0xECAC00
-#define IOCTL_IO_READ 0xECAC02
-#define IOCTL_IO_WRITE 0xECAC12
-#define IOCTL_REQUEST_MMAP 0xECAC04
-#define IOCTL_REQUEST_PAGES 0xECAC06
-#define IOCTL_READMEMORY_PROCESS 0xECAC08
-#define IOCTL_GET_PHYSICAL 0xECAC10
-
-#pragma comment(lib, "ntdll.lib")
-extern "C" __kernel_entry NTSYSCALLAPI NTSTATUS NtFreeVirtualMemory(
-	HANDLE  ProcessHandle,
-	PVOID   *BaseAddress,
-	PSIZE_T RegionSize,
-	ULONG   FreeType
-);
 
 static QWORD get_kernel_export(PCSTR export_name)
 {
@@ -199,13 +187,14 @@ BOOL cl::initialize(void)
 	}
 
 	QWORD pci_base = 0, acpi_base = 0;
-	std::string pci_path, acpi_path;
+	std::string pci_path, acpi_path, ntoskrnl_path;
 
 	for (auto &drv : get_kernel_modules())
 	{
 		if (!_strcmpi(drv.name.c_str(), "ntoskrnl.exe"))
 		{
 			ntoskrnl_base = drv.base;
+			ntoskrnl_path = drv.path;
 		}
 		if (!_strcmpi(drv.name.c_str(), "pci.sys"))
 		{
@@ -217,9 +206,19 @@ BOOL cl::initialize(void)
 			acpi_base = drv.base;
 			acpi_path = drv.path;
 		}
+		if (!_strcmpi(drv.name.c_str(), "wdf01000.sys"))
+		{
+			wdf01000_base = drv.base;
+			wdf01000_size = drv.size;
+		}
+		if (!_strcmpi(drv.name.c_str(), "dxgkrnl.sys"))
+		{
+			dxgkrnl_base = drv.base;
+			dxgkrnl_size = drv.size;
+		}
 	}
 
-	if (ntoskrnl_base == 0 || pci_base == 0 || acpi_base == 0)
+	if (ntoskrnl_base == 0 || pci_base == 0 || acpi_base == 0 || wdf01000_base == 0 || dxgkrnl_base == 0)
 	{
 		return 0;
 	}
@@ -250,6 +249,7 @@ BOOL cl::initialize(void)
 
 	clkm *km = new clkm();
 	clint *intel = new clint();
+	clrt  *rt = new clrt();
 	clum *um = new clum();
 	if (controller == 0 && km->initialize())
 	{
@@ -258,6 +258,15 @@ BOOL cl::initialize(void)
 	else
 	{
 		delete km; km = 0;
+	}
+
+	if (controller == 0 && rt->initialize())
+	{
+		controller = rt;
+	}
+	else
+	{
+		delete rt; rt = 0;
 	}
 
 	if (controller == 0 && intel->initialize())
@@ -277,12 +286,11 @@ BOOL cl::initialize(void)
 	{
 		delete um; um = 0;
 	}
+
+	if (km || intel || um) has_io_access = 1;
 	
-	if ((km || intel))
+	if ((km || intel || rt))
 	{
-		//
-		// resolve HalpPciMcfgTableCount/HalpPciMcfgTable addresses
-		//
 		QWORD table_entry = HalPrivateDispatchTable;
 		table_entry       = vm::read<QWORD>(4, table_entry + 0xA0);
 		table_entry       = table_entry + 0x1B;
@@ -309,21 +317,98 @@ BOOL cl::initialize(void)
 		table_entry = table_entry + 0x47;
 		table_entry = (table_entry + 5) + vm::read<INT>(4, table_entry + 1);
 
-		HalpPciMcfgTableCount = vm::get_relative_address(4, table_entry + 0x07, 2, 6);
-		HalpPciMcfgTable      = vm::get_relative_address(4, table_entry + 0x11, 3, 7);
+		HalpPciMcfgTableCount  = vm::get_relative_address(4, table_entry + 0x07, 2, 6);
+		HalpPciMcfgTable       = vm::get_relative_address(4, table_entry + 0x11, 3, 7);
 
-		MmPfnDatabase         = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x0E + 0x02);
-		MmPteBase             = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x20 + 0x02);
+		MmPfnDatabase          = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x0E + 0x02) - 0x08;
+		MmPteBase              = vm::read<QWORD>(4, MmGetVirtualForPhysical + 0x20 + 0x02);
 
-		AcpiDriverObject      = vm::read<QWORD>(4, vm::get_relative_address(4, AcpiDriverObject, 3, 7));
-		PciDriverObject       = vm::read<QWORD>(4, vm::get_relative_address(4, PciDriverObject, 3, 7));
+		AcpiDriverObject       = vm::read<QWORD>(4, vm::get_relative_address(4, AcpiDriverObject, 3, 7));
+		PciDriverObject        = vm::read<QWORD>(4, vm::get_relative_address(4, PciDriverObject, 3, 7));
+
+		system_cr3             = vm::read<QWORD>(4, vm::read<QWORD>(4, PsInitialSystemProcess) + 0x28);
+		PciIoAddressPhysical = pci::get_physical_address(0, 0);
+		QWORD tabl = (QWORD)PAGE_ALIGN(efi::get_runtime_table()[0]);
+		while (1)
+		{
+			QWORD temp = get_physical_address(tabl);
+			if (PAGE_ALIGN(temp))
+			{
+				if (PciIoAddressPhysical == temp)
+				{
+					PciIoAddressVirtual = tabl;
+					break;
+				}
+				tabl += PAGE_SIZE;
+			}
+			else
+			{
+				break;
+			}
+		}
 	}
+
 	return 1;
 }
 
 QWORD cl::get_physical_address(QWORD virtual_address)
 {
-	return controller->get_physical_address(virtual_address);
+	if (has_io_access)
+		return controller->get_physical_address(virtual_address);
+
+	QWORD pte_address  = MmPteBase + ((virtual_address >> 9) & 0x7FFFFFFFF8);
+	QWORD pde_address  = MmPteBase + ((pte_address >> 9) & 0x7FFFFFFFF8);
+	QWORD pdpt_address = MmPteBase + ((pde_address >> 9) & 0x7FFFFFFFF8);
+	QWORD pml4_address = MmPteBase + ((pdpt_address >> 9) & 0x7FFFFFFFF8);
+
+	pml4e_64 pml4{};
+	vm::read(4, pml4_address, &pml4, sizeof(pml4));
+	if (!pml4.present)
+	{
+		return 0;
+	}
+
+	pdpte_64 pdpt{};
+	vm::read(4, pdpt_address, &pdpt, sizeof(pdpt));
+	if (!pdpt.present)
+	{
+		return 0;
+	}
+
+	//
+	// 1gb
+	//
+	if (pdpt.large_page)
+	{
+		return (pdpt.page_frame_number << PAGE_SHIFT) + (virtual_address & 0x3FFFFFFF);
+	}
+
+	pde_64 pde{};
+	vm::read(4, pde_address, &pde, sizeof(pde));
+	if (!pde.present)
+	{
+		return 0;
+	}
+
+	//
+	// 2mb
+	//
+	if (pde.large_page)
+	{
+		return (pde.page_frame_number << PAGE_SHIFT) + (virtual_address & 0x1FFFFF);
+	}
+
+	pte_64 pte{};
+	vm::read(4, pte_address, &pte, sizeof(pte));
+	if (!pte.present)
+	{
+		return 0;
+	}
+
+	//
+	// 4kb
+	//
+	return (pte.page_frame_number << PAGE_SHIFT) + (virtual_address & 0xFFF);
 }
 
 BOOL cl::vm::read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
@@ -455,9 +540,9 @@ QWORD cl::pci::get_physical_address(ULONG bus, ULONG slot)
 
 	for (i = (unsigned __int8*)(table + 54);
 
-		(bus >> 8) != vm::read<WORD>(4, (QWORD)(i - 1)) ||
-		bus < vm::read<BYTE>(4, (QWORD)i) ||
-		bus > vm::read<BYTE>(4, (QWORD)i + 1);
+		(bus >> 8) != vm::read<WORD>(0, (QWORD)(i - 1)) ||
+		bus < vm::read<BYTE>(0, (QWORD)i) ||
+		bus > vm::read<BYTE>(0, (QWORD)i + 1);
 
 		i += 16
 		)
@@ -465,244 +550,82 @@ QWORD cl::pci::get_physical_address(ULONG bus, ULONG slot)
 		if (++v3 >= (unsigned int)table_count)
 			return 0i64;
 	}
-	return vm::read<QWORD>(4, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
+	return vm::read<QWORD>(0, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
 }
 
-BOOL cl::pci::read(BYTE bus, BYTE slot, DWORD offset, PVOID buffer, DWORD size)
+BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD size)
 {
+	if (PciIoAddressVirtual)
+	{
+		QWORD device = get_physical_address(bus, slot);
+		device = device + (func << 12l);
+
+		QWORD delta = device - PciIoAddressPhysical;
+		QWORD virtu = PciIoAddressVirtual + delta;
+
+		if (size == 0x100 || size == 0xF00)
+		{
+			for (DWORD i = 0; i < size; i+= 4)
+			{
+				if (!controller->read_virtual(0, virtu + offset + i, (PVOID)((QWORD)buffer + i), sizeof(DWORD)))
+					return 0;
+			}
+			return 1;
+		}
+		return controller->read_virtual(0, virtu + offset, buffer, size);
+	}
+
+	if (!has_io_access)
+	{
+		return controller->read_pci(bus, slot, func, offset, buffer, size);
+	}
+
 	QWORD device = get_physical_address(bus, slot);
 
 	if (device == 0)
 		return 0;
 
+	device = device + (func << 12l);
 	return io::read(device + offset, buffer, size);
 }
 
-BOOL cl::pci::write(BYTE bus, BYTE slot, DWORD offset, PVOID buffer, DWORD size)
+BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD size)
 {
+	if (PciIoAddressVirtual)
+	{
+		QWORD device = get_physical_address(bus, slot);
+		device = device + (func << 12l);
+
+		QWORD delta = device - PciIoAddressPhysical;
+		QWORD virtu = PciIoAddressVirtual + delta;
+
+		return controller->write_virtual(0, virtu + offset, buffer, size);
+	}
+
+	if (!has_io_access)
+	{
+		return controller->write_pci(bus, slot, func, offset, buffer, size);
+	}
+
 	QWORD device = get_physical_address(bus, slot);
 
 	if (device == 0)
 		return 0;
 
+	device = device + (func << 12l);
 	return io::write(device + offset, buffer, size);
 }
 
-static BOOL is_port_device(DEVICE_INFO &dev, BYTE max_bus)
+typedef struct {
+	DEVICE_INFO data;
+	DWORD       device_class;
+} RAW_PCIENUM_OBJECT;
+
+std::vector<RAW_PCIENUM_OBJECT> get_raw_pci_objects()
 {
-	if (dev.cfg.class_code() != 0x060400)
-	{
-		return 0;
-	}
+	std::vector<RAW_PCIENUM_OBJECT> objects{};
 
-	if (dev.cfg.header().type() == 0)
-	{
-		return 0;
-	}
-
-	if (dev.bus != dev.cfg.bus_number())
-	{
-		return 0;
-	}
-
-	if (dev.bus >= dev.cfg.secondary_bus())
-	{
-		return 0;
-	}
-
-	if (dev.cfg.secondary_bus() > max_bus)
-	{
-		return 0;
-	}
-
-	if (dev.cfg.subordinate_bus() > max_bus)
-	{
-		return 0;
-	}
-
-	return 1;
-}
-
-static std::vector<DEVICE_INFO> get_devices_by_class(unsigned char bus, DWORD class_code)
-{
-	std::vector<DEVICE_INFO> devices;
-	for (unsigned char slot = 0; slot < 32; slot++)
-	{
-		QWORD physical_address = cl::pci::get_physical_address(bus, slot);
-		if (physical_address == 0)
-		{
-			goto E0;
-		}
-
-		for (unsigned char func = 0; func < 8; func++)
-		{
-			QWORD entry = physical_address + (func << 12l);
-			if (class_code)
-			{
-				DWORD cd = cl::io::read<BYTE>(entry + 0x09 + 2) << 16 |
-					cl::io::read<BYTE>(entry + 0x09 + 1) << 8 |
-					cl::io::read<BYTE>(entry + 0x09 + 0);
-				if (class_code != cd)
-				{
-					continue;
-				}
-			}
-			else
-			{
-				int invalid_cnt = 0;
-				for (int i = 0; i < 8; i++)
-				{
-					if (cl::io::read<BYTE>(entry + 0x04 + i) == 0xFF)
-					{
-						invalid_cnt++;
-					}
-				}
-				if (invalid_cnt == 8)
-				{
-					if (func == 0)
-					{
-						break;
-					}
-					continue;
-				}
-			}
-
-			DEVICE_INFO device{};
-			device.bus = bus;
-			device.slot = slot;
-			device.func = func;
-			device.physical_address = entry;
-
-
-			//
-			// just in case empty the cfg buffer
-			//
-			memset(device.cfg.raw, 0, sizeof(device.cfg.raw));
-
-
-			WORD optimize_ptr = 0x100 + 2;
-			WORD max_size     = sizeof(device.cfg.raw);
-			for (WORD i = 0; i < max_size; i+= 2)
-			{
-				*(WORD*)((PBYTE)device.cfg.raw + i) = cl::io::read<WORD>(entry + i);
-				if (i >= optimize_ptr)
-				{
-					optimize_ptr = GET_BITS(*(WORD*)((PBYTE)device.cfg.raw + optimize_ptr), 15, 4);
-					if (optimize_ptr)
-					{
-						optimize_ptr += 2;
-					}
-					else
-					{
-						optimize_ptr = 0x1000;   // disable
-						max_size     = i + 0x30; // max data left 0x30
-						if (max_size > sizeof(device.cfg.raw))
-						{
-							max_size = sizeof(device.cfg.raw);
-						}
-					}
-				}
-			}
-
-			devices.push_back(device);
-		}
-	}
-E0:
-	return devices;
-}
-
-static std::vector<DEVICE_INFO> get_devices_by_bus(unsigned char bus)
-{
-	//
-	// skip invalid ports
-	//
-	if (bus > 255) return {};
-
-	//
-	// skip root ports
-	//
-	if (bus < 1)  return {};
-	return get_devices_by_class(bus, 0);
-}
-
-std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
-{
-	typedef struct _BUS_DEVICES {
-		BYTE max_bus;
-		std::vector<DEVICE_INFO> devices;
-	} BUS_DEVICES;
-
-	std::vector<BUS_DEVICES> bus_devices;
-	for (auto &port : get_devices_by_class(0, 0x060400))
-	{
-		if (port.cfg.subordinate_bus() == 0)
-			continue;
-
-		BUS_DEVICES bus_entry{};
-		bus_entry.max_bus = port.cfg.subordinate_bus();
-		bus_entry.devices.push_back( port );
-
-		for (BYTE bus = port.cfg.secondary_bus(); bus < port.cfg.subordinate_bus() + 1; bus++)
-		{
-			for (auto &dev : get_devices_by_bus(bus))
-			{
-				bus_entry.devices.push_back(dev);
-			}
-		}
-		bus_devices.push_back(bus_entry);
-	}
-
-	std::vector<PORT_DEVICE_INFO> port_list;
-	for (auto &bus    : bus_devices)
-	for (auto &device : bus.devices)
-	{
-		if (is_port_device(device, bus.max_bus))
-		{
-			port_list.push_back({ 0, 0,device });
-		}
-
-		//
-		// add device to parent port
-		//
-		for (auto& port : port_list)
-		{
-			if (port.self.cfg.secondary_bus() == device.bus)
-			{
-				port.devices.push_back(device);
-			}
-		}
-	}
-
-	//
-	// remove mitm switches
-	// e.g. port->port(removed)->port->device
-	//
-	std::vector<PORT_DEVICE_INFO> ports;
-	for (auto& port : port_list)
-	{
-		BOOL contains_port = 0;
-
-		for (auto& dev : port.devices)
-		{
-			for (auto& port2 : port_list)
-			{
-				if (
-					dev.bus  == port2.self.bus  &&
-					dev.slot == port2.self.slot &&
-					dev.func == port2.self.func
-					)
-				{
-					contains_port = 1;
-					break;
-				}
-			}
-		}
-
-		if (!contains_port)
-		{
-			ports.push_back(port);
-		}
-	}
+	using namespace cl;
 
 	typedef struct _PCI_SLOT_NUMBER {
 		union {
@@ -725,118 +648,360 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		QWORD pci_ext = vm::read<QWORD>(4, pci_dev + 0x40);
 		if (pci_ext && vm::read<DWORD>(4, pci_ext) == 0x44696350)
 		{
+			DWORD device_class = vm::read<BYTE>(4, pci_ext + 0x29 + 0) << 16 |
+				vm::read<BYTE>(4, pci_ext + 0x29 + 1) << 8 | vm::read<BYTE>(4, pci_ext + 0x29 + 2);
+
 			DWORD bus = vm::read<DWORD>(4, pci_ext + 0x1C);
 			PCI_SLOT_NUMBER slot{};
 			slot.u.AsULONG = vm::read<DWORD>(4, pci_ext + 0x20);
 
-			for (auto &port : ports)
+
+			QWORD attached_device = cl::vm::read<QWORD>(4, pci_dev + 0x18);
+			if (attached_device)
 			{
-				if (port.self.bus == bus &&
-					port.self.slot == slot.u.bits.DeviceNumber &&
-					port.self.func == slot.u.bits.FunctionNumber)
+				QWORD driver_object = cl::vm::read<QWORD>(4, attached_device + 0x08);
+				if (driver_object == AcpiDriverObject)
+					attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
+
+			}
+									
+			RAW_PCIENUM_OBJECT object{};
+			object.data.bus  = bus & 0xFF;
+			object.data.slot = slot.u.bits.DeviceNumber;
+			object.data.func = slot.u.bits.FunctionNumber;
+			object.data.pci_device_object = pci_dev;
+			object.data.drv_device_object = attached_device;
+			object.device_class = device_class;
+			objects.push_back(object);
+		}
+		pci_dev = vm::read<QWORD>(4, pci_dev + 0x10);
+	}
+	return objects;
+}
+
+std::vector<DEVICE_INFO> get_devices_by_bus(std::vector<RAW_PCIENUM_OBJECT> &pci_devices, BYTE bus)
+{
+	std::vector<DEVICE_INFO> objects{};
+	for (auto &dev : pci_devices) if (dev.data.bus == bus) objects.push_back(dev.data);
+	return objects;
+}
+
+static void pci_initialize_cfg(DEVICE_INFO &dev)
+{
+	memset(dev.cfg.raw, 0, sizeof(dev.cfg.raw));
+	cl::pci::read(dev.bus, dev.slot, dev.func, 0, dev.cfg.raw, 0x100);
+}
+
+std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
+{
+	auto pci_devices = get_raw_pci_objects();
+
+	std::vector<PORT_DEVICE_INFO> objects{};
+
+	using namespace cl;
+
+	for (auto &devf : pci_devices)
+	{
+		auto &dev = devf.data;
+		if (devf.device_class != 0x00060400)
+		{
+			continue;
+		}
+
+		DWORD businfo = pci::read<DWORD>(dev.bus, dev.slot, dev.func, 0x18);
+		BYTE  bus = ((BYTE*)&businfo)[0];
+		BYTE  secondary_bus = ((BYTE*)&businfo)[1];
+		BYTE  subordinate_bus = ((BYTE*)&businfo)[2];
+
+		if (dev.bus != bus || dev.bus >= secondary_bus || dev.bus >= subordinate_bus)
+			continue;
+
+		BOOL endpoint_port = 0;
+		if (secondary_bus == subordinate_bus)
+		{
+			endpoint_port = 1;
+		}
+
+		else if (secondary_bus < subordinate_bus)
+		{
+			if (get_devices_by_bus(pci_devices, subordinate_bus).size() == 0)
+			{
+				endpoint_port = 1;
+			}
+		}
+
+		if (!endpoint_port)
+		{
+			continue;
+		}
+
+		PORT_DEVICE_INFO object{};
+		object.self    = dev;
+		object.devices = get_devices_by_bus(pci_devices, secondary_bus);
+
+		//
+		// option 1 BEGIN
+		//
+		BOOL is_empty = 0;
+		if (object.devices.size() == 0 && pci::read<WORD>(dev.bus, dev.slot, dev.func, 0x04) == 0x404)
+		{
+			is_empty = 1;
+		}
+
+		if (!is_empty)
+		{
+			objects.push_back(object);
+		}
+		//
+		// option 1 END
+		//
+
+		/*
+		
+		//
+		// option 2 BEGIN
+		//
+		if (object.devices.size() == 0)
+		{
+			DWORD fixup = pci::read<DWORD>(secondary_bus, 0, 0, 0x04);
+			if (fixup != 0 && fixup != 0xffffffff)
+			{
+				DEVICE_INFO pciobj{};
+				pciobj.bus = secondary_bus;
+				object.devices.push_back(pciobj);
+			}
+		}
+		objects.push_back(object);
+		//
+		// option 2 END
+		//
+		*/
+	}
+	for (auto &obj : objects)
+	{
+		pci_initialize_cfg(obj.self);
+		for (auto &dev : obj.devices)
+		{
+			pci_initialize_cfg(dev);
+		}
+	}
+	return objects;
+}
+
+namespace func
+{
+	typedef union _virt_addr_t
+	{
+		QWORD value;
+		struct
+		{
+			QWORD offset : 12;
+			QWORD pt_index : 9;
+			QWORD pd_index : 9;
+			QWORD pdpt_index : 9;
+			QWORD pml4_index : 9;
+			QWORD reserved : 16;
+		};
+	} virt_addr_t, * pvirt_addr_t;
+
+	pml4e_64 pml4[512]{};
+	pdpte_64 pdpt[512]{};
+	pde_64   pde[512]{};
+	pte_64   pte[512]{};
+}
+
+static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
+{
+	using namespace cl;
+	/*
+	auto memory_map = controller->get_memory_map();
+
+	if (memory_map.size())
+		return memory_map;*/
+
+	using namespace func;
+	std::vector<EFI_MEMORY_DESCRIPTOR> map;
+
+	static QWORD page_table = cl::get_virtual_address(system_cr3);
+	if (!cl::vm::read(0, page_table, pml4, sizeof(pml4)))
+	{
+		return {};
+	}
+
+	//
+	// qualifers
+	//
+	DWORD page_accessed  = 0;
+	DWORD cache_enable   = 0;
+	DWORD page_count     = 0;
+
+	//
+	// tables
+	//
+	int   pml4_index = 0;
+	int   pdpt_index = 0;
+	int   pde_index  = 0;
+	int   pte_index  = 0;
+
+	//
+	// page info
+	//
+	QWORD physical_address  = 0;
+	QWORD physical_previous = 0;
+	virt_addr_t virtual_address{};
+	virt_addr_t virtual_previous{};
+	virt_addr_t virt{};
+
+	for (pml4_index = 256; pml4_index < 512; pml4_index++) {
+		physical_address         = pml4[pml4_index].page_frame_number << PAGE_SHIFT;
+		virtual_address.value    = page_table;
+		virtual_address.pt_index = pml4_index;
+
+		if (!pml4[pml4_index].present || !cl::vm::read(0, virtual_address.value, pdpt, sizeof(pdpt)))
+		{
+			if (page_count) goto add_page;
+			continue;
+		}
+		for (pdpt_index = 0; pdpt_index < 512; pdpt_index++) {
+			physical_address         = pdpt[pdpt_index].page_frame_number << PAGE_SHIFT;
+			virtual_address.value    = page_table;
+			virtual_address.pd_index = pml4_index;
+			virtual_address.pt_index = pdpt_index;
+			if (!pdpt[pdpt_index].present || pdpt[pdpt_index].large_page)
+			{
+				if (page_count) goto add_page;
+				continue;
+			}
+
+			if (get_virtual_address(physical_address) != virtual_address.value)
+			{
+				if (page_count) goto add_page;
+				continue;
+			}
+			
+			if (!cl::vm::read(0, virtual_address.value, pde, sizeof(pde)))
+			{
+				if (page_count) goto add_page;
+				continue;
+			}
+
+			for (pde_index = 0; pde_index < 512; pde_index++) {
+				physical_address           = pde[pde_index].page_frame_number << PAGE_SHIFT;
+				virtual_address.value      = page_table;
+				virtual_address.pdpt_index = pml4_index;
+				virtual_address.pd_index   = pdpt_index;
+				virtual_address.pt_index   = pde_index;
+				if (!pde[pde_index].present || pde[pde_index].large_page)
 				{
-					port.self.pci_device_object = pci_dev;
-					QWORD attached_device = cl::vm::read<QWORD>(4, port.self.pci_device_object + 0x18);
-					if (!attached_device)
-						goto next_device;
-
-					QWORD driver_object = cl::vm::read<QWORD>(4, attached_device + 0x08);
-					if (driver_object == AcpiDriverObject)
-						attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
-
-					port.self.drv_device_object = attached_device;
-
-					goto next_device;
+					if (page_count) goto add_page;
+					continue;
 				}
-				for (auto &dev  : port.devices)
+
+				if (get_virtual_address(physical_address) != virtual_address.value)
 				{
-					if (dev.bus == bus &&
-						dev.slot == slot.u.bits.DeviceNumber &&
-						dev.func == slot.u.bits.FunctionNumber)
+					if (page_count) goto add_page;
+					continue;
+				}
+
+				if (!cl::vm::read(0, virtual_address.value, pte, sizeof(pte)))
+				{
+					if (page_count) goto add_page;
+					continue;
+				}
+
+				for (pte_index = 0; pte_index < 512; pte_index++)
+				{
+					physical_address           = pte[pte_index].page_frame_number << PAGE_SHIFT;
+					virtual_address.value      = page_table;
+					virtual_address.pml4_index = pml4_index;
+					virtual_address.pdpt_index = pdpt_index;
+					virtual_address.pd_index   = pde_index;
+					virtual_address.pt_index   = pte_index;
+					if (!pte[pte_index].present || physical_address == 0 || pte[pte_index].execute_disable)
 					{
-						dev.pci_device_object = pci_dev;
-
-						QWORD attached_device = cl::vm::read<QWORD>(4, dev.pci_device_object + 0x18);
-						if (!attached_device)
-							goto next_device;
-
-						QWORD driver_object = cl::vm::read<QWORD>(4, attached_device + 0x08);
-						if (driver_object == AcpiDriverObject)
-							attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
-
-						dev.drv_device_object = attached_device;
-
-						goto next_device;
+						if (page_count) goto add_page;
+						continue;
 					}
+
+					if (PAGE_ALIGN(cl::get_virtual_address(physical_address)) != 0)
+					{
+						if (page_count) goto add_page;
+						continue;
+					}
+
+					if ((physical_address - physical_previous) == 0x1000)
+					{
+						page_count++;
+						if (pte[pte_index].accessed)
+						{
+							page_accessed++;
+						}
+						if (!pte[pte_index].page_level_cache_disable)
+						{
+							cache_enable++;
+						}
+						if (page_count == 1)
+						{
+							virt = virtual_previous;
+						}
+					}
+					else
+					{
+					add_page:
+						if (page_count)
+						{
+							//
+							// these we dont need, lets log them still to look cool
+							//
+
+							QWORD dphys = physical_previous - (page_count * 0x1000);
+							DWORD dnump = page_count + 1;
+							QWORD dvirt = virt.value;
+							LOG_DEBUG("[%llx:%llx] %llx\n", dphys, dphys + (dnump * 0x1000), dvirt);
+						}
+						if (page_count > 0 && page_accessed && (page_count == cache_enable))
+						{
+							EFI_MEMORY_DESCRIPTOR descriptor{};
+							descriptor.Attribute     = 0x800000000000000f;
+							descriptor.Type          = 5;
+							descriptor.VirtualStart  = virt.value;
+							descriptor.PhysicalStart = physical_previous - (page_count * 0x1000);
+							descriptor.NumberOfPages = page_count + 1;
+							map.push_back(descriptor);
+						}
+						page_count    = 0;
+						page_accessed = 0;
+						cache_enable  = 0;
+					}
+					physical_previous = physical_address;
+					virtual_previous  = virtual_address;
 				}
 			}
 		}
-	next_device:
-		pci_dev = vm::read<QWORD>(4, pci_dev + 0x10);
 	}
-
-	return ports;
-}
-
-void cl::pci::get_pci_latency(BYTE bus, BYTE slot, BYTE func, BYTE offset, DWORD loops, DRIVER_TSC *out)
-{
-	cl::controller->get_pci_latency(bus, slot, func, offset, loops, out);
-}
-
-static PVOID cl::efi::__get_memory_map(QWORD* size)
-{
-	return controller->__get_memory_map(size);
-}
-
-static PVOID cl::efi::__get_memory_pages(QWORD* size)
-{
-	return controller->__get_memory_pages(size);
-}
-
-std::vector<EFI_PAGE_TABLE_ALLOCATION> cl::efi::get_page_table_allocations()
-{
-	std::vector<EFI_PAGE_TABLE_ALLOCATION> table;
-
-
-	QWORD efi_page_table_size = 0;
-	PVOID efi_page_tables = cl::efi::__get_memory_pages(&efi_page_table_size);
-
-	for (DWORD i = 0; i < *(DWORD*)efi_page_tables; i++)
-	{
-		QWORD temp = ((QWORD)efi_page_tables + (i * 16)) + 0x04;
-		QWORD address = *(QWORD*)((QWORD)temp + 0x00);
-		QWORD page_cnt = *(QWORD*)((QWORD)temp + 0x08);
-
-		table.push_back({ address, page_cnt });
-	}
-
-	NtFreeVirtualMemory(GetCurrentProcess(), &efi_page_tables, &efi_page_table_size, MEM_RELEASE);
-
-	return table;
+	return map;
 }
 
 std::vector<EFI_MEMORY_DESCRIPTOR> cl::efi::get_memory_map()
 {
-	std::vector<EFI_MEMORY_DESCRIPTOR> table;
+	auto memory_map = get_memory_map_ex();
 
-
-	QWORD memory_map_size = 0;
-	PVOID memory_map = cl::efi::__get_memory_map(&memory_map_size);
-
-	DWORD descriptor_size = sizeof(EFI_MEMORY_DESCRIPTOR) + 0x08;
-	QWORD descriptor_count = memory_map_size / descriptor_size;
-
-	for (QWORD i = 0; i < descriptor_count; i++)
+	for (auto &map : memory_map)
 	{
-		EFI_MEMORY_DESCRIPTOR* entry =
-			(EFI_MEMORY_DESCRIPTOR*)((char*)memory_map + (i * descriptor_size));
+		if (PciIoAddressPhysical >= map.PhysicalStart &&
+			PciIoAddressPhysical <= (map.PhysicalStart + (map.NumberOfPages * 0x1000))
+			)
+		{
+			map.Type = 11;
+		}
 
-		table.push_back(*entry);
+		else if (map.PhysicalStart >= PciIoAddressPhysical && map.PhysicalStart <= 0x100000000)
+		{
+			map.Type = 11;
+		}
 	}
 
-	NtFreeVirtualMemory(GetCurrentProcess(), &memory_map, &memory_map_size, MEM_RELEASE);
-
-	return table;
+	return memory_map;
 }
 
 std::vector<EFI_MODULE_INFO> cl::efi::get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map)
@@ -880,9 +1045,9 @@ std::vector<EFI_MODULE_INFO> cl::efi::get_dxe_modules(std::vector<EFI_MEMORY_DES
 	return modules;
 }
 
-EFI_PAGE_TABLE_ALLOCATION cl::efi::get_dxe_range(
+EFI_MEMORY_DESCRIPTOR cl::efi::get_dxe_range(
 	EFI_MODULE_INFO module,
-	std::vector<EFI_PAGE_TABLE_ALLOCATION>& page_table_list
+	std::vector<EFI_MEMORY_DESCRIPTOR>& page_table_list
 )
 {
 	for (auto& ptentry : page_table_list)

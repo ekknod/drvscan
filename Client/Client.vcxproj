@@ -132,6 +132,7 @@
     <ClCompile Include="client.cpp" />
     <ClCompile Include="clkm\clkm.cpp" />
     <ClCompile Include="clint\clint.cpp" />
+    <ClCompile Include="clrt\clrt.cpp" />
     <ClCompile Include="clum\clum.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="scan\efi.cpp" />
@@ -143,6 +144,7 @@
     <ClInclude Include="client.h" />
     <ClInclude Include="clkm\clkm.h" />
     <ClInclude Include="clint\clint.h" />
+    <ClInclude Include="clrt\clrt.h" />
     <ClInclude Include="clum\clum.h" />
     <ClInclude Include="scan\scan.h" />
     <ClInclude Include="utils.h" />
