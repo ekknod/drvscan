@@ -6,7 +6,7 @@ namespace scan
 
 	static void check_driver(PORT_DEVICE_INFO &port);
 	static void check_hidden(PORT_DEVICE_INFO &port);
-	static void check_shadow(BOOL advanced, PORT_DEVICE_INFO &port);
+	static void check_gummybear(BOOL advanced, PORT_DEVICE_INFO &port);
 	static void check_config(PORT_DEVICE_INFO &port);
 
 	static void PrintPcieInfo(PORT_DEVICE_INFO& port);
@@ -61,7 +61,7 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 	//
 	// shadow test : public troll
 	//
-	for (auto &port : port_devices) if (!port.blk) check_shadow(advanced, port);
+	for (auto &port : port_devices) if (!port.blk) check_gummybear(advanced, port);
 
 	//
 	// check device config
@@ -183,7 +183,7 @@ static void scan::check_hidden(PORT_DEVICE_INFO &port)
 	}
 }
 
-static void scan::check_shadow(BOOL advanced, PORT_DEVICE_INFO& port)
+static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 {
 	for (auto& dev : port.devices)
 	{
