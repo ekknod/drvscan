@@ -953,11 +953,13 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 							//
 							// these we dont need, lets log them still to look cool
 							//
-
-							QWORD dphys = physical_previous - (page_count * 0x1000);
-							DWORD dnump = page_count + 1;
-							QWORD dvirt = virt.value;
-							LOG_DEBUG("[%llx:%llx] %llx\n", dphys, dphys + (dnump * 0x1000), dvirt);
+							if (page_accessed)
+							{
+								QWORD dphys = physical_previous - (page_count * 0x1000);
+								DWORD dnump = page_count + 1;
+								QWORD dvirt = virt.value;
+								LOG_DEBUG("[%llx:%llx] %llx\n", dphys, dphys + (dnump * 0x1000), dvirt);
+							}
 						}
 						if (page_count > 0 && page_accessed && (page_count == cache_enable))
 						{
