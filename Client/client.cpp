@@ -722,7 +722,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 			endpoint_port = 1;
 		}
 
-		else if (secondary_bus < subordinate_bus)
+		else if ((secondary_bus + 1) == subordinate_bus)
 		{
 			if (get_devices_by_bus(pci_devices, subordinate_bus).size() == 0)
 			{
