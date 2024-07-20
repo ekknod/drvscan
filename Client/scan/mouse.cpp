@@ -69,7 +69,9 @@ void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 		{
 			if (pid == process.process_id)
 			{
-				if (!_strcmpi(process.process_modules[0].name.c_str(), "steamwebhelper.exe"))
+				if (!_strcmpi(process.process_modules[0].name.c_str(), "steamwebhelper.exe") ||
+					!_strcmpi(process.process_modules[0].name.c_str(), "explorer.exe")
+					)
 				{
 					return;
 				}
