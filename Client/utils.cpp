@@ -139,8 +139,7 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 	}
 
 	BOOL wow64_process = is_wow_64(module_entry.szExePath);
-
-	while (Module32Next(snp, &module_entry))
+	do
 	{
 		if (wow64_process)
 		{
@@ -167,7 +166,7 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 		temp.name = std::string(module_entry.szModule);
 
 		info.push_back(temp);
-	};
+	} while(Module32Next(snp, &module_entry));
 
 	CloseHandle(snp);
 

@@ -45,6 +45,9 @@
     <ClCompile Include="clrt\clrt.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="scan\mouse.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="utils.h">

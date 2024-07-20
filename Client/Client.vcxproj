@@ -137,6 +137,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="scan\efi.cpp" />
     <ClCompile Include="scan\image.cpp" />
+    <ClCompile Include="scan\mouse.cpp" />
     <ClCompile Include="scan\pci.cpp" />
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
