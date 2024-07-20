@@ -53,6 +53,10 @@ void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 {
 	static int swap_mouse_cnt=0;
 
+	//
+	// we don't care about mouse_event/sendinput
+	// you are caught anyways.
+	//
 	if (input->header.hDevice == 0)
 	{
 		DWORD pid = 0;
@@ -63,24 +67,19 @@ void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 		update_list:
 			process_list = get_system_processes();
 		}
-
 		BOOL tested=0;
 		for (auto &process : process_list)
 		{
 			if (pid == process.process_id)
 			{
-				if (!_strcmpi(process.process_modules[0].name.c_str(), "steamwebhelper.exe") ||
-					!_strcmpi(process.process_modules[0].name.c_str(), "explorer.exe")
-					)
-				{
-					return;
-				}
+				LOG("simulated mouse: %s\n", process.process_modules[0].name.c_str());
 				tested = 1;
 			}
 		}
 
 		if (tested == 0)
 			goto update_list;
+		return;
 	}
 
 	//
