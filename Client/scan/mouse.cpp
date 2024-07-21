@@ -110,6 +110,7 @@ void scan::mouse(void)
 
 			for (i = 0, input = (RAWINPUT*)data_rawinput; i < total; ++i, input = NEXTRAWINPUTBLOCK(input)) {
 				timestamp += increment;
+
 				if (input->header.dwType == RIM_TYPEMOUSE && last_rawinput_poll) {
 					// RAWMOUSE *rawmouse = (RAWMOUSE *)((BYTE *)input + rawinput_offset);
 					handle_raw_input(timestamp, input);
@@ -179,6 +180,7 @@ void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 			device_list.clear();
 			device_list.push_back(primary_dev);
 			LOG("primary input device has been selected\n");
+			return;
 		}
 	}
 	
@@ -205,7 +207,7 @@ void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 				//
 				// https://www.unitjuggler.com/convert-frequency-from-Hz-to-ns(p).html?val=1550
 				//
-				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f]\n", (QWORD)dev.handle, timestamp, ns_to_herz(timestamp - dev.timestamp));
+				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f]\n", (QWORD)dev.handle, timestamp, ns_to_herz((double)(timestamp - dev.timestamp)));
 			}
 
 			dev.timestamp = timestamp;
