@@ -121,6 +121,8 @@ void scan::mouse(void)
 	}
 }
 
+double ns_to_herz(double ns) { return 1.0 / (ns / 1e9);  }
+
 void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 {
 	static int swap_mouse_cnt=0;
@@ -191,12 +193,19 @@ void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 			found = 1;
 			dev.total_calls++;
 
+			/*
+			if (log_hz)
+			{
+				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f]\n", (QWORD)dev.handle, timestamp, ns_to_herz(timestamp - dev.timestamp));
+			}
+			*/
+
 			if (timestamp - dev.timestamp < 500000) // if latency is less than 500000  ns (2000 Hz). tested with 1000hz mice.
 			{
 				//
 				// https://www.unitjuggler.com/convert-frequency-from-Hz-to-ns(p).html?val=1550
 				//
-				LOG("Device: 0x%llx, timestamp: %lld, delta: [%lld]\n", (QWORD)dev.handle, timestamp, timestamp - dev.timestamp);
+				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f]\n", (QWORD)dev.handle, timestamp, ns_to_herz(timestamp - dev.timestamp));
 			}
 
 			dev.timestamp = timestamp;
