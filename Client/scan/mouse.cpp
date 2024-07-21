@@ -36,16 +36,88 @@ void scan::mouse(void)
 
 	LOG("Press F10 to stop monitoring . . .\n");
 
+	QWORD last_rawinput_poll = 0;
+	PBYTE data_rawinput      = 0;
+	DWORD rawinput_size      = 0;
+	QWORD rawinput_offset    = 0;
+
 	while (!GetAsyncKeyState(VK_F10))
 	{
-		RAWINPUT data{};
-		UINT     size = sizeof(data);
-		GetRawInputBuffer(&data, &size, sizeof(RAWINPUTHEADER));
-		if (size != sizeof(RAWINPUT))
-		{
-			continue;
+		UINT size, i, count, total = 0;
+
+		if (rawinput_offset == 0) {
+			BOOL isWow64;
+
+			rawinput_offset = sizeof(RAWINPUTHEADER);
+			if (IsWow64Process(GetCurrentProcess(), &isWow64) && isWow64) {
+				/* We're going to get 64-bit data, so use the 64-bit RAWINPUTHEADER size */
+				rawinput_offset += 8;
+			}
 		}
-		handle_raw_input(SDL_GetTicksNS(), &data);
+
+		/* Get all available events */
+		RAWINPUT* input = (RAWINPUT*)data_rawinput;
+
+		for (;;) {
+			size = rawinput_size - (UINT)((BYTE*)input - data_rawinput);
+			count = GetRawInputBuffer(input, &size, sizeof(RAWINPUTHEADER));
+			if (count == 0 || count == (UINT)-1) {
+				if (!data_rawinput || (count == (UINT)-1 && GetLastError() == ERROR_INSUFFICIENT_BUFFER)) {
+					const UINT RAWINPUT_BUFFER_SIZE_INCREMENT = 96;   // 2 64-bit raw mouse packets
+					BYTE* rawinput = (BYTE*)realloc(data_rawinput, rawinput_size + RAWINPUT_BUFFER_SIZE_INCREMENT);
+					if (!rawinput) {
+						break;
+					}
+					input = (RAWINPUT*)(rawinput + ((BYTE*)input - data_rawinput));
+					data_rawinput = rawinput;
+					rawinput_size += RAWINPUT_BUFFER_SIZE_INCREMENT;
+				}
+				else {
+					break;
+				}
+			}
+			else {
+				total += count;
+
+				// Advance input to the end of the buffer
+				while (count--) {
+					input = NEXTRAWINPUTBLOCK(input);
+				}
+			}
+		}
+
+		QWORD now = SDL_GetTicksNS();
+		if (total > 0)
+		{
+			QWORD timestamp, increment;
+			QWORD delta = (now - last_rawinput_poll);
+
+			if (total > 1 && delta <= 100000000) {
+
+				timestamp = last_rawinput_poll;
+				increment = delta / total;
+			}
+			else
+			{
+				timestamp = now;
+				increment = 0;
+			}
+
+			if (increment == 0 && total > 1)
+			{
+				goto skip;
+			}
+
+			for (i = 0, input = (RAWINPUT*)data_rawinput; i < total; ++i, input = NEXTRAWINPUTBLOCK(input)) {
+				timestamp += increment;
+				if (input->header.dwType == RIM_TYPEMOUSE && last_rawinput_poll) {
+					// RAWMOUSE *rawmouse = (RAWMOUSE *)((BYTE *)input + rawinput_offset);
+					handle_raw_input(timestamp, input);
+				}
+			}
+		skip:
+			last_rawinput_poll = now;
+		}
 	}
 }
 
@@ -118,29 +190,41 @@ void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 		{
 			found = 1;
 			dev.total_calls++;
+
+			if (timestamp - dev.timestamp < 500000) // if latency is less than 500000  ns (2000 Hz). tested with 1000hz mice.
+			{
+				//
+				// https://www.unitjuggler.com/convert-frequency-from-Hz-to-ns(p).html?val=1550
+				//
+				LOG("Device: 0x%llx, timestamp: %lld, delta: [%lld]\n", (QWORD)dev.handle, timestamp, timestamp - dev.timestamp);
+			}
+
 			dev.timestamp = timestamp;
 			break;
 		}
 	}
- 
-	//
-	// did someone send empty mouse packet?
-	//
-	BOOL empty = 1;
-	for (int i = sizeof(RAWMOUSE); i--;)
+
+	if (found)
 	{
-		if (((BYTE*)&input->data.mouse)[i] != 0)
+		//
+		// did someone send empty mouse packet?
+		//
+		BOOL empty = 1;
+		for (int i = sizeof(RAWMOUSE); i--;)
 		{
-			empty = 0;
-			break;
+			if (((BYTE*)&input->data.mouse)[i] != 0)
+			{
+				empty = 0;
+				break;
+			}
+		}
+
+		if (empty)
+		{
+			LOG("Device: 0x%llx, timestamp: %lld, aimbot\n", (QWORD)input->header.hDevice, timestamp);
 		}
 	}
- 
-	if (empty)
-	{
-		LOG("Device: 0x%llx, timestamp: %lld, aimbot\n", (QWORD)input->header.hDevice, timestamp);
-	}
- 
+
 	if (found == 0)
 	{
 		if (device_list.size() != 1)
