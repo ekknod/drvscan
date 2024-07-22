@@ -11,13 +11,13 @@ namespace scan
 	static std::vector<MOUSE_INFO> device_list;
 	static std::vector<PROCESS_INFO> process_list;
 
-	void handle_raw_input(QWORD timestamp, RAWINPUT *input);
+	void handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input);
 }
 
 QWORD SDL_GetTicksNS(void);
 std::vector<MOUSE_INFO> get_input_devices(void);
 
-void scan::mouse(void)
+void scan::mouse(BOOL log_mouse)
 {
 	RAWINPUTDEVICE setup_data[1];
 	setup_data[0].usUsagePage = 0x01;
@@ -113,7 +113,7 @@ void scan::mouse(void)
 
 				if (input->header.dwType == RIM_TYPEMOUSE && last_rawinput_poll) {
 					// RAWMOUSE *rawmouse = (RAWMOUSE *)((BYTE *)input + rawinput_offset);
-					handle_raw_input(timestamp, input);
+					handle_raw_input(log_mouse, timestamp, input);
 				}
 			}
 		skip:
@@ -124,7 +124,7 @@ void scan::mouse(void)
 
 double ns_to_herz(double ns) { return 1.0 / (ns / 1e9);  }
 
-void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
+void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 {
 	static int swap_mouse_cnt=0;
 
@@ -194,22 +194,22 @@ void scan::handle_raw_input(QWORD timestamp, RAWINPUT *input)
 		{
 			found = 1;
 			dev.total_calls++;
-
-			/*
-			if (log_hz)
+			if (log_mouse)
 			{
-				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f]\n", (QWORD)dev.handle, timestamp, ns_to_herz(timestamp - dev.timestamp));
+				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f], state: [%d,%d,%d]\n",
+					(QWORD)dev.handle,
+					timestamp,
+					ns_to_herz((double)(timestamp - dev.timestamp)),
+					input->data.mouse.lLastX, input->data.mouse.lLastY, input->data.mouse.usButtonFlags
+				);
 			}
-			*/
-
-			if (timestamp - dev.timestamp < 500000) // if latency is less than 500000  ns (2000 Hz). tested with 1000hz mice.
+			else if (timestamp - dev.timestamp < 500000) // if latency is less than 500000  ns (2000 Hz). tested with 1000hz mice.
 			{
 				//
 				// https://www.unitjuggler.com/convert-frequency-from-Hz-to-ns(p).html?val=1550
 				//
 				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f]\n", (QWORD)dev.handle, timestamp, ns_to_herz((double)(timestamp - dev.timestamp)));
 			}
-
 			dev.timestamp = timestamp;
 			break;
 		}

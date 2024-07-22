@@ -15,7 +15,8 @@ C:\Users\Juho\source\repos\drvscan\Client\x64\Release>Client.exe --help
     --advanced         (optional) test pci features
     --block            (optional) block illegal cards
     --cfg              (optional) print out every card cfg space
-    --bar              (optional) print out every card bar space
+--scanmouse            catch aimbots by monitoring mouse packets
+    --log              (optional) print out every mouse packet
 
 
 
@@ -28,7 +29,7 @@ Example (verifying modules integrity by using cache):
 all malware patches should be now visible
 
 
-build date: Mar 22 2024, 12:10:11
+build date: Jul 22 2024, 10:55:00
 
 C:\Users\Juho\source\repos\drvscan\Client\x64\Release>
 </pre>

@@ -22,7 +22,7 @@ int main(int argc, char **argv)
 		return getchar();
 	}
 
-	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, advanced=0, block=0, cfg=0, use_cache = 0, scanefi = 0, dump = 0, scanmouse=0;
+	DWORD scan = 0, pid = 4, savecache = 0, scanpci = 0, advanced=0, block=0, cfg=0, use_cache = 0, scanefi = 0, dump = 0, scanmouse=0, log = 0;
 	for (int i = 1; i < argc; i++)
 	{
 		if (!strcmp(argv[i], "--help"))
@@ -40,7 +40,8 @@ int main(int argc, char **argv)
 				"    --advanced         (optional) test pci features\n"
 				"    --block            (optional) block illegal cards\n"
 				"    --cfg              (optional) print out every card cfg space\n"
-				"--scanmouse            catch aimbots by monitoring mouse packets\n\n\n"
+				"--scanmouse            catch aimbots by monitoring mouse packets\n"
+				"    --log              (optional) print out every mouse packet\n\n\n"
 			);
 
 			printf("\nExample (verifying modules integrity by using cache):\n"
@@ -76,6 +77,11 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--scanmouse"))
 		{
 			scanmouse = 1;
+		}
+
+		else if (!strcmp(argv[i], "--log"))
+		{
+			log = 1;
 		}
 
 		else if (!strcmp(argv[i], "--advanced"))
@@ -147,7 +153,7 @@ int main(int argc, char **argv)
 	if (scanmouse)
 	{
 		LOG("monitoring mouse\n");
-		scan::mouse();
+		scan::mouse(log);
 	}
 
 	auto timer_end = std::chrono::high_resolution_clock::now() - timer_start;
