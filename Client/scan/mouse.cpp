@@ -126,7 +126,7 @@ double ns_to_herz(double ns) { return 1.0 / (ns / 1e9);  }
 
 void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 {
-	static int swap_mouse_cnt=0;
+	static int    swap_mouse_cnt=0;
 
 	//
 	// we don't care about mouse_event/sendinput
@@ -203,6 +203,11 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 					input->data.mouse.lLastX, input->data.mouse.lLastY, input->data.mouse.usButtonFlags
 				);
 			}
+			/*
+			if you want test this feature, use https://github.com/ekknod/acdrv
+			some people are crazy and using 4000hz mices, and for usermode this data is received sometimes very late
+			windows 11 this could work in usermode as well even for 4k mices, because each update happens 125hz :P
+
 			else if (timestamp - dev.timestamp < 500000) // if latency is less than 500000  ns (2000 Hz). tested with 1000hz mice.
 			{
 				//
@@ -210,6 +215,7 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 				//
 				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f]\n", (QWORD)dev.handle, timestamp, ns_to_herz((double)(timestamp - dev.timestamp)));
 			}
+			*/
 			dev.timestamp = timestamp;
 			break;
 		}

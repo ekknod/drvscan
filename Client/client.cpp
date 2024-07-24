@@ -742,6 +742,7 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		//
 		// option 1 BEGIN
 		//
+		/*
 		BOOL is_empty = 0;
 		if (object.devices.size() == 0 && pci::read<WORD>(dev.bus, dev.slot, dev.func, 0x04) == 0x404)
 		{
@@ -752,11 +753,10 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		{
 			objects.push_back(object);
 		}
+		*/
 		//
 		// option 1 END
 		//
-
-		/*
 		
 		//
 		// option 2 BEGIN
@@ -775,7 +775,6 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		//
 		// option 2 END
 		//
-		*/
 	}
 	for (auto &obj : objects)
 	{
