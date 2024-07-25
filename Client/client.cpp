@@ -960,9 +960,7 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 								LOG_DEBUG("[%llx:%llx] %llx\n", dphys, dphys + (dnump * 0x1000), dvirt);
 							}
 						}
-						if (page_count > 0 && page_accessed && (page_count == cache_enable) &&
-							(physical_previous - (page_count * 0x1000)) != 0x0000 // skip: 0x0000-0x2000
-							)
+						if (page_count > 0 && page_accessed && (page_count == cache_enable))
 						{
 							EFI_MEMORY_DESCRIPTOR descriptor{};
 							descriptor.Attribute     = 0x800000000000000f;
