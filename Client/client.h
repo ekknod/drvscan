@@ -191,22 +191,9 @@ namespace cl
 	namespace efi
 	{
 		//
-		// KeLoaderBlock EfiMemoryMap
+		// get runtime pages allocated from efi
 		//
 		std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map();
-
-		//
-		// get list of runtime DXE modules loaded by motherboard BIOS.rom
-		//
-		std::vector<EFI_MODULE_INFO> get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR> &memory_map);
-
-		//
-		// every dxe module is loaded in one big memory range, we can resolve it by giving any module information
-		//
-		EFI_MEMORY_DESCRIPTOR get_dxe_range(
-			EFI_MODULE_INFO module,
-			std::vector<EFI_MEMORY_DESCRIPTOR> &page_table_list
-			);
 
 		//
 		// get list of efi runtime functions

@@ -957,7 +957,7 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 								QWORD dphys = physical_previous - (page_count * 0x1000);
 								DWORD dnump = page_count + 1;
 								QWORD dvirt = virt.value;
-								LOG_DEBUG("[%llx:%llx] %llx\n", dphys, dphys + (dnump * 0x1000), dvirt);
+								LOG_DEBUG("[%llx:%llx] %llx [accessed: %d, cached: %d]\n", dphys, dphys + (dnump * 0x1000), dvirt, page_accessed, (page_count == cache_enable));
 							}
 						}
 						if (page_count > 0 && page_accessed && (page_count == cache_enable) &&
@@ -1005,63 +1005,6 @@ std::vector<EFI_MEMORY_DESCRIPTOR> cl::efi::get_memory_map()
 	}
 
 	return memory_map;
-}
-
-std::vector<EFI_MODULE_INFO> cl::efi::get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map)
-{
-	std::vector<EFI_MODULE_INFO> modules;
-
-	for (auto& page : memory_map)
-	{
-		if (page.Type != 5)
-		{
-			continue;
-		}
-
-		if (modules.size())
-		{
-			break;
-		}
-
-		for (DWORD page_num = 0; page_num < page.NumberOfPages; page_num++)
-		{
-			QWORD module_base = page.PhysicalStart + (page_num * 0x1000);
-			if (io::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
-			{
-				QWORD nt = io::read<DWORD>(module_base + 0x03C) + module_base;
-				if (io::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
-				{
-					continue;
-				}
-				QWORD module_base_virt = page.VirtualStart  + (page_num * 0x1000);
-				QWORD module_base_phys = page.PhysicalStart + (page_num * 0x1000);
-				modules.push_back({ module_base_virt, module_base_phys, io::read<DWORD>(nt + 0x050) });
-			}
-		}
-
-		if (modules.size() < 4)
-		{
-			modules.clear();
-		}
-	}
-
-	return modules;
-}
-
-EFI_MEMORY_DESCRIPTOR cl::efi::get_dxe_range(
-	EFI_MODULE_INFO module,
-	std::vector<EFI_MEMORY_DESCRIPTOR>& page_table_list
-)
-{
-	for (auto& ptentry : page_table_list)
-	{
-		if (module.physical_address >= ptentry.PhysicalStart &&
-			module.physical_address <= (ptentry.PhysicalStart + (ptentry.NumberOfPages * 0x1000)))
-		{
-			return ptentry;
-		}
-	}
-	return {};
 }
 
 std::vector<QWORD> cl::efi::get_runtime_table(void)

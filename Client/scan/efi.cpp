@@ -8,6 +8,8 @@ namespace scan
 		EFI_MEMORY_DESCRIPTOR *out
 		);
 
+	std::vector<EFI_MODULE_INFO> get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map);
+
 	static void runtime_detection(EFI_MEMORY_DESCRIPTOR &dxe_range);
 	static void umap_detect(void);
 	static void dump_to_file(PCSTR filename, QWORD physical_address, QWORD size);
@@ -230,6 +232,47 @@ static void scan::umap_detect(void)
 	{
 		LOG("umap detected (this is just public troll bro) get shrekt from UM\n");
 	}
+}
+
+std::vector<EFI_MODULE_INFO> scan::get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map)
+{
+	std::vector<EFI_MODULE_INFO> modules;
+
+	for (auto& page : memory_map)
+	{
+		if (page.Type != 5)
+		{
+			continue;
+		}
+
+		if (modules.size())
+		{
+			break;
+		}
+
+		for (DWORD page_num = 0; page_num < page.NumberOfPages; page_num++)
+		{
+			QWORD module_base = page.PhysicalStart + (page_num * 0x1000);
+			if (cl::io::read<WORD>(module_base) == IMAGE_DOS_SIGNATURE)
+			{
+				QWORD nt = cl::io::read<DWORD>(module_base + 0x03C) + module_base;
+				if (cl::io::read<WORD>(nt) != IMAGE_NT_SIGNATURE)
+				{
+					continue;
+				}
+				QWORD module_base_virt = page.VirtualStart  + (page_num * 0x1000);
+				QWORD module_base_phys = page.PhysicalStart + (page_num * 0x1000);
+				modules.push_back({ module_base_virt, module_base_phys, cl::io::read<DWORD>(nt + 0x050) });
+			}
+		}
+
+		if (modules.size() < 4)
+		{
+			modules.clear();
+		}
+	}
+
+	return modules;
 }
 
 static void scan::dump_to_file(PCSTR filename, QWORD physical_address, QWORD size)
