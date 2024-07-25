@@ -8,7 +8,7 @@ namespace scan
 		EFI_MEMORY_DESCRIPTOR *out
 		);
 
-	static void runtime_detection(std::vector<EFI_MODULE_INFO> &dxe_modules);
+	static void runtime_detection(EFI_MEMORY_DESCRIPTOR &dxe_range);
 	static void umap_detect(void);
 	static void dump_to_file(PCSTR filename, QWORD physical_address, QWORD size);
 }
@@ -34,48 +34,63 @@ void scan::efi(BOOL dump)
 		return;
 	}
 
-	EFI_MEMORY_DESCRIPTOR dxe_range;
-	std::vector<EFI_MODULE_INFO> dxe_modules = cl::efi::get_dxe_modules(memory_map);
-	if (dxe_modules.size())
+	std::vector<QWORD> runtime_table = cl::efi::get_runtime_table();
+	if (runtime_table.size() == 0)
 	{
-		dxe_range = cl::efi::get_dxe_range(dxe_modules[0], memory_map) ;
-		if (dxe_range.PhysicalStart == 0)
+		for (auto &entry : memory_map)
 		{
-			return;
-		}
-	}
-	else
-	{
-		for (auto &mem : memory_map)
-		{
-			if (mem.Type == 5)
+			if (entry.Type != 11)
 			{
-				dxe_range = mem;
-				EFI_MODULE_INFO mod{};
-				mod.physical_address = dxe_range.PhysicalStart;
-				mod.virtual_address = dxe_range.VirtualStart;
-				mod.size = (DWORD)(dxe_range.NumberOfPages * PAGE_SIZE);
-				dxe_modules.push_back(mod);
+				LOG_RED("did you touch FirmwareTypeUefi boot time?\n");
 				break;
 			}
 		}
-	}
-	
-	//
-	// print everything
-	//
-	for (auto &entry : memory_map)
-	{
-		LOG("%s [%llx - %llx] %llx\n",
-			// entry.Attribute,
-			get_efi_type(entry.Type),
-			entry.PhysicalStart,
-			entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
-			entry.VirtualStart
-		);
+		return;
 	}
 
-	runtime_detection(dxe_modules);
+	EFI_MEMORY_DESCRIPTOR dxe_range{};
+	for (auto &page : memory_map)
+	{
+		if (runtime_table[0] >= page.VirtualStart &&
+			runtime_table[0] <= (page.VirtualStart + (page.NumberOfPages * PAGE_SIZE))
+			)
+		{
+			dxe_range = page;
+			break;
+		}
+	}
+
+	if (dxe_range.VirtualStart == 0)
+	{
+		LOG_RED("????????????????????????????????\n");
+		return;
+	}
+
+	for (auto &entry : memory_map)
+	{
+		if (entry.VirtualStart == dxe_range.VirtualStart || entry.Type == 11)
+		{
+			LOG("%s [%llx - %llx] %llx\n",
+				// entry.Attribute,
+				get_efi_type(entry.Type),
+				entry.PhysicalStart,
+				entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
+				entry.VirtualStart
+			);
+		}
+		else
+		{
+			LOG_RED("%s [%llx - %llx] %llx\n",
+				// entry.Attribute,
+				get_efi_type(entry.Type),
+				entry.PhysicalStart,
+				entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
+				entry.VirtualStart
+			);
+		}
+	}
+
+	runtime_detection(dxe_range);
 	umap_detect();
 
 	EFI_MEMORY_DESCRIPTOR eout_0{};
@@ -103,7 +118,7 @@ static BOOL scan::invalid_range_detection(
 		}
 
 		if ((entry.Type == 5 || entry.Type == 6) && entry.Attribute == 0x800000000000000f &&
-			entry.PhysicalStart > dxe_range.PhysicalStart)
+			entry.PhysicalStart != dxe_range.PhysicalStart)
 		{
 			printf("\n");
 			LOG("DXE is found from invalid range!!! [%llx - %llx]\n",
@@ -120,7 +135,7 @@ static BOOL scan::invalid_range_detection(
 }
 
 
-static void scan::runtime_detection(std::vector<EFI_MODULE_INFO> &dxe_modules)
+static void scan::runtime_detection(EFI_MEMORY_DESCRIPTOR &dxe_range)
 {
 	std::vector<QWORD> HalEfiRuntimeServicesTable = cl::efi::get_runtime_table();
 	if (!HalEfiRuntimeServicesTable.size())
@@ -137,20 +152,18 @@ static void scan::runtime_detection(std::vector<EFI_MODULE_INFO> &dxe_modules)
 			continue;
 		}
 
-		QWORD physical_address = cl::get_physical_address(rt_func);
 		BOOL found = 0;
-		for (auto& base : dxe_modules)
+		if (rt_func >= dxe_range.VirtualStart &&
+			rt_func <= (dxe_range.VirtualStart + (dxe_range.NumberOfPages * PAGE_SIZE))
+			)
 		{
-			if (physical_address >= (QWORD)base.physical_address && physical_address <= (QWORD)((QWORD)base.physical_address + base.size))
-			{
-				found = 1;
-				break;
-			}
+			found = 1;
 		}
-
+		
 		if (!found)
 		{
-			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx, %llx\n", i, rt_func, physical_address);
+			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx, %llx\n",
+				i, rt_func, cl::get_physical_address(rt_func));
 		}
 	}
 }
