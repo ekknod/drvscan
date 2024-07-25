@@ -50,6 +50,7 @@ void scan::efi(BOOL dump)
 		return;
 	}
 
+
 	EFI_MEMORY_DESCRIPTOR dxe_range{};
 	for (auto &page : memory_map)
 	{
@@ -99,6 +100,22 @@ void scan::efi(BOOL dump)
 	if (invalid_range_detection(memory_map, dxe_range, &eout_0) && dump)
 	{
 		dump_to_file("eout_0.bin", eout_0.PhysicalStart, eout_0.NumberOfPages*0x1000);
+	}
+
+
+	//
+	// this function requires to use drvscan own (driver.sys)
+	// because its enumerating modules from physical memory.
+	//
+	std::vector<EFI_MODULE_INFO> modules = get_dxe_modules(memory_map);
+	for (auto &entry : modules)
+	{
+		LOG("EFI module [%llx - %llx] %llx\n",
+			// entry.Attribute,
+			entry.physical_address,
+			entry.physical_address + (entry.size),
+			entry.virtual_address
+		);
 	}
 }
 
