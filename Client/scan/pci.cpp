@@ -42,14 +42,17 @@ namespace scan
 	}
 }
 
-BOOL is_xilinx(config::Pci &cfg)
+BOOL is_xilinx(unsigned char *cfg)
 {
-	config::pci::PCIE pci = cfg.get_pci();
-
-	if (!pci.cap_on)
+	unsigned char *a0 = cfg + *(BYTE*)(cfg + 0x34);
+	if (a0[1] == 0)
 		return 0;
 
-	return (pci.link.cap.link_cap_l0s_exit_latency() + pci.link.cap.link_cap_l1_exit_latency() + pci.link.cap.link_cap_aspm_support()) == 15;
+	a0 = cfg + a0[1];
+	if (a0[1] == 0)
+		return 0;
+	DWORD a1 = *(DWORD*)(cfg + a0[1] + 0x0C);
+	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
 }
 
 void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
