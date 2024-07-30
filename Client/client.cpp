@@ -961,7 +961,7 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 							}
 						}
 						if (page_count > 0 && page_accessed && (page_count == cache_enable) &&
-							(physical_previous - (page_count * 0x1000)) != 0x0000 // skip: 0x0000-0x2000
+							(physical_previous - (page_count * 0x1000)) != 0x0000 // skip: 0x0000-0x2000 (vmware).
 							)
 						{
 							EFI_MEMORY_DESCRIPTOR descriptor{};
