@@ -156,7 +156,7 @@ static void scan::check_faceit(PORT_DEVICE_INFO &port)
 {
 	for (auto& dev : port.devices)
 	{
-		if (is_xilinx(dev.cfg))
+		if (is_xilinx(dev.cfg.raw))
 		{
 			port.blk_info = 3;
 			port.blk = 1;
