@@ -4,6 +4,7 @@ namespace scan
 {
 	static void dumpcfg(std::vector<PORT_DEVICE_INFO> &devices);
 
+	static void check_faceit(PORT_DEVICE_INFO &port);
 	static void check_driver(PORT_DEVICE_INFO &port);
 	static void check_hidden(PORT_DEVICE_INFO &port);
 	static void check_gummybear(BOOL advanced, PORT_DEVICE_INFO &port);
@@ -41,6 +42,19 @@ namespace scan
 	}
 }
 
+BOOL is_xilinx(unsigned char *cfg)
+{
+	unsigned char *a0 = cfg + *(BYTE*)(cfg + 0x34);
+	if (a0[1] == 0)
+		return 0;
+
+	a0 = cfg + a0[1];
+	if (a0[1] == 0)
+		return 0;
+	DWORD a1 = *(DWORD*)(cfg + a0[1] + 0x0C);
+	return (GET_BITS(a1, 14, 12) + GET_BITS(a1, 17, 15) + (GET_BIT(a1, 10) | GET_BIT(a1, 11))) == 15;
+}
+
 void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 {
 	UNREFERENCED_PARAMETER(advanced);
@@ -72,6 +86,11 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 	// check if device has driver
 	//
 	for (auto &port : port_devices) if (!port.blk) check_driver(port);
+
+	//
+	// check faceit : my anti-cheat would never do this. really cheap way.
+	//
+	for (auto &port : port_devices) if (!port.blk) check_faceit(port);
 
 
 	int block_cnt = 0;
@@ -129,6 +148,19 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 			{
 				cl::pci::write<WORD>(port.self.bus, port.self.slot, port.self.func, 0x04, command);
 			}
+		}
+	}
+}
+
+static void scan::check_faceit(PORT_DEVICE_INFO &port)
+{
+	for (auto& dev : port.devices)
+	{
+		if (is_xilinx(dev.cfg.raw))
+		{
+			port.blk_info = 3;
+			port.blk = 1;
+			break;
 		}
 	}
 }
