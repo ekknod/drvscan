@@ -791,9 +791,9 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		}
 
 		//
-		// optional: skip x8 or higher devices
+		// optional: skip non xilinx devices
 		//
-		if (obj.self.cfg.get_pci().link.status.link_status_link_width() >= 8)
+		if (obj.self.cfg.get_pci().link.status.link_status_link_width() > 8)
 		{
 			continue;
 		}
