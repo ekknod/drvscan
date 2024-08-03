@@ -262,6 +262,23 @@ namespace config {
 			BYTE link_cap_rsvd_23()                       { return GET_BITS(raw, 23, 19); }
 		};
 
+		struct SlotCap {
+			DWORD raw;
+			BYTE attention_button_present()               { return GET_BIT(raw, 0); }
+			BYTE power_controller_present()               { return GET_BIT(raw, 1); }
+			BYTE mrl_sensor_present()                     { return GET_BIT(raw, 2); }
+			BYTE attention_indicator_present()            { return GET_BIT(raw, 3); }
+			BYTE power_indicator_present  ()              { return GET_BIT(raw, 4); }
+			BYTE hot_plug_surprise()                      { return GET_BIT(raw, 5); }
+			BYTE hot_plug_capable()                       { return GET_BIT(raw, 6); }
+			BYTE slot_power_limit()                       { return GET_BITS(raw, 14, 7); }
+			BYTE slot_power_scale()                       { return GET_BITS(raw, 16, 15); }
+			BYTE electromechanical_lock_present()         { return GET_BIT(raw, 17); }
+			BYTE no_command_completed_support()           { return GET_BIT(raw, 18); }
+			WORD physical_slot_number()                   { return GET_BITS(raw, 31, 19); }
+
+		};
+
 		struct DevControl {
 			WORD raw;
 			BYTE dev_ctrl_corr_err_reporting()            { return GET_BIT(raw, 0); }
@@ -325,6 +342,14 @@ namespace config {
 			BYTE link_hardware_autonomous_width_disable() { return GET_BIT(raw, 9); }
 		};
 
+		struct SlotStatus {
+			WORD raw;
+		};
+
+		struct SlotControl {
+			WORD raw;
+		};
+
 		struct LinkCap2 {
 			DWORD raw;
 			BYTE link_cap2_linkspeedssupported()          { return GET_BITS(raw, 3, 1); }
@@ -386,6 +411,12 @@ namespace config {
 			LinkStatus status;
 		};
 
+		struct SLOT {
+			SlotCap cap;
+			SlotControl control;
+			SlotStatus status;
+		};
+
 		struct LINK2 {
 			LinkCap2 cap;
 			LinkControl2 control;
@@ -400,6 +431,7 @@ namespace config {
 			DEV dev;
 			DEV2 dev2;
 			LINK link;
+			SLOT slot;
 			LINK2 link2;
 		};
 
@@ -568,6 +600,7 @@ namespace config {
 				auto dev              = *(UINT64*)(raw + cap + 0x04);
 				auto dev2             = *(UINT64*)(raw + cap + 0x04 + 0x20);
 				auto link             = *(UINT64*)(raw + cap + 0x0C);
+				auto slot             = *(UINT64*)(raw + cap + 0x0C + 0x08);
 				auto link2            = *(UINT64*)(raw + cap + 0x0C + 0x20);
 
 				res.cap_on            = pci != 0;
@@ -586,6 +619,10 @@ namespace config {
 				res.link.cap.raw      = (link & 0xFFFFFFFF);
 				res.link.control.raw  = (link >> 32) & 0xFFFF;
 				res.link.status.raw   = (link >> 48) & 0xFFFF;
+
+				res.slot.cap.raw      = (slot & 0xFFFFFFFF);
+				res.slot.control.raw  = (slot >> 32) & 0xFFFF;
+				res.slot.status.raw   = (slot >> 48) & 0xFFFF;
 
 				res.link2.cap.raw     = (link2 & 0xFFFFFFFF);
 				res.link2.control.raw = (link2 >> 32) & 0xFFFF;

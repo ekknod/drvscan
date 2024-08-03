@@ -776,15 +776,37 @@ std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
 		// option 2 END
 		//
 	}
+
+	std::vector<PORT_DEVICE_INFO> physical_devices{};
 	for (auto &obj : objects)
 	{
 		pci_initialize_cfg(obj.self);
+
+		//
+		// skip non physical ports
+		//
+		if (obj.self.cfg.get_pci().slot.cap.raw == 0)
+		{
+			continue;
+		}
+
+		//
+		// optional: skip x8 or less devices
+		//
+		if (obj.self.cfg.get_pci().link.status.link_status_link_width() >= 8)
+		{
+			continue;
+		}
+
 		for (auto &dev : obj.devices)
 		{
 			pci_initialize_cfg(dev);
 		}
+
+		physical_devices.push_back(obj);
 	}
-	return objects;
+
+	return physical_devices;
 }
 
 namespace func
