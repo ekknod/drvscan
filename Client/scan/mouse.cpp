@@ -353,4 +353,4 @@ std::vector<MOUSE_INFO> get_input_devices(void)
  
 	return devices;
 }
- 
+

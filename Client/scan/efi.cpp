@@ -288,7 +288,7 @@ EFI_MODULE_INFO get_module_from_address(QWORD virtual_address, EFI_MEMORY_DESCRI
 			continue;
 		}
 
-		QWORD delta           = virtual_address - dxe_range.VirtualStart;
+		QWORD delta = virtual_address - dxe_range.VirtualStart;
 		mod.physical_address = dxe_range.PhysicalStart + delta;
 		mod.virtual_address  = dxe_range.VirtualStart  + delta;
 		mod.size             = cl::vm::read<DWORD>(0, nt + 0x050);

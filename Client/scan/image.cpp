@@ -17,6 +17,39 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 	}
 
 	//
+	// optional: optimize scan for rtcore.sys by skipping kernel modules + makes GhostMapper UD again
+	//
+	if (pid == 0 || pid == 4)
+	{
+		PCSTR target_modules[] = {
+			"ntoskrnl.exe",
+			"win32k.sys",
+			"win32kbase.sys",
+			"win32kfull.sys",
+			"dxgkrnl.sys",
+			"storport.sys",
+			"storahci.sys",
+			"stornvme.sys",
+			"clipsp.sys"
+		};
+
+		BOOL found = 0;
+		for (auto &target : target_modules)
+		{
+			if (strstr(file.name.c_str(), target))
+			{
+				found = 1;
+				break;
+			}
+		}
+
+		if (!found)
+		{
+			return;
+		}
+	}
+
+	//
 	// dump image
 	//
 	QWORD runtime_image = (QWORD)cl::vm::dump_module(pid, file.base, DMP_FULL | DMP_RUNTIME);
@@ -38,7 +71,6 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 			scan_krnlhooks(runtime_image, modules);
 		}
 	}
-
 
 	//
 	// try to use existing memory dumps
@@ -198,12 +230,12 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO &win32k, std::vecto
 
 		if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
 		{
-			LOG("win32k hook [%d] [%llX]\n", index, table1[index]);
+			LOG_RED("win32k hook [%d] [%llX]\n", index, table1[index]);
 		}
 
 		if (table0[index] != table1[index])
 		{
-			LOG("win32k hook [%d] [%llX]\n", index, table1[index]);
+			LOG_RED("win32k hook [%d] [%llX]\n", index, table1[index]);
 		}
 
 		index++;
@@ -224,12 +256,12 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO &win32k, std::vecto
 
 		if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
 		{
-			LOG("win32k hook [%d] [%llX]\n", index, table1[index]);
+			LOG_RED("win32k hook [%d] [%llX]\n", index, table1[index]);
 		}
 
 		if (table0[index] != table1[index])
 		{
-			LOG("win32k hook [%d] [%llX]\n", index, table1[index]);
+			LOG_RED("win32k hook [%d] [%llX]\n", index, table1[index]);
 		}
 
 		index++;
@@ -242,7 +274,7 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO &win32k, std::vecto
 
 static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &modules)
 {
-	LOG("scanning ntoskrnl hooks\n");
+	// LOG("scanning ntoskrnl hooks\n");
 	QWORD *table = (QWORD*)get_dump_export((PVOID)ntoskrnl_dmp, "HalPrivateDispatchTable");
 
 
@@ -297,7 +329,7 @@ static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &mod
 
 			if (!found)
 			{
-				LOG("HalPrivateDispatchTable hook [%ld] [%llx]\n", index, table_address);
+				LOG_RED("HalPrivateDispatchTable hook [%ld] [%llx]\n", index, table_address);
 			}
 		}
 
@@ -329,7 +361,7 @@ static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &mod
 
 			if (!found)
 			{
-				LOG("HalDispatchTable hook [%ld] [%llx]\n", index, table_address);
+				LOG_RED("HalDispatchTable hook [%ld] [%llx]\n", index, table_address);
 			}
 		}
 		index++;
