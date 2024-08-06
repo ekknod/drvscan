@@ -8,8 +8,8 @@ namespace scan
 		EFI_MEMORY_DESCRIPTOR *out
 		);
 
+	std::vector<EFI_MODULE_INFO> get_runtime_modules(std::vector<QWORD> &runtime_table, EFI_MEMORY_DESCRIPTOR &dxe_range);
 	std::vector<EFI_MODULE_INFO> get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map);
-
 	static void runtime_detection(EFI_MEMORY_DESCRIPTOR &dxe_range);
 	static void umap_detect(void);
 	static void dump_to_file(PCSTR filename, QWORD physical_address, QWORD size);
@@ -102,12 +102,18 @@ void scan::efi(BOOL dump)
 		dump_to_file("eout_0.bin", eout_0.PhysicalStart, eout_0.NumberOfPages*0x1000);
 	}
 
-
 	//
-	// this function requires to use drvscan own (driver.sys)
-	// because its enumerating modules from physical memory.
+	// dump modules from EFI range (driver.sys)
 	//
 	std::vector<EFI_MODULE_INFO> modules = get_dxe_modules(memory_map);
+	if (modules.size() == 0)
+	{
+		//
+		// dump modules from runtime range (rtcore.sys)
+		//
+		modules = get_runtime_modules(runtime_table, dxe_range);
+	}
+
 	for (auto &entry : modules)
 	{
 		LOG("EFI module [%llx - %llx] %llx\n",
@@ -249,6 +255,87 @@ static void scan::umap_detect(void)
 	{
 		LOG("umap detected (this is just public troll bro) get shrekt from UM\n");
 	}
+}
+
+EFI_MODULE_INFO get_module_from_address(QWORD virtual_address, EFI_MEMORY_DESCRIPTOR &dxe_range)
+{
+	EFI_MODULE_INFO mod{};
+
+	virtual_address = (QWORD)PAGE_ALIGN(virtual_address);
+
+	while (1)
+	{
+		virtual_address -= PAGE_SIZE;
+
+		if (virtual_address < dxe_range.VirtualStart)
+		{
+			break;
+		}
+
+		if (virtual_address > (dxe_range.VirtualStart + dxe_range.NumberOfPages * PAGE_SIZE))
+		{
+			break;
+		}
+
+		if (cl::vm::read<WORD>(0, virtual_address) != IMAGE_DOS_SIGNATURE)
+		{
+			continue;
+		}
+
+		QWORD nt = cl::vm::read<DWORD>(0, virtual_address + 0x03C) + virtual_address;
+		if (cl::vm::read<WORD>(0, nt) != IMAGE_NT_SIGNATURE)
+		{
+			continue;
+		}
+
+		QWORD delta           = virtual_address - dxe_range.VirtualStart;
+		mod.physical_address = dxe_range.PhysicalStart + delta;
+		mod.virtual_address  = dxe_range.VirtualStart  + delta;
+		mod.size             = cl::vm::read<DWORD>(0, nt + 0x050);
+		break;
+	}
+
+	return mod;
+}
+
+std::vector<EFI_MODULE_INFO> scan::get_runtime_modules(std::vector<QWORD> &runtime_table, EFI_MEMORY_DESCRIPTOR &dxe_range)
+{
+	std::vector<EFI_MODULE_INFO> modules{};
+
+	for (int i = 0; i < runtime_table.size(); i++)
+	{
+		QWORD rt_func = runtime_table[i];
+
+		if (rt_func > dxe_range.VirtualStart &&
+			rt_func < dxe_range.VirtualStart + (dxe_range.NumberOfPages * PAGE_SIZE))
+		{
+			EFI_MODULE_INFO mod = get_module_from_address(rt_func, dxe_range);
+
+			if (mod.virtual_address == 0)
+			{
+				LOG("should not happen [2] ???\n");
+				return {};
+			}
+
+			BOOL found = 0;
+			for (auto &entry : modules)
+			{
+				if (entry.physical_address == mod.physical_address)
+				{
+					found = 1;
+					break;
+				}
+			}
+
+			if (!found) modules.push_back(mod);
+		}
+		else
+		{
+			LOG("should not happen [1] ???\n");
+			return {};
+		}
+	}
+	return modules;
 }
 
 std::vector<EFI_MODULE_INFO> scan::get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map)
