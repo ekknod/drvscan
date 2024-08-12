@@ -5,6 +5,7 @@ namespace scan
 	static void dumpcfg(std::vector<PORT_DEVICE_INFO> &devices);
 
 	static void check_faceit(PORT_DEVICE_INFO &port);
+	static void check_activity(PORT_DEVICE_INFO &port);
 	static void check_driver(PORT_DEVICE_INFO &port);
 	static void check_hidden(PORT_DEVICE_INFO &port);
 	static void check_gummybear(BOOL advanced, PORT_DEVICE_INFO &port);
@@ -92,6 +93,11 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 	//
 	for (auto &port : port_devices) if (!port.blk) check_faceit(port);
 
+	//
+	// check if device has fired any interrupt (everdox & ekknod)
+	//
+	for (auto &port : port_devices) if (!port.blk) check_activity(port);
+
 
 	int block_cnt = 0;
 	if (disable)
@@ -154,6 +160,8 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 
 static void scan::check_faceit(PORT_DEVICE_INFO &port)
 {
+	UNREFERENCED_PARAMETER(port);
+	/*
 	for (auto& dev : port.devices)
 	{
 		if (is_xilinx(dev.cfg.raw))
@@ -163,6 +171,7 @@ static void scan::check_faceit(PORT_DEVICE_INFO &port)
 			break;
 		}
 	}
+	*/
 }
 
 static void scan::check_driver(PORT_DEVICE_INFO &port)
@@ -194,6 +203,75 @@ static void scan::check_driver(PORT_DEVICE_INFO &port)
 	if (!driver_installed)
 	{
 		port.blk = 1; port.blk_info = 16;
+	}
+}
+
+BOOL is_interrupt_enabled(config::Pci &cfg)
+{
+	//
+	// legacy
+	//
+	if (!cfg.command().interrupt_disable())
+	{
+		return 1;
+	}
+
+	//
+	// msi
+	//
+	auto msi = cfg.get_msi();
+	if (msi.cap_on && msi.cap.msi_enabled())
+	{
+		return 1;
+	}
+
+	//
+	// msix
+	//
+	auto msix = cfg.get_msix();
+	if (msix.cap_on && msix.cap.msix_enabled())
+	{
+		return 1;
+	}
+	return 0;
+}
+
+static void scan::check_activity(PORT_DEVICE_INFO& port)
+{
+	BOOL activity = 0;
+	BOOL dev_with_ints = 0;
+
+	for (auto& dev : port.devices)
+	{
+		if (!dev.cfg.command().bus_master_enable())
+		{
+			continue;
+		}
+
+		int interrupts = is_interrupt_enabled(dev.cfg);
+		if (!interrupts)
+		{
+			continue;
+		}
+
+		ISRDPCSTATS isr_stats{};
+		if (!cl::get_isr_stats(dev, &isr_stats))
+		{
+			continue;
+		}
+
+		dev_with_ints = 1;
+		if (isr_stats.IsrCount)
+		{
+			activity = 1;
+			break;
+		}
+	}
+
+	if (!activity && dev_with_ints)
+	{
+		port.blk = 1;
+		port.blk_info = 24;
 	}
 }
 

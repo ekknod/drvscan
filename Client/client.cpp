@@ -60,6 +60,28 @@ namespace cl
 	//
 	QWORD PciDriverObject;
 	QWORD AcpiDriverObject;
+	QWORD Offset_InterruptObject;
+
+	static QWORD get_processor_block(int index)
+	{
+		DWORD eax              = index;
+		QWORD KiProcessorBlock = vm::get_relative_address(4, KeQueryPrcbAddress + 2, 3, 7);
+		QWORD prcb             = vm::read<QWORD>(4, KiProcessorBlock + (eax*8));
+		return prcb;
+	}
+
+	inline QWORD get_current_processor_block(void)
+	{
+		return get_processor_block(GetCurrentProcessorNumber());
+	}
+
+	static QWORD get_interrupt_object(DWORD index)
+	{
+		QWORD rdx;
+		rdx = get_processor_block(0);
+		rdx = rdx + Offset_InterruptObject;
+		return vm::read<QWORD>(4, (rdx + (index * 8)));
+	}
 
 	#define MiGetVirtualAddressMappedByPte(PteAddress) (PVOID)((LONG_PTR)(((LONG_PTR)(PteAddress) - (ULONG_PTR)(MmPteBase)) << 25L) >> 16)
 	QWORD get_virtual_address(QWORD physical_address)
@@ -73,6 +95,54 @@ namespace cl
 		}
 		QWORD va = (QWORD)MiGetVirtualAddressMappedByPte((QWORD)pte);
 		return (physical_address & 0xFFF) + va;
+	}
+
+	BOOL get_isr_stats(DEVICE_INFO &dev, ISRDPCSTATS *out)
+	{
+		if (!dev.pci_device_object)
+			return 0;
+
+		QWORD extension = vm::read<QWORD>(4, dev.pci_device_object + 0x138);
+		if (vm::read<QWORD>(4, extension + 0x60) == 0) // interrupt count: 0
+		{
+			if (vm::read<QWORD>(4, extension + 0x58) != 0) // catch if not compatible driver installed
+				return 1;
+			return 0;
+		}
+
+		QWORD interrupt_context = vm::read<QWORD>(4, extension + 0x58);
+		if (!interrupt_context)
+			return 0;
+
+		QWORD kinterrupt = get_interrupt_object(vm::read<DWORD>(4, interrupt_context + 0x10));
+		if (!kinterrupt)
+			return 0;
+
+		BOOL  connected = 0;
+		QWORD interrupt_item = kinterrupt + 0x08;
+		QWORD list_entry = interrupt_item;
+
+		while (1)
+		{
+			kinterrupt = (interrupt_item - 0x08);
+
+			if (!connected)
+			{
+				connected = vm::read<UCHAR>(4, kinterrupt + 0x5F) == 1;
+			}
+
+			ISRDPCSTATS stats{};
+			vm::read(4, kinterrupt + 0xB0, &stats, sizeof(stats));
+
+			out->IsrCount += stats.IsrCount;
+
+			interrupt_item = vm::read<QWORD>(4, interrupt_item);
+			if (interrupt_item == 0 || interrupt_item == list_entry)
+			{
+				break;
+			}
+		}
+		return connected;
 	}
 }
 
@@ -241,11 +311,20 @@ BOOL cl::initialize(void)
 	AcpiDriverObject = get_kernel_pattern(
 		acpi_path.c_str(), acpi_base, (BYTE*)"\x48\x8B\x0D\x00\x00\x00\x00\xB2\x00\x48\xFF\x15", (BYTE*)"xxx????x?xxx");
 
-	if (PciDriverObject == 0 || AcpiDriverObject == 0)
+	Offset_InterruptObject = get_kernel_pattern(
+		ntoskrnl_path.c_str(), ntoskrnl_base,
+		(BYTE*)"\x65\x48\x8B\x14\x25\x20\x00\x00\x00\x48\x81\xC2",
+		(BYTE*)"xxxxxxxxxxxx"
+	);
+
+	if (PciDriverObject == 0 || AcpiDriverObject == 0 || Offset_InterruptObject == 0)
 	{
 		LOG("OS is not currently supported\n");
 		return 0;
 	}
+
+	Offset_InterruptObject = Offset_InterruptObject  + 0x09;
+	Offset_InterruptObject = Offset_InterruptObject + 0x03;
 
 	clkm *km = new clkm();
 	clint *intel = new clint();
@@ -325,6 +404,7 @@ BOOL cl::initialize(void)
 
 		AcpiDriverObject       = vm::read<QWORD>(4, vm::get_relative_address(4, AcpiDriverObject, 3, 7));
 		PciDriverObject        = vm::read<QWORD>(4, vm::get_relative_address(4, PciDriverObject, 3, 7));
+		Offset_InterruptObject = vm::read<DWORD>(4, Offset_InterruptObject);
 
 		system_cr3             = vm::read<QWORD>(4, vm::read<QWORD>(4, PsInitialSystemProcess) + 0x28);
 		PciIoAddressPhysical = pci::get_physical_address(0, 0);

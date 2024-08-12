@@ -55,6 +55,29 @@ typedef struct {
 	UINT64                Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
+
+//0x28 bytes (sizeof)
+struct _ISRDPCSTATS_SEQUENCE
+{
+    DWORD SequenceNumber;                                               //0x0
+    QWORD IsrTime;                                                      //0x8
+    QWORD IsrCount;                                                     //0x10
+    QWORD DpcTime;                                                      //0x18
+    QWORD DpcCount;                                                     //0x20
+};
+
+typedef struct _ISRDPCSTATS {
+    QWORD IsrTime;                                                      //0x0
+    QWORD IsrTimeStart;                                                 //0x8
+    QWORD IsrCount;                                                     //0x10
+    QWORD DpcTime;                                                      //0x18
+    QWORD DpcTimeStart;                                                 //0x20
+    QWORD DpcCount;                                                     //0x28
+    UCHAR IsrActive;                                                    //0x30
+    UCHAR Reserved[7];                                                  //0x31
+    struct _ISRDPCSTATS_SEQUENCE DpcWatchdog;                           //0x38
+} ISRDPCSTATS;
+
 namespace cl
 {
 	class client
@@ -114,6 +137,7 @@ namespace cl
 
 	QWORD get_physical_address(QWORD virtual_address);
 	QWORD get_virtual_address(QWORD physical_address);
+	BOOL  get_isr_stats(DEVICE_INFO &dev, ISRDPCSTATS *out);
 
 	namespace vm
 	{
