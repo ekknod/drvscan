@@ -307,11 +307,7 @@ static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &mod
 	int index = 1;
 	while (1)
 	{
-		if (table[index] == 0 && table[index + 1] == 0 && index > 100)
-			break;
-
 		QWORD table_address = table[index];
-
 		if (table_address)
 		{
 			BOOL found = 0;
@@ -329,10 +325,13 @@ static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &mod
 
 			if (!found)
 			{
+				if (table_address < 0xffff000000000000)
+				{
+					break;
+				}
 				LOG_RED("HalPrivateDispatchTable hook [%ld] [%llx]\n", index, table_address);
 			}
 		}
-
 		index++;
 	}
 
@@ -340,9 +339,6 @@ static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &mod
 	index = 1;
 	while (1)
 	{
-		if (table[index] < 0xffff800000000000 && index > 20)
-			break;
-
 		QWORD table_address = table[index];
 		if (table_address)
 		{
@@ -361,6 +357,10 @@ static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &mod
 
 			if (!found)
 			{
+				if (table_address < 0xffff000000000000)
+				{
+					break;
+				}
 				LOG_RED("HalDispatchTable hook [%ld] [%llx]\n", index, table_address);
 			}
 		}
