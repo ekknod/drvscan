@@ -176,29 +176,11 @@ QWORD get_dump_export(PVOID dumped_module, PCSTR export_name)
 	return 0;
 }
 
-QWORD find_table_by_function(QWORD win32k, QWORD win32k_dmp, QWORD Win32kApiSetTable, QWORD func)
-{
-	for (int i = 0; i < 60; i++)
-	{
-		QWORD table = *(QWORD*)(Win32kApiSetTable + (i * sizeof(QWORD)));
-		if (table == 0)
-			continue;
-
-		table = table - win32k;
-		table = table + win32k_dmp;
-		if (*(QWORD*)table == func)
-		{
-			return table;
-		}
-	}
-	return 0;
-}
-
-static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO &win32k, std::vector<FILE_INFO> &modules)
+static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vector<FILE_INFO>& modules)
 {
 	FILE_INFO win32kfull{};
 
-	for (auto &mod : modules)
+	for (auto& mod : modules)
 	{
 		if (!_strcmpi(mod.name.c_str(), "win32kfull.sys"))
 		{
@@ -210,65 +192,42 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO &win32k, std::vecto
 	if (win32kfull.base == 0)
 		return;
 
-	QWORD Win32kApiSetTable = get_dump_export((PVOID)win32k_dmp, "ext_ms_win_moderncore_win32k_base_sysentry_l1_table");
-	Win32kApiSetTable =  Win32kApiSetTable + 0x70;
-
 	QWORD win32kfull_dmp = (QWORD)cl::vm::dump_module(4, win32kfull.base, DMP_FULL | DMP_RUNTIME);
-	QWORD *table0  = (QWORD*)get_dump_export((PVOID)win32kfull_dmp, "ext_ms_win_core_win32k_fulluser_l1_table");
-	QWORD *table1  = (QWORD*)find_table_by_function(win32k.base, win32k_dmp, Win32kApiSetTable, *(QWORD*)table0);
-	QWORD lastadr = (QWORD)table0 + win32kfull.base - (QWORD)win32kfull_dmp;
+	if (win32kfull_dmp == 0)
+		return;
 
-	// LOG("scanning win32k hooks\n");
+	QWORD Win32kApiSetTable = get_dump_export((PVOID)win32k_dmp, "ext_ms_win_moderncore_win32k_base_sysentry_l1_table");
+	Win32kApiSetTable = Win32kApiSetTable + 0x70;
 
-	int index=0;
-	while (1)
+	typedef struct {
+		QWORD table_address;
+		QWORD* table_names;
+		QWORD unk;
+	} TABLE_ENTRY;
+	TABLE_ENTRY* table = (TABLE_ENTRY*)(Win32kApiSetTable);
+
+	do
 	{
-		if (table0[index] == lastadr)
+		QWORD* temp = (QWORD*)((QWORD)table->table_names - win32k.base + win32k_dmp);
+		PCSTR  table_name = (PCSTR)(temp[1] - win32k.base + win32k_dmp);
+		QWORD  table_cnt = temp[3];
+		QWORD* table0 = (QWORD*)get_dump_export((PVOID)win32kfull_dmp, table_name);
+		QWORD* table1 = (QWORD*)((QWORD)table->table_address - win32k.base + win32k_dmp);
+		for (QWORD index = 0; index < table_cnt; index++)
 		{
-			break;
+			if (!table0) break;
+
+			if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
+			{
+				LOG_RED("[%s] win32k hook [%lld] [%llX]\n", table_name, index, table1[index]);
+			}
+
+			if (table0[index] != table1[index])
+			{
+				LOG_RED("[%s] win32k hook [%lld] [%llX]\n", table_name, index, table1[index]);
+			}
 		}
-
-		if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
-		{
-			LOG_RED("win32k hook [%d] [%llX]\n", index, table1[index]);
-		}
-
-		if (table0[index] != table1[index])
-		{
-			LOG_RED("win32k hook [%d] [%llX]\n", index, table1[index]);
-		}
-
-		index++;
-	}
-
-	// LOG("ext_ms_win_core_win32k_fulluser_l1_table total entries: %ld\n", index);
-
-	index   = 0;
-	table0  = (QWORD*)get_dump_export((PVOID)win32kfull_dmp, "ext_ms_win_core_win32k_fullgdi_l1_table");
-	table1  = (QWORD*)find_table_by_function(win32k.base, win32k_dmp, Win32kApiSetTable, *(QWORD*)table0);
-	lastadr = (QWORD)table0 + win32kfull.base - (QWORD)win32kfull_dmp;
-	while (1)
-	{
-		if (table0[index] == lastadr)
-		{
-			break;
-		}
-
-		if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
-		{
-			LOG_RED("win32k hook [%d] [%llX]\n", index, table1[index]);
-		}
-
-		if (table0[index] != table1[index])
-		{
-			LOG_RED("win32k hook [%d] [%llX]\n", index, table1[index]);
-		}
-
-		index++;
-	}
-
-	// LOG("ext_ms_win_core_win32k_fullgdi_l1_table total entries: %ld\n", index);
-
+	} while ((++table)->table_address);
 	cl::vm::free_module((PVOID)win32kfull_dmp);
 }
 
