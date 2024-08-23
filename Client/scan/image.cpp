@@ -179,13 +179,17 @@ QWORD get_dump_export(PVOID dumped_module, PCSTR export_name)
 static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vector<FILE_INFO>& modules)
 {
 	FILE_INFO win32kfull{};
+	FILE_INFO win32kbase{};
 
 	for (auto& mod : modules)
 	{
 		if (!_strcmpi(mod.name.c_str(), "win32kfull.sys"))
 		{
 			win32kfull = mod;
-			break;
+		}
+		if (!_strcmpi(mod.name.c_str(), "win32kbase.sys"))
+		{
+			win32kbase = mod;
 		}
 	}
 
@@ -206,6 +210,13 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vecto
 	} TABLE_ENTRY;
 	TABLE_ENTRY* table = (TABLE_ENTRY*)(Win32kApiSetTable);
 
+
+	std::vector<FILE_INFO> wl_modules;
+	wl_modules.push_back(win32kfull);
+	wl_modules.push_back(win32kbase);
+	wl_modules.push_back(win32k);
+
+
 	do
 	{
 		QWORD* temp = (QWORD*)((QWORD)table->table_names - win32k.base + win32k_dmp);
@@ -215,14 +226,22 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vecto
 		QWORD* table1 = (QWORD*)((QWORD)table->table_address - win32k.base + win32k_dmp);
 		for (QWORD index = 0; index < table_cnt; index++)
 		{
-			if (!table0) break;
+			BOOL found = 0;
+			for (auto &mod : wl_modules)
+			{
+				if ((table1[index] >= mod.base && table1[index] <= (win32kfull.base + win32kfull.size)) || table1[index] == 0)
+				{
+					found = 1;
+					break;
+				}
+			}
 
-			if (table1[index] < win32kfull.base || table1[index] > (win32kfull.base + win32kfull.size))
+			if (!found)
 			{
 				LOG_RED("[%s] win32k hook [%lld] [%llX]\n", table_name, index, table1[index]);
 			}
 
-			if (table0[index] != table1[index])
+			if (table0 && table0[index] != table1[index])
 			{
 				LOG_RED("[%s] win32k hook [%lld] [%llX]\n", table_name, index, table1[index]);
 			}
