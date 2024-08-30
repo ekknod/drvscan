@@ -203,13 +203,18 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vecto
 	QWORD Win32kApiSetTable = get_dump_export((PVOID)win32k_dmp, "ext_ms_win_moderncore_win32k_base_sysentry_l1_table");
 	Win32kApiSetTable = Win32kApiSetTable + 0x70;
 
+
 	typedef struct {
 		QWORD table_address;
 		QWORD* table_names;
-		QWORD unk;
+		QWORD unk; // win11 only
 	} TABLE_ENTRY;
+
 	TABLE_ENTRY* table = (TABLE_ENTRY*)(Win32kApiSetTable);
 
+	DWORD next_off = sizeof(TABLE_ENTRY);
+	// win10, poor way
+	if (table->unk != 0) next_off -= 8;
 
 	std::vector<FILE_INFO> wl_modules;
 	wl_modules.push_back(win32kfull);
@@ -246,7 +251,8 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vecto
 				LOG_RED("[%s] win32k hook [%lld] [%llX]\n", table_name, index, table1[index]);
 			}
 		}
-	} while ((++table)->table_address);
+		table = (TABLE_ENTRY*)((QWORD)table + next_off);
+	} while (table->table_address);
 	cl::vm::free_module((PVOID)win32kfull_dmp);
 }
 
