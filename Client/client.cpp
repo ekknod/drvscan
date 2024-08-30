@@ -633,6 +633,39 @@ QWORD cl::pci::get_physical_address(ULONG bus, ULONG slot)
 	return vm::read<QWORD>(0, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
 }
 
+static BOOL read_io_virtual_address(QWORD address, PVOID buffer, DWORD length)
+{
+	using namespace cl;
+	using namespace pci;
+
+	DWORD location = 0;
+	DWORD data_left = length;
+
+	while (data_left)
+	{
+		if (data_left >= 4)
+		{
+			DWORD data = vm::read<DWORD>(0, address + location);
+			*(DWORD*)((PBYTE)buffer + location) = data;
+			location += 4;
+		}
+		else if (data_left >= 2)
+		{
+			WORD data = vm::read<WORD>(0, address + location);
+			*(WORD*)((PBYTE)buffer + location) = data;
+			location += 2;
+		}
+		else
+		{
+			BYTE data = vm::read<BYTE>(0, address + location);
+			*(BYTE*)((PBYTE)buffer + location) = data;
+			location += 1;
+		}
+		data_left = length - location;
+	}
+	return 1;
+}
+
 BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD size)
 {
 	if (PciIoAddressVirtual)
@@ -643,16 +676,7 @@ BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, D
 		QWORD delta = device - PciIoAddressPhysical;
 		QWORD virtu = PciIoAddressVirtual + delta;
 
-		if (size == 0x100 || size == 0xF00)
-		{
-			for (DWORD i = 0; i < size; i+= 4)
-			{
-				if (!controller->read_virtual(0, virtu + offset + i, (PVOID)((QWORD)buffer + i), sizeof(DWORD)))
-					return 0;
-			}
-			return 1;
-		}
-		return controller->read_virtual(0, virtu + offset, buffer, size);
+		return read_io_virtual_address(virtu + offset, buffer, size);
 	}
 
 	if (!has_io_access)
@@ -769,7 +793,35 @@ std::vector<DEVICE_INFO> get_devices_by_bus(std::vector<RAW_PCIENUM_OBJECT> &pci
 static void pci_initialize_cfg(DEVICE_INFO &dev)
 {
 	memset(dev.cfg.raw, 0, sizeof(dev.cfg.raw));
+
+	//
+	// legacy (0x00 - 0x100)
+	//
 	cl::pci::read(dev.bus, dev.slot, dev.func, 0, dev.cfg.raw, 0x100);
+
+	//
+	// optimized extended (0x100 - 0x1000)
+	//
+	WORD optimize_ptr = 0x100;
+	WORD max_size     = sizeof(dev.cfg.raw);
+	for (WORD i = 0x100; i < max_size; i += 4)
+	{
+		cl::pci::read(dev.bus, dev.slot, dev.func, i, (PVOID)(dev.cfg.raw + i), 4);
+		if (i >= optimize_ptr)
+		{
+			optimize_ptr = GET_BITS(*(DWORD*)((PBYTE)dev.cfg.raw + optimize_ptr), 31, 20);
+			if (!optimize_ptr)
+			{
+				optimize_ptr = 0x1000;   // disable
+				max_size     = i + 0x30; // max data left 0x30
+
+				if (max_size > sizeof(dev.cfg.raw))
+				{
+					max_size = sizeof(dev.cfg.raw);
+				}
+			}
+		}
+	}
 }
 
 std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)

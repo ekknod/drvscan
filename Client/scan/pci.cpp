@@ -14,6 +14,8 @@ namespace scan
 	static void PrintPcieInfo(PORT_DEVICE_INFO& port);
 	static void PrintPcieConfiguration(unsigned char *cfg, int size);
 
+	static void filter_pci_cfg(config::Pci &cfg);
+
 	std::wstring get_driver_name(DEVICE_INFO &dev)
 	{
 		if (!dev.drv_device_object)
@@ -623,7 +625,6 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 	}
 }
 
-// void filter_pci_cfg(config::Pci &cfg);;
 static void scan::dumpcfg(std::vector<PORT_DEVICE_INFO> &devices)
 {
 	for (auto& entry : devices)
@@ -631,15 +632,8 @@ static void scan::dumpcfg(std::vector<PORT_DEVICE_INFO> &devices)
 		for (auto& dev : entry.devices)
 		{
 			printf("[%d:%d:%d] [%02X:%02X]", dev.bus, dev.slot, dev.func, *(WORD*)(dev.cfg.raw), *(WORD*)(dev.cfg.raw + 0x02));
-			BYTE config[0x1000];
-			memcpy(config, dev.cfg.raw, sizeof(dev.cfg.raw));
-			cl::pci::read(dev.bus, dev.slot, dev.func, 0x100, config + 0x100, 0xF00);
-			PrintPcieConfiguration(config, sizeof(config));
-
-			// auto full = config::Pci{};
-			// memcpy(full.raw, config, 0x1000);
-			// filter_pci_cfg(full);
-
+			PrintPcieConfiguration(dev.cfg.raw, *(DWORD*)(dev.cfg.raw + 0x100) ? 0x1000 : 0x100);
+			filter_pci_cfg(dev.cfg);
 			printf("\n");
 		}
 	}
@@ -762,8 +756,7 @@ static void scan::PrintPcieConfiguration(unsigned char *cfg, int size)
 	printf("\n");
 }
 
-/*
-void filter_pci_cfg(config::Pci &cfg)
+static void scan::filter_pci_cfg(config::Pci &cfg)
 {
 
 	printf(
@@ -1049,6 +1042,24 @@ void filter_pci_cfg(config::Pci &cfg)
 		if (!empty.cap_on)
 			continue;
 
+
+		if (i == 0x03) // dsn
+		{
+			auto dsn = cfg.get_dsn();
+			printf(
+				"\n[PCI DSN Capability - 0x%lx]\n"
+				"---------------------------------------------------------------------\n",
+				i
+			);
+			printf("DSN_CAP_NEXTPTR 				0x%lx\n",  dsn.hdr.cap_next_ptr());
+			printf("DSN_CAP_ON 					%ld\n",    dsn.cap_on);
+			printf("DSN_CAP_ID 					0x0%lx\n", dsn.hdr.cap_id());
+			printf("DSN        					0x0%llx\n", dsn.serial);
+			printf("---------------------------------------------------------------------\n");
+
+			continue;
+		}
+
 		printf(
 			"\n[PCI Express Extended Capability - 0x%lx]\n"
 			"---------------------------------------------------------------------\n",
@@ -1060,6 +1071,4 @@ void filter_pci_cfg(config::Pci &cfg)
 		printf("---------------------------------------------------------------------\n");
 	}
 }
-
-*/
 

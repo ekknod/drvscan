@@ -456,7 +456,7 @@ namespace config {
 	}
 
 	struct Pci {
-		unsigned char raw[0x100];
+		unsigned char raw[0x1000];
 		Pci() { memset(raw, 0, sizeof(raw)); }
 
 		Pci(unsigned char *buffer, int size)
@@ -656,6 +656,20 @@ namespace config {
 				off = next;
 			}
 			return 0;
+		}
+
+		auto get_dsn() -> pci::DSN {
+			auto cap = get_ext_capability_by_id(0x03);
+			auto res = pci::DSN{};
+			if (cap != 0)
+			{
+				auto hdr = *(DWORD*)(raw + cap);
+				res.cap_on   = hdr != 0;
+				res.base_ptr = cap;
+				res.hdr.raw  = hdr;
+				res.serial   = *(UINT64*)(raw + cap + 0x04);
+			}
+			return res;
 		}
 
 		auto get_empty_extended_cap(BYTE id) -> pci::EmtpyExtPcieCap {
