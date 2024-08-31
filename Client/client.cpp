@@ -761,21 +761,19 @@ std::vector<RAW_PCIENUM_OBJECT> get_raw_pci_objects()
 
 
 			QWORD attached_device = cl::vm::read<QWORD>(4, pci_dev + 0x18);
+			QWORD device_object = 0;
 			while (attached_device)
 			{
-				if (cl::vm::read<QWORD>(4, attached_device + 0x08) != AcpiDriverObject)
-				{
-					break;
-				}
+				device_object = attached_device;
 				attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
 			}
-									
+
 			RAW_PCIENUM_OBJECT object{};
 			object.data.bus  = bus & 0xFF;
 			object.data.slot = slot.u.bits.DeviceNumber;
 			object.data.func = slot.u.bits.FunctionNumber;
 			object.data.pci_device_object = pci_dev;
-			object.data.drv_device_object = attached_device;
+			object.data.drv_device_object = device_object;
 			object.device_class = device_class;
 			objects.push_back(object);
 		}
