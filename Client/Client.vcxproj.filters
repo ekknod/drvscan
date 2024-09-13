@@ -24,28 +24,22 @@
     <ClCompile Include="client.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="clkm\clkm.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="clum\clum.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="clint\clint.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="scan\image.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="scan\efi.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="scan\pci.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="clrt\clrt.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="scan\efi.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="scan\image.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="scan\mouse.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="scan\pci.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -56,12 +50,6 @@
     <ClInclude Include="client.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="clkm\clkm.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="clum\clum.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="clint\clint.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -69,6 +57,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="clrt\clrt.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ia32.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

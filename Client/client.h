@@ -55,29 +55,6 @@ typedef struct {
 	UINT64                Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
-
-//0x28 bytes (sizeof)
-struct _ISRDPCSTATS_SEQUENCE
-{
-    DWORD SequenceNumber;                                               //0x0
-    QWORD IsrTime;                                                      //0x8
-    QWORD IsrCount;                                                     //0x10
-    QWORD DpcTime;                                                      //0x18
-    QWORD DpcCount;                                                     //0x20
-};
-
-typedef struct _ISRDPCSTATS {
-    QWORD IsrTime;                                                      //0x0
-    QWORD IsrTimeStart;                                                 //0x8
-    QWORD IsrCount;                                                     //0x10
-    QWORD DpcTime;                                                      //0x18
-    QWORD DpcTimeStart;                                                 //0x20
-    QWORD DpcCount;                                                     //0x28
-    UCHAR IsrActive;                                                    //0x30
-    UCHAR Reserved[7];                                                  //0x31
-    struct _ISRDPCSTATS_SEQUENCE DpcWatchdog;                           //0x38
-} ISRDPCSTATS;
-
 namespace cl
 {
 	class client
@@ -87,14 +64,8 @@ namespace cl
 		// initialize object
 		//
 		virtual BOOL  initialize(void) = 0;
-		virtual BOOL  read_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length) = 0;
-		virtual BOOL  write_virtual(DWORD pid, QWORD address, PVOID buffer, QWORD length) = 0;
-		virtual BOOL  read_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
-		virtual BOOL  write_mmio(QWORD address, PVOID buffer, QWORD length) = 0;
-		virtual BOOL  read_pci (BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD length) = 0;
-		virtual BOOL  write_pci(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD length) = 0;
-		virtual QWORD get_physical_address(QWORD virtual_address) = 0;
-		virtual std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map() = 0;
+		virtual BOOL  read_kernel(QWORD address, PVOID buffer, QWORD length) = 0;
+		virtual BOOL  write_kernel(QWORD address, PVOID buffer, QWORD length) = 0;
 	};
 }
 
@@ -111,40 +82,23 @@ typedef struct {
 	DWORD size;
 } EFI_MODULE_INFO;
 
-typedef struct {
-	BYTE  bus,slot,func;
-	config::Pci cfg;
-	QWORD pci_device_object;
-	QWORD drv_device_object;
-} DEVICE_INFO;
-
-typedef struct {
-	unsigned char  blk;       // is port blocked
-	unsigned char  blk_info;  // reason for blocking
-	DEVICE_INFO    self;      // self data
-	std::vector<DEVICE_INFO> devices;
-} PORT_DEVICE_INFO;
-
-#define DMP_FULL     0x0001
-#define DMP_CODEONLY 0x0002
-#define DMP_READONLY 0x0004
-#define DMP_RAW      0x0008
-#define DMP_RUNTIME  0x0010
-
 namespace cl
 {
 	BOOL initialize(void);
+	void terminate(void);
 
 	QWORD get_physical_address(QWORD virtual_address);
 	QWORD get_virtual_address(QWORD physical_address);
-	BOOL  get_isr_stats(DEVICE_INFO &dev, ISRDPCSTATS *out);
+
+	QWORD get_pci_driver_object(void);
+	QWORD get_acpi_driver_object(void);
+
+	QWORD get_interrupt_object(DWORD index);
 
 	namespace vm
 	{
-		BOOL  read(DWORD pid, QWORD address, PVOID buffer, QWORD length);
-		PVOID dump_module(DWORD pid, QWORD base, DWORD dmp_type);
-		void  free_module(PVOID dumped_module);
-
+		BOOL read(DWORD pid, QWORD address, PVOID buffer, QWORD length);
+		BOOL write(DWORD pid, QWORD address, PVOID buffer, QWORD length);
 		template <typename t>
 		t read(DWORD pid, QWORD address)
 		{
@@ -155,6 +109,11 @@ namespace cl
 			}
 			return b;
 		}
+		template <typename t>
+		BOOL write(DWORD pid, QWORD address, t value)
+		{
+			return write(pid, address, &value, sizeof(t));
+		}
 
 		inline QWORD get_relative_address(DWORD pid, QWORD address, INT offset, INT instruction_size)
 		{
@@ -162,10 +121,35 @@ namespace cl
 		}
 	}
 
+	namespace km
+	{
+		BOOL read(QWORD address, PVOID buffer, QWORD length);
+		BOOL write(QWORD address, PVOID buffer, QWORD length);
+
+		template <typename t>
+		t read(QWORD address)
+		{
+			t b;
+			if (!read(address, &b, sizeof(b)))
+			{
+				b = 0;
+			}
+			return b;
+		}
+		template <typename t>
+		BOOL write(QWORD address, t value)
+		{
+			return write(address, &value, sizeof(t));
+		}
+
+		QWORD call(QWORD kernel_address, QWORD r1 = 0, QWORD r2 = 0, QWORD r3 = 0, QWORD r4 = 0, QWORD r5 = 0, QWORD r6 = 0, QWORD r7 = 0);
+	}
+
 	namespace io
 	{
 		BOOL read(QWORD address, PVOID buffer, QWORD length);
 		BOOL write(QWORD address, PVOID buffer, QWORD length);
+
 		template <typename t>
 		t read(QWORD address)
 		{
@@ -205,11 +189,6 @@ namespace cl
 		{
 			return write(bus, slot,func, offset, &value, sizeof(t));
 		}
-
-		//
-		// gets every active port from the system with devices
-		//
-		std::vector<PORT_DEVICE_INFO> get_port_devices(void);
 	}
 
 	namespace efi
@@ -225,9 +204,12 @@ namespace cl
 		std::vector<QWORD> get_runtime_table(void);
 	}
 
-
+	extern BOOL  kernel_access;
 	extern QWORD ntoskrnl_base;
 	extern std::vector<QWORD> global_export_list;
+
+	extern QWORD kernel_memcpy_table;
+	extern QWORD kernel_swapfn_table;
 }
 
 class DLL_EXPORT
@@ -247,22 +229,6 @@ DLL_EXPORT export_name((QWORD)#export_name);
 
 #define EXTERN_NTOSKRNL_EXPORT(export_name) \
 extern DLL_EXPORT export_name;
-
-EXTERN_NTOSKRNL_EXPORT(HalPrivateDispatchTable);
-EXTERN_NTOSKRNL_EXPORT(PsInitialSystemProcess);
-EXTERN_NTOSKRNL_EXPORT(PsGetProcessId);
-EXTERN_NTOSKRNL_EXPORT(KeQueryPrcbAddress);
-EXTERN_NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
-EXTERN_NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
-EXTERN_NTOSKRNL_EXPORT(ExAllocatePool2);
-EXTERN_NTOSKRNL_EXPORT(ExFreePool);
-EXTERN_NTOSKRNL_EXPORT(MmGetPhysicalAddress);
-EXTERN_NTOSKRNL_EXPORT(MmIsAddressValid);
-
-namespace kernel
-{
-	EXTERN_NTOSKRNL_EXPORT(memcpy);
-}
 
 #endif /* KM_H */
 

@@ -1,11 +1,21 @@
 #include "scan.h"
 
+#define DMP_FULL     0x0001
+#define DMP_CODEONLY 0x0002
+#define DMP_READONLY 0x0004
+#define DMP_RAW      0x0008
+#define DMP_RUNTIME  0x0010
+
 namespace scan
 {
 	static void compare_sections(QWORD local_image, QWORD runtime_image, DWORD diff);
 	static BOOL dump_module_to_file(std::vector<FILE_INFO> &modules, DWORD pid, FILE_INFO file);
 	static void scan_w32khooks(QWORD win32k_dmp, FILE_INFO &win32k, std::vector<FILE_INFO> &modules);
 	static void scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &modules);
+
+	static PVOID dump_module(DWORD pid, QWORD base, DWORD dmp_type);
+	static void  free_module(PVOID dumped_module);
+
 }
 
 void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FILE_INFO file, BOOL use_cache)
@@ -17,8 +27,9 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 	}
 
 	//
-	// optional: optimize scan for rtcore.sys by skipping kernel modules + makes GhostMapper UD again
+	// optional: optimize scan for rtcore.sys by skipping kernel modules + making GhostMapper UD again
 	//
+	/*
 	if (pid == 0 || pid == 4)
 	{
 		PCSTR target_modules[] = {
@@ -48,16 +59,19 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 			return;
 		}
 	}
+	*/
 
 	//
 	// dump image
 	//
-	QWORD runtime_image = (QWORD)cl::vm::dump_module(pid, file.base, DMP_FULL | DMP_RUNTIME);
+	QWORD runtime_image = (QWORD)dump_module(pid, file.base, DMP_FULL | DMP_RUNTIME);
 	if (runtime_image == 0)
 	{
 		LOG_RED("failed to scan %s\n", file.path.c_str());
 		return;
 	}
+
+	LOG("scanning: %s\n", file.path.c_str());
 
 	if (pid == 4 || pid == 0)
 	{
@@ -116,17 +130,15 @@ void scan::image(BOOL save_cache, std::vector<FILE_INFO> modules, DWORD pid, FIL
 	if (local_image == 0)
 	{
 		LOG_RED("failed to scan %s\n", file.path.c_str());
-		cl::vm::free_module((PVOID)runtime_image);
+		free_module((PVOID)runtime_image);
 		return;
 	}
 
 	DWORD min_difference = 1;
 
-	LOG("scanning: %s\n", file.path.c_str());
-
 	compare_sections((QWORD)local_image, runtime_image, min_difference);
 
-	cl::vm::free_module((PVOID)runtime_image);
+	free_module((PVOID)runtime_image);
 
 	FreeImageEx((void *)local_image);
 }
@@ -196,7 +208,7 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vecto
 	if (win32kfull.base == 0)
 		return;
 
-	QWORD win32kfull_dmp = (QWORD)cl::vm::dump_module(4, win32kfull.base, DMP_FULL | DMP_RUNTIME);
+	QWORD win32kfull_dmp = (QWORD)dump_module(4, win32kfull.base, DMP_FULL | DMP_RUNTIME);
 	if (win32kfull_dmp == 0)
 		return;
 
@@ -234,7 +246,7 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vecto
 			BOOL found = 0;
 			for (auto &mod : wl_modules)
 			{
-				if ((table1[index] >= mod.base && table1[index] <= (win32kfull.base + win32kfull.size)) || table1[index] == 0)
+				if ((table1[index] >= mod.base && table1[index] <= (mod.base + mod.size)) || table1[index] == 0)
 				{
 					found = 1;
 					break;
@@ -244,16 +256,27 @@ static void scan::scan_w32khooks(QWORD win32k_dmp, FILE_INFO& win32k, std::vecto
 			if (!found)
 			{
 				LOG_RED("[%s] win32k hook [%lld] [%llX]\n", table_name, index, table1[index]);
+				continue;
 			}
 
 			if (table0 && table0[index] != table1[index])
 			{
+				//
+				// we are whitelisting our own pointer swap
+				//
+				if (
+					table->table_address + (index * sizeof(QWORD)) == cl::kernel_memcpy_table ||
+					table->table_address + (index * sizeof(QWORD)) == cl::kernel_swapfn_table
+					)
+				{
+					continue;
+				}
 				LOG_RED("[%s] win32k hook [%lld] [%llX]\n", table_name, index, table1[index]);
 			}
 		}
 		table = (TABLE_ENTRY*)((QWORD)table + next_off);
 	} while (table->table_address);
-	cl::vm::free_module((PVOID)win32kfull_dmp);
+	free_module((PVOID)win32kfull_dmp);
 }
 
 static void scan::scan_krnlhooks(QWORD ntoskrnl_dmp, std::vector<FILE_INFO> &modules)
@@ -486,7 +509,7 @@ static BOOL scan::dump_module_to_file(std::vector<FILE_INFO> &modules, DWORD pid
 		return 0;
 	}
 
-	QWORD target_base = (QWORD)cl::vm::dump_module(pid, file.base, DMP_FULL | DMP_RAW);
+	QWORD target_base = (QWORD)dump_module(pid, file.base, DMP_FULL | DMP_RAW);
 	if (target_base == 0)
 	{
 		free(disk_base);
@@ -525,7 +548,106 @@ static BOOL scan::dump_module_to_file(std::vector<FILE_INFO> &modules, DWORD pid
 
 	if (status)
 		LOG("module %s is succesfully cached\n", file.name.c_str());
-	cl::vm::free_module((PVOID)target_base);
+	free_module((PVOID)target_base);
 
 	return status;
 }
+
+PVOID scan::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
+{
+	using namespace cl;
+
+	if (base == 0)
+	{
+		return 0;
+	}
+
+	if (vm::read<WORD>(pid, base) != IMAGE_DOS_SIGNATURE)
+	{
+		return 0;
+	}
+
+	QWORD nt_header = (QWORD)vm::read<DWORD>(pid, base + 0x03C) + base;
+	if (nt_header == base)
+	{
+		return 0;
+	}
+
+	DWORD image_size = vm::read<DWORD>(pid, nt_header + 0x050);
+	if (image_size == 0)
+	{
+		return 0;
+	}
+
+	BYTE* new_base = (BYTE*)malloc((QWORD)image_size + 16);
+	if (new_base == 0)
+		return 0;
+
+	*(QWORD*)(new_base + 0) = base;
+	*(QWORD*)(new_base + 8) = image_size;
+	new_base += 16;
+	memset(new_base, 0, image_size);
+
+	DWORD headers_size = vm::read<DWORD>(pid, nt_header + 0x54);
+	vm::read(pid, base, new_base, headers_size);
+
+	WORD machine = vm::read<WORD>(pid, nt_header + 0x4);
+	QWORD section_header = machine == 0x8664 ?
+		nt_header + 0x0108 :
+		nt_header + 0x00F8;
+
+
+	for (WORD i = 0; i < vm::read<WORD>(pid, nt_header + 0x06); i++) {
+		QWORD section = section_header + ((QWORD)i * 40);
+
+		DWORD section_characteristics = vm::read<DWORD>(pid, section + 0x24);
+		//
+		// skip discardable memory
+		//
+		if ((section_characteristics & 0x02000000))
+			continue;
+
+
+		if (dmp_type & DMP_CODEONLY)
+		{
+			if (!(section_characteristics & 0x00000020))
+				continue;
+		}
+
+		else if (dmp_type & DMP_READONLY)
+		{
+			if (!(section_characteristics & 0x40000000)) // IMAGE_SCN_MEM_READ
+			{
+				continue;
+			}
+			if ((section_characteristics & 0x80000000)) // IMAGE_SCN_MEM_WRITE
+			{
+				continue;
+			}
+			if ((section_characteristics & 0x20000000)) // IMAGE_SCN_MEM_EXECUTE
+			{
+				continue;
+			}
+			if ((section_characteristics & 0x02000000)) // IMAGE_SCN_MEM_DISCARDABLE
+			{
+				continue;
+			}
+		}
+		QWORD target_address = (QWORD)new_base + vm::read<DWORD>(pid, section + ((dmp_type & DMP_RAW) ? 0x14 : 0x0c));
+		QWORD virtual_address = base + (QWORD)vm::read<DWORD>(pid, section + 0x0C);
+		DWORD virtual_size = vm::read<DWORD>(pid, section + 0x08);
+		vm::read(pid, virtual_address, (PVOID)target_address, virtual_size);
+	}
+	return (PVOID)new_base;
+}
+
+void scan::free_module(PVOID dumped_module)
+{
+	if (dumped_module)
+	{
+		QWORD a0 = (QWORD)dumped_module;
+		a0 -= 16;
+		free((void*)a0);
+	}
+}
+

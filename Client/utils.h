@@ -25,8 +25,9 @@ typedef struct {
 } FILE_INFO ;
 
 typedef struct {
-	DWORD                  process_id;
-	std::vector<FILE_INFO> process_modules;
+	DWORD                  id;
+	std::string            name;
+	std::vector<FILE_INFO> modules;
 } PROCESS_INFO;
 
 typedef struct {

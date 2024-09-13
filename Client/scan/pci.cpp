@@ -1,5 +1,41 @@
 #include "scan.h"
 
+//0x28 bytes (sizeof)
+struct _ISRDPCSTATS_SEQUENCE
+{
+    DWORD SequenceNumber;                                               //0x0
+    QWORD IsrTime;                                                      //0x8
+    QWORD IsrCount;                                                     //0x10
+    QWORD DpcTime;                                                      //0x18
+    QWORD DpcCount;                                                     //0x20
+};
+
+typedef struct _ISRDPCSTATS {
+    QWORD IsrTime;                                                      //0x0
+    QWORD IsrTimeStart;                                                 //0x8
+    QWORD IsrCount;                                                     //0x10
+    QWORD DpcTime;                                                      //0x18
+    QWORD DpcTimeStart;                                                 //0x20
+    QWORD DpcCount;                                                     //0x28
+    UCHAR IsrActive;                                                    //0x30
+    UCHAR Reserved[7];                                                  //0x31
+    struct _ISRDPCSTATS_SEQUENCE DpcWatchdog;                           //0x38
+} ISRDPCSTATS;
+
+typedef struct {
+	BYTE  bus,slot,func;
+	config::Pci cfg;
+	QWORD pci_device_object;
+	QWORD drv_device_object;
+} DEVICE_INFO;
+
+typedef struct {
+	unsigned char  blk;       // is port blocked
+	unsigned char  blk_info;  // reason for blocking
+	DEVICE_INFO    self;      // self data
+	std::vector<DEVICE_INFO> devices;
+} PORT_DEVICE_INFO;
+
 namespace scan
 {
 	static void dumpcfg(std::vector<PORT_DEVICE_INFO> &devices);
@@ -15,6 +51,9 @@ namespace scan
 	static void PrintPcieConfiguration(unsigned char *cfg, int size);
 
 	static void filter_pci_cfg(config::Pci &cfg);
+
+	std::vector<PORT_DEVICE_INFO> get_port_devices(void);
+	BOOL get_isr_stats(DEVICE_INFO& dev, ISRDPCSTATS* out);
 
 	std::wstring get_driver_name(DEVICE_INFO &dev)
 	{
@@ -62,7 +101,7 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 {
 	UNREFERENCED_PARAMETER(advanced);
 
-	std::vector<PORT_DEVICE_INFO> port_devices = cl::pci::get_port_devices();
+	std::vector<PORT_DEVICE_INFO> port_devices = get_port_devices();
 
 	if (dump_cfg)
 	{
@@ -257,7 +296,7 @@ static void scan::check_activity(PORT_DEVICE_INFO& port)
 		}
 
 		ISRDPCSTATS isr_stats{};
-		if (!cl::get_isr_stats(dev, &isr_stats))
+		if (!get_isr_stats(dev, &isr_stats))
 		{
 			continue;
 		}
@@ -1070,5 +1109,277 @@ static void scan::filter_pci_cfg(config::Pci &cfg)
 		printf("UNK_EXT_CAP_ID 					0x0%lx\n", empty.hdr.cap_id());
 		printf("---------------------------------------------------------------------\n");
 	}
+}
+
+typedef struct {
+	DEVICE_INFO data;
+	DWORD       device_class;
+} RAW_PCIENUM_OBJECT;	
+
+std::vector<RAW_PCIENUM_OBJECT> get_raw_pci_objects()
+{
+	std::vector<RAW_PCIENUM_OBJECT> objects{};
+
+	using namespace cl;
+
+	typedef struct _PCI_SLOT_NUMBER {
+		union {
+		struct {
+			ULONG   DeviceNumber:5;
+			ULONG   FunctionNumber:3;
+			ULONG   Reserved:24;
+		} bits;
+		ULONG   AsULONG;
+		} u;
+	} PCI_SLOT_NUMBER, *PPCI_SLOT_NUMBER;
+
+	//
+	// add device objects
+	//
+	QWORD pci = cl::get_pci_driver_object();
+	QWORD pci_dev = vm::read<QWORD>(4, pci + 0x08);
+	while (pci_dev)
+	{
+		QWORD pci_ext = vm::read<QWORD>(4, pci_dev + 0x40);
+		if (pci_ext && vm::read<DWORD>(4, pci_ext) == 0x44696350)
+		{
+			DWORD device_class = vm::read<BYTE>(4, pci_ext + 0x29 + 0) << 16 |
+				vm::read<BYTE>(4, pci_ext + 0x29 + 1) << 8 | vm::read<BYTE>(4, pci_ext + 0x29 + 2);
+
+			DWORD bus = vm::read<DWORD>(4, pci_ext + 0x1C);
+			PCI_SLOT_NUMBER slot{};
+			slot.u.AsULONG = vm::read<DWORD>(4, pci_ext + 0x20);
+
+
+			QWORD attached_device = cl::vm::read<QWORD>(4, pci_dev + 0x18);
+			QWORD device_object = 0;
+			while (attached_device)
+			{
+				device_object = attached_device;
+				attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
+			}
+
+			RAW_PCIENUM_OBJECT object{};
+			object.data.bus  = bus & 0xFF;
+			object.data.slot = slot.u.bits.DeviceNumber;
+			object.data.func = slot.u.bits.FunctionNumber;
+			object.data.pci_device_object = pci_dev;
+			object.data.drv_device_object = device_object;
+			object.device_class = device_class;
+			objects.push_back(object);
+		}
+		pci_dev = vm::read<QWORD>(4, pci_dev + 0x10);
+	}
+	return objects;
+}
+
+std::vector<DEVICE_INFO> get_devices_by_bus(std::vector<RAW_PCIENUM_OBJECT>& pci_devices, BYTE bus)
+{
+	std::vector<DEVICE_INFO> objects{};
+	for (auto& dev : pci_devices) if (dev.data.bus == bus) objects.push_back(dev.data);
+	return objects;
+}
+
+static void pci_initialize_cfg(DEVICE_INFO &dev)
+{
+	memset(dev.cfg.raw, 0, sizeof(dev.cfg.raw));
+
+	//
+	// legacy (0x00 - 0x100)
+	//
+	cl::pci::read(dev.bus, dev.slot, dev.func, 0, dev.cfg.raw, 0x100);
+
+	//
+	// optimized extended (0x100 - 0x1000)
+	//
+	WORD optimize_ptr = 0x100;
+	WORD max_size     = sizeof(dev.cfg.raw);
+	for (WORD i = 0x100; i < max_size; i += 4)
+	{
+		cl::pci::read(dev.bus, dev.slot, dev.func, i, (PVOID)(dev.cfg.raw + i), 4);
+		if (i >= optimize_ptr)
+		{
+			optimize_ptr = GET_BITS(*(DWORD*)((PBYTE)dev.cfg.raw + optimize_ptr), 31, 20);
+			if (!optimize_ptr)
+			{
+				optimize_ptr = 0x1000;   // disable
+				max_size     = i + 0x30; // max data left 0x30
+
+				if (max_size > sizeof(dev.cfg.raw))
+				{
+					max_size = sizeof(dev.cfg.raw);
+				}
+			}
+		}
+	}
+}
+
+std::vector<PORT_DEVICE_INFO> scan::get_port_devices(void)
+{
+	using namespace cl;
+
+	auto pci_devices = get_raw_pci_objects();
+
+	std::vector<PORT_DEVICE_INFO> objects{};
+
+	using namespace cl;
+
+	for (auto &devf : pci_devices)
+	{
+		auto &dev = devf.data;
+		if (devf.device_class != 0x00060400)
+		{
+			continue;
+		}
+
+		DWORD businfo = pci::read<DWORD>(dev.bus, dev.slot, dev.func, 0x18);
+		BYTE  bus = ((BYTE*)&businfo)[0];
+		BYTE  secondary_bus = ((BYTE*)&businfo)[1];
+		BYTE  subordinate_bus = ((BYTE*)&businfo)[2];
+
+		if (dev.bus != bus || dev.bus >= secondary_bus || dev.bus >= subordinate_bus)
+			continue;
+
+		BOOL endpoint_port = 0;
+		if (secondary_bus == subordinate_bus)
+		{
+			endpoint_port = 1;
+		}
+
+		else if ((secondary_bus + 1) == subordinate_bus)
+		{
+			if (get_devices_by_bus(pci_devices, subordinate_bus).size() == 0)
+			{
+				endpoint_port = 1;
+			}
+		}
+
+		if (!endpoint_port)
+		{
+			continue;
+		}
+
+		PORT_DEVICE_INFO object{};
+		object.self    = dev;
+		object.devices = get_devices_by_bus(pci_devices, secondary_bus);
+
+		//
+		// option 1 BEGIN
+		//
+		/*
+		BOOL is_empty = 0;
+		if (object.devices.size() == 0 && pci::read<WORD>(dev.bus, dev.slot, dev.func, 0x04) == 0x404)
+		{
+			is_empty = 1;
+		}
+
+		if (!is_empty)
+		{
+			objects.push_back(object);
+		}
+		*/
+		//
+		// option 1 END
+		//
+		
+		//
+		// option 2 BEGIN
+		//
+		if (object.devices.size() == 0)
+		{
+			DWORD fixup = pci::read<DWORD>(secondary_bus, 0, 0, 0x04);
+			if (fixup != 0 && fixup != 0xffffffff)
+			{
+				DEVICE_INFO pciobj{};
+				pciobj.bus = secondary_bus;
+				object.devices.push_back(pciobj);
+			}
+		}
+		objects.push_back(object);
+		//
+		// option 2 END
+		//
+	}
+
+	std::vector<PORT_DEVICE_INFO> physical_devices{};
+	for (auto &obj : objects)
+	{
+		pci_initialize_cfg(obj.self);
+
+		//
+		// skip non physical ports
+		//
+		if (obj.self.cfg.get_pci().slot.cap.raw == 0)
+		{
+			continue;
+		}
+
+		//
+		// optional: skip non xilinx devices
+		//
+		if (obj.self.cfg.get_pci().link.status.link_status_link_width() > 8)
+		{
+			continue;
+		}
+
+		for (auto &dev : obj.devices)
+		{
+			pci_initialize_cfg(dev);
+		}
+
+		physical_devices.push_back(obj);
+	}
+
+	return physical_devices;
+}
+
+BOOL scan::get_isr_stats(DEVICE_INFO& dev, ISRDPCSTATS* out)
+{
+	using namespace cl;
+
+	if (!dev.pci_device_object)
+		return 0;
+
+	QWORD extension = vm::read<QWORD>(4, dev.pci_device_object + 0x138);
+	if (vm::read<QWORD>(4, extension + 0x60) == 0) // interrupt count: 0
+	{
+		if (vm::read<QWORD>(4, extension + 0x58) != 0) // catch if not compatible driver installed
+			return 1;
+		return 0;
+	}
+
+	QWORD interrupt_context = vm::read<QWORD>(4, extension + 0x58);
+	if (!interrupt_context)
+		return 0;
+
+	QWORD kinterrupt = get_interrupt_object(vm::read<DWORD>(4, interrupt_context + 0x10));
+	if (!kinterrupt)
+		return 0;
+
+	BOOL  connected = 0;
+	QWORD interrupt_item = kinterrupt + 0x08;
+	QWORD list_entry = interrupt_item;
+
+	while (1)
+	{
+		kinterrupt = (interrupt_item - 0x08);
+
+		if (!connected)
+		{
+			connected = vm::read<UCHAR>(4, kinterrupt + 0x5F) == 1;
+		}
+
+		ISRDPCSTATS stats{};
+		vm::read(4, kinterrupt + 0xB0, &stats, sizeof(stats));
+
+		out->IsrCount += stats.IsrCount;
+
+		interrupt_item = vm::read<QWORD>(4, interrupt_item);
+		if (interrupt_item == 0 || interrupt_item == list_entry)
+		{
+			break;
+		}
+	}
+	return connected;
 }
 

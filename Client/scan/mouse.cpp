@@ -126,36 +126,7 @@ double ns_to_herz(double ns) { return 1.0 / (ns / 1e9);  }
 
 void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 {
-	static int    swap_mouse_cnt=0;
-
-	//
-	// we don't care about mouse_event/sendinput
-	// you are caught anyways.
-	//
-	if (input->header.hDevice == 0)
-	{
-		DWORD pid = 0;
-		GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-
-		if (process_list.size() == 0)
-		{
-		update_list:
-			process_list = get_system_processes();
-		}
-		BOOL tested=0;
-		for (auto &process : process_list)
-		{
-			if (pid == process.process_id)
-			{
-				LOG("simulated mouse: %s\n", process.process_modules[0].name.c_str());
-				tested = 1;
-			}
-		}
-
-		if (tested == 0)
-			goto update_list;
-		return;
-	}
+	static int swap_mouse_cnt=0;
 
 	//
 	// block all non used devices
@@ -204,10 +175,7 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 				);
 			}
 			/*
-			if you want test this feature, use https://github.com/ekknod/acdrv
-			some people are crazy and using 4000hz mices, and for usermode this data is received sometimes very late
-			windows 11 this could work in usermode as well even for 4k mices, because each update happens 125hz :P
-
+			driver is required https://github.com/ekknod/acdrv, because usermode rawinput events are delayed
 			else if (timestamp - dev.timestamp < 500000) // if latency is less than 500000  ns (2000 Hz). tested with 1000hz mice.
 			{
 				//
@@ -238,7 +206,7 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 
 		if (empty)
 		{
-			LOG("Device: 0x%llx, timestamp: %lld, aimbot\n", (QWORD)input->header.hDevice, timestamp);
+			LOG("Device: 0x%llx, timestamp: %lld, empty mouse packet\n", (QWORD)input->header.hDevice, timestamp);
 		}
 	}
 
@@ -249,9 +217,9 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 			return;
 		}
  
-		LOG("Device: 0x%llx, timestamp: %lld, invalid mouse\n", (QWORD)input->header.hDevice, timestamp);
+		LOG("Device: 0x%llx, timestamp: %lld, multiple inputs\n", (QWORD)input->header.hDevice, timestamp);
  
-		if (++swap_mouse_cnt > 10)
+		if (++swap_mouse_cnt > 50)
 		{
 			device_list = get_input_devices();
 			swap_mouse_cnt = 0;
@@ -343,13 +311,21 @@ std::vector<MOUSE_INFO> get_input_devices(void)
 		info.handle = device_list[i].hDevice;
 		devices.push_back(info);
 	}
+
+
+	//
+	// touchpad / mouse_event
+	// 
+	MOUSE_INFO touchpad{};
+	touchpad.handle = 0;
+	devices.push_back(touchpad);
  
  
 	//
 	// free resources
 	//
 	free(device_list);
- 
+
  
 	return devices;
 }

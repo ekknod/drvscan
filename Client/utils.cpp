@@ -132,15 +132,17 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 	MODULEENTRY32 module_entry{};
 	module_entry.dwSize = sizeof(module_entry);
 
-	if (!Module32First(snp, &module_entry))
+	BOOL wow64_process = 0;
+	BOOL wow64_test = 0;
+	
+	while(Module32Next(snp, &module_entry))
 	{
-		CloseHandle(snp);
-		return info;
-	}
+		if (wow64_test == 0)
+		{
+			wow64_process = is_wow_64(module_entry.szExePath);
+			wow64_test    = 1;
+		}
 
-	BOOL wow64_process = is_wow_64(module_entry.szExePath);
-	do
-	{
 		if (wow64_process)
 		{
 			if (strstr(module_entry.szExePath, "SYSTEM32"))
@@ -166,7 +168,7 @@ std::vector<FILE_INFO> get_user_modules(DWORD pid)
 		temp.name = std::string(module_entry.szModule);
 
 		info.push_back(temp);
-	} while(Module32Next(snp, &module_entry));
+	} ;
 
 	CloseHandle(snp);
 
@@ -188,9 +190,9 @@ std::vector<PROCESS_INFO> get_system_processes()
 			continue;
 		}
 		if (entry.th32ProcessID == 4)
-			process_info.push_back({entry.th32ProcessID, get_kernel_modules()});
+			process_info.push_back({entry.th32ProcessID, entry.szExeFile, get_kernel_modules()});
 		else
-			process_info.push_back({entry.th32ProcessID, get_user_modules(entry.th32ProcessID)});
+			process_info.push_back({entry.th32ProcessID, entry.szExeFile, get_user_modules(entry.th32ProcessID)});
 	}
 	CloseHandle(snp);
 	return process_info;
@@ -380,6 +382,8 @@ PVOID LoadFileEx(PCSTR path, DWORD *out_len)
 			*out_len = len;
 
 		ret = malloc(len);
+
+		/*
 		for (int i = 0; i < len; i++)
 		{
 			if (fread((void *)((char*)ret + i), 1, 1, f) != 1)
@@ -388,14 +392,14 @@ PVOID LoadFileEx(PCSTR path, DWORD *out_len)
 				ret = 0;
 			}
 		}
-
-		/*
+		*/
+		
 		if (fread(ret, len, 1, f) != 1)
 		{
 			free(ret);
 			ret = 0;
 		}
-		*/
+		
 
 		fclose(f);
 	}
@@ -528,9 +532,6 @@ PVOID LoadImageEx(PCSTR path, DWORD* out_len, QWORD current_base, QWORD memory_i
 		return new_image;
 
 	IMAGE_BASE_RELOCATION* pRelocData = (IMAGE_BASE_RELOCATION*)((QWORD)new_image + relocation->VirtualAddress);
-	if (pRelocData->VirtualAddress == 0xcdcdcdcd)
-		return new_image;
-
 	if (pRelocData->VirtualAddress == 0)
 		return new_image;
 

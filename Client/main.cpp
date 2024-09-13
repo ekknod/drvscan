@@ -128,6 +128,18 @@ int main(int argc, char **argv)
 	{
 		std::vector<FILE_INFO> modules;
 
+		if (!cl::kernel_access && pid == 4)
+		{
+			for (auto& proc : get_system_processes())
+			{
+				if (!_strcmpi(proc.name.c_str(), "explorer.exe"))
+				{
+					pid = proc.id;
+					break;
+				}
+			}
+		}
+
 		if (pid == 4)
 		{
 			modules = get_kernel_modules();
@@ -167,6 +179,7 @@ int main(int argc, char **argv)
 	//
 	PRINT_GREEN("\nbuild date: %s, %s\n", __DATE__, __TIME__);
 
+	cl::terminate();
 
 	return 0;
 }

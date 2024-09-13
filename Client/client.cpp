@@ -1,66 +1,63 @@
 #include "client.h"
-#include "clkm/clkm.h"
 #include "clint/clint.h"
 #include "clrt/clrt.h"
-#include "clum/clum.h"
 #include <chrono>
 #pragma warning (disable: 4201)
 #pragma warning (disable: 4996)
-#include "..\Driver\ia32.hpp"
+#include "ia32.hpp"
 
 QWORD cl::ntoskrnl_base;
 
-
-
 std::vector<QWORD> cl::global_export_list;
-
 
 //
 // NTOSKRNL_EXPORT define variables are automatically resolved in cl::initialize
 //
+NTOSKRNL_EXPORT(MmMapIoSpace);
+NTOSKRNL_EXPORT(MmUnmapIoSpace);
 NTOSKRNL_EXPORT(HalPrivateDispatchTable);
-NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
 NTOSKRNL_EXPORT(MmGetVirtualForPhysical);
-NTOSKRNL_EXPORT(KeQueryPrcbAddress);
-NTOSKRNL_EXPORT(ExAllocatePool2);
-NTOSKRNL_EXPORT(ExFreePool);
-NTOSKRNL_EXPORT(MmGetPhysicalAddress);
-NTOSKRNL_EXPORT(MmIsAddressValid);
 NTOSKRNL_EXPORT(PsInitialSystemProcess);
+NTOSKRNL_EXPORT(HalEnumerateEnvironmentVariablesEx);
+NTOSKRNL_EXPORT(KeQueryPrcbAddress);
 
-namespace kernel
+static void unsupported_error(void)
 {
-	NTOSKRNL_EXPORT(memcpy);
+	LOG_RED(
+		"Usermode connector is not supported,\n"
+		"please launch driver or change your target action\n"
+	);
 }
 
 namespace cl
 {
-	client *controller;
+	BOOL   initialized;
+	BOOL   kernel_access;
+
+	QWORD  win32k_memmove;
+
+
+	QWORD  Offset_InterruptObject;
+	QWORD  PciDriverObject;
+	QWORD  AcpiDriverObject;
+
 
 	QWORD HalpPciMcfgTableCount;
 	QWORD HalpPciMcfgTable;
-
-
+	QWORD MmPfnDatabase;
+	QWORD MmPteBase;
+	QWORD system_cr3;
 	QWORD PciIoAddressPhysical;
 	QWORD PciIoAddressVirtual;
 
 
-	QWORD MmPfnDatabase;
-	QWORD MmPteBase;
+	QWORD  kernel_memcpy;          // nekoswap mode
+	QWORD  kernel_memcpy_table;    // nekoswap mode
+	QWORD  kernel_memcpy_original; // nekoswap mode
 
-	QWORD wdf01000_base, wdf01000_size;
-	QWORD dxgkrnl_base,  dxgkrnl_size;
-
-	QWORD system_cr3;
-	BOOL  has_io_access = 0;
-
-	//
-	// if drvscan would be less retarded, it would use
-	// \Driver\pci & \Driver\acpi instead
-	//
-	QWORD PciDriverObject;
-	QWORD AcpiDriverObject;
-	QWORD Offset_InterruptObject;
+	QWORD  kernel_swapfn;          // nekoswap mode
+	QWORD  kernel_swapfn_table;    // nekoswap mode
+	QWORD  kernel_swapfn_original; // nekoswap mode
 
 	static QWORD get_processor_block(int index)
 	{
@@ -69,103 +66,28 @@ namespace cl
 		QWORD prcb             = vm::read<QWORD>(4, KiProcessorBlock + (eax*8));
 		return prcb;
 	}
-
-	inline QWORD get_current_processor_block(void)
-	{
-		return get_processor_block(GetCurrentProcessorNumber());
-	}
-
-	static QWORD get_interrupt_object(DWORD index)
-	{
-		QWORD rdx;
-		rdx = get_processor_block(0);
-		rdx = rdx + Offset_InterruptObject;
-		return vm::read<QWORD>(4, (rdx + (index * 8)));
-	}
-
-	#define MiGetVirtualAddressMappedByPte(PteAddress) (PVOID)((LONG_PTR)(((LONG_PTR)(PteAddress) - (ULONG_PTR)(MmPteBase)) << 25L) >> 16)
-	QWORD get_virtual_address(QWORD physical_address)
-	{
-		QWORD index     = physical_address >> PAGE_SHIFT;
-		QWORD pfn_entry = (MmPfnDatabase + (index * 0x30));
-		QWORD pte       = vm::read<QWORD>(0, pfn_entry + 0x08);
-		if (pte == 0)
-		{
-			return 0;
-		}
-		QWORD va = (QWORD)MiGetVirtualAddressMappedByPte((QWORD)pte);
-		return (physical_address & 0xFFF) + va;
-	}
-
-	BOOL get_isr_stats(DEVICE_INFO &dev, ISRDPCSTATS *out)
-	{
-		if (!dev.pci_device_object)
-			return 0;
-
-		QWORD extension = vm::read<QWORD>(4, dev.pci_device_object + 0x138);
-		if (vm::read<QWORD>(4, extension + 0x60) == 0) // interrupt count: 0
-		{
-			if (vm::read<QWORD>(4, extension + 0x58) != 0) // catch if not compatible driver installed
-				return 1;
-			return 0;
-		}
-
-		QWORD interrupt_context = vm::read<QWORD>(4, extension + 0x58);
-		if (!interrupt_context)
-			return 0;
-
-		QWORD kinterrupt = get_interrupt_object(vm::read<DWORD>(4, interrupt_context + 0x10));
-		if (!kinterrupt)
-			return 0;
-
-		BOOL  connected = 0;
-		QWORD interrupt_item = kinterrupt + 0x08;
-		QWORD list_entry = interrupt_item;
-
-		while (1)
-		{
-			kinterrupt = (interrupt_item - 0x08);
-
-			if (!connected)
-			{
-				connected = vm::read<UCHAR>(4, kinterrupt + 0x5F) == 1;
-			}
-
-			ISRDPCSTATS stats{};
-			vm::read(4, kinterrupt + 0xB0, &stats, sizeof(stats));
-
-			out->IsrCount += stats.IsrCount;
-
-			interrupt_item = vm::read<QWORD>(4, interrupt_item);
-			if (interrupt_item == 0 || interrupt_item == list_entry)
-			{
-				break;
-			}
-		}
-		return connected;
-	}
 }
 
-static QWORD get_kernel_export(PCSTR export_name)
+static QWORD get_kernel_export(PCSTR path, QWORD base, PCSTR export_name)
 {
-	HMODULE ntos = LoadLibraryA("ntoskrnl.exe");
+	HMODULE mod = LoadLibraryA(path);
 
-	if (ntos == 0)
+	if (mod == 0)
 	{
 		return 0;
 	}
 
-	QWORD export_address = (QWORD)GetProcAddress(ntos, export_name);
+	QWORD export_address = (QWORD)GetProcAddress(mod, export_name);
 	if (export_address == 0)
 	{
 		goto cleanup;
 	}
 
-	export_address = export_address - (QWORD)ntos;
-	export_address = export_address + cl::ntoskrnl_base;
+	export_address = export_address - (QWORD)mod;
+	export_address = export_address + base;
 
 cleanup:
-	FreeLibrary(ntos);
+	FreeLibrary(mod);
 	return export_address;
 }
 
@@ -249,95 +171,174 @@ cleanup:
 	return export_address;
 }
 
+QWORD get_win32_table_ptr(cl::client *controller, PCSTR function_name, QWORD function_address, QWORD *original)
+{
+	using namespace cl;
+
+	QWORD table_ptr     = 0;
+	QWORD nt_user_func  = 0;
+	QWORD nt_user_table = 0;
+	
+	for (auto &entry : get_kernel_modules())
+	{
+		if (!_strcmpi(entry.name.c_str(), "win32k.sys"))
+		{
+			nt_user_table = get_kernel_export(entry.path.c_str(), entry.base, "ext_ms_win_moderncore_win32k_base_sysentry_l1_table");
+			if (nt_user_table)
+			{
+				nt_user_table = nt_user_table + 0x70;
+			}
+		}
+
+		if (!_strcmpi(entry.name.c_str(), "win32kfull.sys"))
+		{
+			nt_user_func = get_kernel_export(entry.path.c_str(), entry.base, function_name);
+			*original = nt_user_func;
+		}
+
+		if (nt_user_table && nt_user_func)
+		{
+			break;
+		}
+	}
+
+	if (nt_user_func == 0 || nt_user_table == 0)
+	{
+		return table_ptr;
+	}
+
+	typedef struct {
+		QWORD  table_address;
+		QWORD* table_names;
+		QWORD  unk; // win11 only
+	} TABLE_ENTRY;
+
+	DWORD next_off = sizeof(TABLE_ENTRY);
+
+	QWORD buffer   = 0;
+	controller->read_kernel(nt_user_table + 0x10, &buffer, sizeof(buffer));
+	if (buffer != 0)
+	{
+		next_off -= 8;
+	}
+
+	QWORD table_entry = nt_user_table;
+	while (1)
+	{
+		TABLE_ENTRY entry{};
+		controller->read_kernel(table_entry, &entry, next_off);
+		if (!entry.table_address)
+		{
+			break;
+		}
+
+		QWORD num_entries = 0;
+		controller->read_kernel((QWORD)(entry.table_names + 3), &num_entries, sizeof(num_entries));
+
+		for (QWORD i = 0; i < num_entries; i++)
+		{
+			QWORD func = 0;
+			controller->read_kernel(entry.table_address + (i * sizeof(QWORD)), &func, sizeof(func));
+
+			if (func == nt_user_func)
+			{
+				table_ptr = entry.table_address + (i * sizeof(QWORD));
+				break;
+			}
+
+			if (function_address && func == function_address)
+			{
+				table_ptr = entry.table_address + (i * sizeof(QWORD));
+				break;
+			}
+		}
+
+		if (table_ptr) break;
+
+		table_entry = table_entry + next_off;
+	}
+
+	return table_ptr;
+}
+
 BOOL cl::initialize(void)
 {
-	if (controller != 0)
+	if (initialized != 0)
 	{
 		return 1;
 	}
 
-	QWORD pci_base = 0, acpi_base = 0;
-	std::string pci_path, acpi_path, ntoskrnl_path;
-
-	for (auto &drv : get_kernel_modules())
+	for (auto &entry : get_kernel_modules())
 	{
-		if (!_strcmpi(drv.name.c_str(), "ntoskrnl.exe"))
+		if (!_strcmpi(entry.name.c_str(), "ntoskrnl.exe"))
 		{
-			ntoskrnl_base = drv.base;
-			ntoskrnl_path = drv.path;
+			ntoskrnl_base = entry.base;
+			for (auto& i : global_export_list)
+			{
+				QWORD temp = *(QWORD*)i;
+
+				*(QWORD*)i = get_kernel_export(entry.path.c_str(), entry.base, (PCSTR)temp);
+				if (*(QWORD*)i == 0)
+				{
+					LOG_RED("ntoskrnl.exe export %s not found\n", (PCSTR)temp);
+					return 0;
+				}
+			}
+
+			Offset_InterruptObject = get_kernel_pattern(
+				entry.path.c_str(), entry.base,
+				(BYTE*)"\x65\x48\x8B\x14\x25\x20\x00\x00\x00\x48\x81\xC2",
+				(BYTE*)"xxxxxxxxxxxx"
+			);
+
+			if (Offset_InterruptObject == 0)
+			{
+				LOG_RED("ntoskrnl.exe Offset_InterruptObject not found\n");
+				return 0;
+			}
+
+			Offset_InterruptObject = Offset_InterruptObject + 0x09;
+			Offset_InterruptObject = Offset_InterruptObject + 0x03;
 		}
-		if (!_strcmpi(drv.name.c_str(), "pci.sys"))
+
+		if (!_strcmpi(entry.name.c_str(), "pci.sys"))
 		{
-			pci_base = drv.base;
-			pci_path = drv.path;
+			PciDriverObject = get_kernel_pattern(
+				entry.path.c_str(), entry.base, (BYTE*)"\x48\x8B\x1D\x00\x00\x00\x00\x75", (BYTE*)"xxx????x");
+
+			if (PciDriverObject == 0)
+			{
+				LOG_RED("pci.sys PciDriverObject not found\n");
+				return 0;
+			}
 		}
-		if (!_strcmpi(drv.name.c_str(), "acpi.sys"))
+
+		if (!_strcmpi(entry.name.c_str(), "acpi.sys"))
 		{
-			acpi_base = drv.base;
-			acpi_path = drv.path;
+			AcpiDriverObject = get_kernel_pattern(
+				entry.path.c_str(), entry.base, (BYTE*)"\x48\x8B\x0D\x00\x00\x00\x00\xB2\x00\x48\xFF\x15", (BYTE*)"xxx????x?xxx");
+
+			if (AcpiDriverObject == 0)
+			{
+				LOG_RED("acpi.sys PciDriverObject not found\n");
+				return 0;
+			}
 		}
-		if (!_strcmpi(drv.name.c_str(), "wdf01000.sys"))
+
+		if (!_strcmpi(entry.name.c_str(), "win32kfull.sys"))
 		{
-			wdf01000_base = drv.base;
-			wdf01000_size = drv.size;
-		}
-		if (!_strcmpi(drv.name.c_str(), "dxgkrnl.sys"))
-		{
-			dxgkrnl_base = drv.base;
-			dxgkrnl_size = drv.size;
+			win32k_memmove = get_kernel_export(entry.path.c_str(), entry.base, "memmove");
 		}
 	}
 
-	if (ntoskrnl_base == 0 || pci_base == 0 || acpi_base == 0 || wdf01000_base == 0 || dxgkrnl_base == 0)
+	if (PciDriverObject == 0 || AcpiDriverObject == 0 || win32k_memmove == 0)
 	{
 		return 0;
 	}
 
-	for (auto &i : global_export_list)
-	{
-		QWORD temp = *(QWORD*)i;
-
-		*(QWORD*)i = get_kernel_export((PCSTR)temp);
-		if (*(QWORD*)i == 0)
-		{
-			printf("export %s not found\n", (PCSTR)temp);
-			return 0;
-		}
-	}
-
-	PciDriverObject = get_kernel_pattern(
-		pci_path.c_str(), pci_base, (BYTE*)"\x48\x8B\x1D\x00\x00\x00\x00\x75", (BYTE*)"xxx????x");
-
-	AcpiDriverObject = get_kernel_pattern(
-		acpi_path.c_str(), acpi_base, (BYTE*)"\x48\x8B\x0D\x00\x00\x00\x00\xB2\x00\x48\xFF\x15", (BYTE*)"xxx????x?xxx");
-
-	Offset_InterruptObject = get_kernel_pattern(
-		ntoskrnl_path.c_str(), ntoskrnl_base,
-		(BYTE*)"\x65\x48\x8B\x14\x25\x20\x00\x00\x00\x48\x81\xC2",
-		(BYTE*)"xxxxxxxxxxxx"
-	);
-
-	if (PciDriverObject == 0 || AcpiDriverObject == 0 || Offset_InterruptObject == 0)
-	{
-		LOG("OS is not currently supported\n");
-		return 0;
-	}
-
-	Offset_InterruptObject = Offset_InterruptObject  + 0x09;
-	Offset_InterruptObject = Offset_InterruptObject + 0x03;
-
-	clkm *km = new clkm();
+	client *controller = 0;
 	clint *intel = new clint();
 	clrt  *rt = new clrt();
-	clum *um = new clum();
-	if (controller == 0 && km->initialize())
-	{
-		controller = km;
-	}
-	else
-	{
-		delete km; km = 0;
-	}
 
 	if (controller == 0 && rt->initialize())
 	{
@@ -357,19 +358,30 @@ BOOL cl::initialize(void)
 		delete intel; intel = 0;
 	}
 
-	if (controller == 0 && um->initialize())
+	initialized = 1;
+		
+	if (rt || intel)
 	{
-		controller = um;
-	}
-	else
-	{
-		delete um; um = 0;
-	}
+		LoadLibraryA("user32.dll");
+		kernel_swapfn_table = get_win32_table_ptr(controller, "NtUserSetSensorPresence", 0, &kernel_swapfn_original);
+		kernel_memcpy_table = get_win32_table_ptr(controller, "NtUserSetGestureConfig", win32k_memmove, &kernel_memcpy_original);
+		kernel_memcpy = (QWORD)GetProcAddress(LoadLibraryA("win32u.dll"), "NtUserSetGestureConfig");
+		kernel_swapfn = (QWORD)GetProcAddress(LoadLibraryA("win32u.dll"), "NtUserSetSensorPresence");
 
-	if (km || intel || um) has_io_access = 1;
-	
-	if ((km || intel || rt))
-	{
+		if (kernel_swapfn_table == 0 || kernel_memcpy_table == 0)
+		{
+			LOG_YELLOW("failed to enable kernel access %llx\n", kernel_swapfn_table);
+		}
+		else
+		{
+			controller->write_kernel(kernel_memcpy_table, &win32k_memmove, sizeof(win32k_memmove));
+			kernel_access = 1;
+		}
+
+		if (rt) delete rt;
+		if (intel) delete intel;
+
+
 		QWORD table_entry = HalPrivateDispatchTable;
 		table_entry       = vm::read<QWORD>(4, table_entry + 0xA0);
 		table_entry       = table_entry + 0x1B;
@@ -407,19 +419,24 @@ BOOL cl::initialize(void)
 		Offset_InterruptObject = vm::read<DWORD>(4, Offset_InterruptObject);
 
 		system_cr3             = vm::read<QWORD>(4, vm::read<QWORD>(4, PsInitialSystemProcess) + 0x28);
-		PciIoAddressPhysical = pci::get_physical_address(0, 0);
-		QWORD tabl = (QWORD)PAGE_ALIGN(efi::get_runtime_table()[0]);
+		PciIoAddressPhysical   = pci::get_physical_address(0, 0);
+
+		std::vector<QWORD> table = efi::get_runtime_table();
+
+		QWORD efi_func = 0;
+		if (table.size()) efi_func = (QWORD)PAGE_ALIGN(table[0]);
+				
 		while (1)
 		{
-			QWORD temp = get_physical_address(tabl);
+			QWORD temp = get_physical_address(efi_func);
 			if (PAGE_ALIGN(temp))
 			{
 				if (PciIoAddressPhysical == temp)
 				{
-					PciIoAddressVirtual = tabl;
+					PciIoAddressVirtual = efi_func;
 					break;
 				}
-				tabl += PAGE_SIZE;
+				efi_func += PAGE_SIZE;
 			}
 			else
 			{
@@ -427,14 +444,36 @@ BOOL cl::initialize(void)
 			}
 		}
 	}
-
 	return 1;
+}
+
+void cl::terminate(void)
+{
+	if (!initialized)
+	{
+		return;
+	}
+
+	if (!kernel_access)
+	{
+		return;
+	}
+
+	km::write<QWORD>(kernel_swapfn_table, kernel_swapfn_original);
+	km::write<QWORD>(kernel_memcpy_table, kernel_memcpy_original);
+
+	initialized = 0;
 }
 
 QWORD cl::get_physical_address(QWORD virtual_address)
 {
-	if (has_io_access)
-		return controller->get_physical_address(virtual_address);
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+
+	if (virtual_address == 0) return 0;
 
 	QWORD pte_address  = MmPteBase + ((virtual_address >> 9) & 0x7FFFFFFFF8);
 	QWORD pde_address  = MmPteBase + ((pte_address >> 9) & 0x7FFFFFFFF8);
@@ -491,119 +530,186 @@ QWORD cl::get_physical_address(QWORD virtual_address)
 	return (pte.page_frame_number << PAGE_SHIFT) + (virtual_address & 0xFFF);
 }
 
+#define MiGetVirtualAddressMappedByPte(PteAddress) (PVOID)((LONG_PTR)(((LONG_PTR)(PteAddress) - (ULONG_PTR)(MmPteBase)) << 25L) >> 16)
+QWORD cl::get_virtual_address(QWORD physical_address)
+{
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+
+	QWORD index = physical_address >> PAGE_SHIFT;
+	QWORD pfn_entry = (MmPfnDatabase + (index * 0x30));
+	QWORD pte = vm::read<QWORD>(0, pfn_entry + 0x08);
+	if (pte == 0)
+	{
+		return 0;
+	}
+	QWORD va = (QWORD)MiGetVirtualAddressMappedByPte((QWORD)pte);
+	return (physical_address & 0xFFF) + va;
+}
+
+QWORD cl::get_pci_driver_object(void)
+{
+	return PciDriverObject;
+}
+
+QWORD cl::get_acpi_driver_object(void)
+{
+	return AcpiDriverObject;
+}
+
+QWORD cl::get_interrupt_object(DWORD index)
+{
+	QWORD rdx;
+	rdx = get_processor_block(0);
+	rdx = rdx + Offset_InterruptObject;
+	return vm::read<QWORD>(4, (rdx + (index * 8)));
+}
+
 BOOL cl::vm::read(DWORD pid, QWORD address, PVOID buffer, QWORD length)
 {
-	return controller->read_virtual(pid, address, buffer, length);
+	if (!initialize()) return 0;
+
+	if (pid == 0 || pid == 4)
+	{
+		return km::read(address, buffer, length);
+	}
+
+	HANDLE process_handle = OpenProcess(PROCESS_VM_READ, 0, pid);
+
+	//
+	// access denied / process not found
+	//
+	if (!process_handle)
+	{
+		return 0;
+	}
+
+	BOOL status = ReadProcessMemory(process_handle, (LPCVOID)address, buffer, length, 0);
+
+	//
+	// close process object and return read status
+	//
+	CloseHandle(process_handle);
+	return status;
 }
 
-PVOID cl::vm::dump_module(DWORD pid, QWORD base, DWORD dmp_type)
+BOOL cl::vm::write(DWORD pid, QWORD address, PVOID buffer, QWORD length)
 {
-	if (base == 0)
+	if (!initialize()) return 0;
+
+	if (pid == 0 || pid == 4)
+	{
+		return km::write(address, buffer, length);
+	}
+
+	HANDLE process_handle = OpenProcess(PROCESS_VM_READ, 0, pid);
+
+	//
+	// access denied / process not found
+	//
+	if (!process_handle)
 	{
 		return 0;
 	}
 
-	if (read<WORD>(pid, base) != IMAGE_DOS_SIGNATURE)
-	{
-		return 0;
-	}
+	BOOL status = WriteProcessMemory(process_handle, (LPVOID)address, buffer, length, 0);
 
-	QWORD nt_header = (QWORD)read<DWORD>(pid, base + 0x03C) + base;
-	if (nt_header == base)
-	{
-		return 0;
-	}
-
-	DWORD image_size = read<DWORD>(pid, nt_header + 0x050);
-	if (image_size == 0)
-	{
-		return 0;
-	}
-
-	BYTE* new_base = (BYTE*)malloc((QWORD)image_size + 16);
-	if (new_base == 0)
-		return 0;
-
-	*(QWORD*)(new_base + 0) = base;
-	*(QWORD*)(new_base + 8) = image_size;
-	new_base += 16;
-	memset(new_base, 0, image_size);
-
-	DWORD headers_size = read<DWORD>(pid, nt_header + 0x54);
-	vm::read(pid, base, new_base, headers_size);
-
-	WORD machine = read<WORD>(pid, nt_header + 0x4);
-	QWORD section_header = machine == 0x8664 ?
-		nt_header + 0x0108 :
-		nt_header + 0x00F8;
-
-
-	for (WORD i = 0; i < read<WORD>(pid, nt_header + 0x06); i++) {
-		QWORD section = section_header + ((QWORD)i * 40);
-
-		DWORD section_characteristics = read<DWORD>(pid, section + 0x24);
-		//
-		// skip discardable memory
-		//
-		if ((section_characteristics & 0x02000000))
-			continue;
-
-
-		if (dmp_type & DMP_CODEONLY)
-		{
-			if (!(section_characteristics & 0x00000020))
-				continue;
-		}
-
-		else if (dmp_type & DMP_READONLY)
-		{
-			if (!(section_characteristics & 0x40000000)) // IMAGE_SCN_MEM_READ
-			{
-				continue;
-			}
-			if ((section_characteristics & 0x80000000)) // IMAGE_SCN_MEM_WRITE
-			{
-				continue;
-			}
-			if ((section_characteristics & 0x20000000)) // IMAGE_SCN_MEM_EXECUTE
-			{
-				continue;
-			}
-			if ((section_characteristics & 0x02000000)) // IMAGE_SCN_MEM_DISCARDABLE
-			{
-				continue;
-			}
-		}
-		QWORD target_address = (QWORD)new_base + cl::vm::read<DWORD>(pid, section + ((dmp_type & DMP_RAW) ? 0x14 : 0x0c));
-		QWORD virtual_address = base + (QWORD)read<DWORD>(pid, section + 0x0C);
-		DWORD virtual_size = read<DWORD>(pid, section + 0x08);
-		vm::read(pid, virtual_address, (PVOID)target_address, virtual_size);
-	}
-	return (PVOID)new_base;
+	//
+	// close process object and return read status
+	//
+	CloseHandle(process_handle);
+	return status;
 }
 
-void cl::vm::free_module(PVOID dumped_module)
+BOOL cl::km::read(QWORD address, PVOID buffer, QWORD length)
 {
-	if (dumped_module)
+	if (!kernel_access)
 	{
-		QWORD a0 = (QWORD)dumped_module;
-		a0 -= 16;
-		free((void*)a0);
+		unsupported_error();
+		return 0;
 	}
+	void* (__fastcall * func)(PVOID, PVOID, QWORD);
+	*(QWORD*)&func = kernel_memcpy;
+	func(buffer, (PVOID)address, length);
+	return 1;
+}
+
+BOOL cl::km::write(QWORD address, PVOID buffer, QWORD length)
+{
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+	void* (*func)(PVOID, PVOID, QWORD);
+	*(QWORD*)&func = kernel_memcpy;
+	func((PVOID)address, (PVOID)buffer, length);
+	return 1;
+}
+
+QWORD cl::km::call(QWORD kernel_address, QWORD r1, QWORD r2, QWORD r3, QWORD r4, QWORD r5, QWORD r6, QWORD r7)
+{
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+
+	km::write<QWORD>(kernel_swapfn_table, kernel_address);
+	QWORD (*func)(QWORD, QWORD, QWORD, QWORD, QWORD, QWORD, QWORD);
+	*(QWORD*)&func = kernel_swapfn;
+	QWORD ret = func(r1, r2, r3, r4, r5, r6, r7);
+	km::write<QWORD>(kernel_swapfn_table, kernel_swapfn_original);
+	return ret;
 }
 
 BOOL cl::io::read(QWORD address, PVOID buffer, QWORD length)
 {
-	return controller->read_mmio(address, buffer, length);
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+
+	PVOID mem = (PVOID)km::call(MmMapIoSpace, address, length, 0);
+	if (mem)
+	{
+		km::read((QWORD)mem, buffer, length);
+		km::call(MmUnmapIoSpace, (QWORD)mem, length);
+		return 1;
+	}
+	return 0;
 }
 
 BOOL cl::io::write(QWORD address, PVOID buffer, QWORD length)
 {
-	return controller->write_mmio(address, buffer, length);
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+
+	PVOID mem = (PVOID)km::call(MmMapIoSpace, address, length, 0);
+	if (mem)
+	{
+		km::write((QWORD)mem, buffer, length);
+		km::call(MmUnmapIoSpace, (QWORD)mem, length);
+		return 1;
+	}
+	return 0;
 }
 
 QWORD cl::pci::get_physical_address(ULONG bus, ULONG slot)
 {
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+
 	DWORD v3; // r10d
 	unsigned __int8* i; // r9
 
@@ -633,7 +739,27 @@ QWORD cl::pci::get_physical_address(ULONG bus, ULONG slot)
 	return vm::read<QWORD>(0, (QWORD)(i - 10)) + (((slot >> 5) + 8 * ((slot & 0x1F) + 32i64 * bus)) << 12);
 }
 
-static BOOL read_io_virtual_address(QWORD address, PVOID buffer, DWORD length)
+template <typename t>
+t read_io_phys_virt(BOOL phys, QWORD address)
+{
+	using namespace cl;
+	if (phys)
+		return io::read<t>(address);
+	return vm::read<t>(0, address);
+}
+
+template <typename t>
+BOOL write_io_phys_virt(BOOL phys, QWORD address, t value)
+{
+	using namespace cl;
+	if (phys)
+	{
+		return io::write<t>(address, value);
+	}
+	return vm::write<t>(0, address, value);
+}
+
+static BOOL read_io_address(BOOL phys, QWORD address, PVOID buffer, DWORD length)
 {
 	using namespace cl;
 	using namespace pci;
@@ -645,20 +771,50 @@ static BOOL read_io_virtual_address(QWORD address, PVOID buffer, DWORD length)
 	{
 		if (data_left >= 4)
 		{
-			DWORD data = vm::read<DWORD>(0, address + location);
+			DWORD data = read_io_phys_virt<DWORD>(phys, address + location);
 			*(DWORD*)((PBYTE)buffer + location) = data;
 			location += 4;
 		}
 		else if (data_left >= 2)
 		{
-			WORD data = vm::read<WORD>(0, address + location);
+			WORD data = read_io_phys_virt<WORD>(phys, address + location);
 			*(WORD*)((PBYTE)buffer + location) = data;
 			location += 2;
 		}
 		else
 		{
-			BYTE data = vm::read<BYTE>(0, address + location);
+			BYTE data = read_io_phys_virt<BYTE>(phys, address + location);
 			*(BYTE*)((PBYTE)buffer + location) = data;
+			location += 1;
+		}
+		data_left = length - location;
+	}
+	return 1;
+}
+
+static BOOL write_io_address(BOOL phys, QWORD address, PVOID buffer, DWORD length)
+{
+	using namespace cl;
+	using namespace pci;
+
+	DWORD location = 0;
+	DWORD data_left = length;
+
+	while (data_left)
+	{
+		if (data_left >= 4)
+		{
+			write_io_phys_virt<DWORD>(phys, address + location, *(DWORD*)((PBYTE)buffer + location));
+			location += 4;
+		}
+		else if (data_left >= 2)
+		{
+			write_io_phys_virt<WORD>(phys, address + location, *(WORD*)((PBYTE)buffer + location));
+			location += 2;
+		}
+		else
+		{
+			write_io_phys_virt<BYTE>(phys, address + location, *(BYTE*)((PBYTE)buffer + location));
 			location += 1;
 		}
 		data_left = length - location;
@@ -668,6 +824,12 @@ static BOOL read_io_virtual_address(QWORD address, PVOID buffer, DWORD length)
 
 BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD size)
 {
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+
 	if (PciIoAddressVirtual)
 	{
 		QWORD device = get_physical_address(bus, slot);
@@ -676,12 +838,7 @@ BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, D
 		QWORD delta = device - PciIoAddressPhysical;
 		QWORD virtu = PciIoAddressVirtual + delta;
 
-		return read_io_virtual_address(virtu + offset, buffer, size);
-	}
-
-	if (!has_io_access)
-	{
-		return controller->read_pci(bus, slot, func, offset, buffer, size);
+		return read_io_address(0, virtu + offset, buffer, size);
 	}
 
 	QWORD device = get_physical_address(bus, slot);
@@ -690,11 +847,17 @@ BOOL cl::pci::read(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, D
 		return 0;
 
 	device = device + (func << 12l);
-	return io::read(device + offset, buffer, size);
+	return read_io_address(1, device + offset, buffer, size);
 }
 
 BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, DWORD size)
 {
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return 0;
+	}
+
 	if (PciIoAddressVirtual)
 	{
 		QWORD device = get_physical_address(bus, slot);
@@ -703,12 +866,7 @@ BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, 
 		QWORD delta = device - PciIoAddressPhysical;
 		QWORD virtu = PciIoAddressVirtual + delta;
 
-		return controller->write_virtual(0, virtu + offset, buffer, size);
-	}
-
-	if (!has_io_access)
-	{
-		return controller->write_pci(bus, slot, func, offset, buffer, size);
+		return write_io_address(0, virtu + offset, buffer, size);
 	}
 
 	QWORD device = get_physical_address(bus, slot);
@@ -717,230 +875,10 @@ BOOL cl::pci::write(BYTE bus, BYTE slot, BYTE func, DWORD offset, PVOID buffer, 
 		return 0;
 
 	device = device + (func << 12l);
-	return io::write(device + offset, buffer, size);
+	return write_io_address(1, device + offset, buffer, size);
 }
 
-typedef struct {
-	DEVICE_INFO data;
-	DWORD       device_class;
-} RAW_PCIENUM_OBJECT;
-
-std::vector<RAW_PCIENUM_OBJECT> get_raw_pci_objects()
-{
-	std::vector<RAW_PCIENUM_OBJECT> objects{};
-
-	using namespace cl;
-
-	typedef struct _PCI_SLOT_NUMBER {
-		union {
-		struct {
-			ULONG   DeviceNumber:5;
-			ULONG   FunctionNumber:3;
-			ULONG   Reserved:24;
-		} bits;
-		ULONG   AsULONG;
-		} u;
-	} PCI_SLOT_NUMBER, *PPCI_SLOT_NUMBER;
-
-	//
-	// add device objects
-	//
-	QWORD pci = PciDriverObject;
-	QWORD pci_dev = vm::read<QWORD>(4, pci + 0x08);
-	while (pci_dev)
-	{
-		QWORD pci_ext = vm::read<QWORD>(4, pci_dev + 0x40);
-		if (pci_ext && vm::read<DWORD>(4, pci_ext) == 0x44696350)
-		{
-			DWORD device_class = vm::read<BYTE>(4, pci_ext + 0x29 + 0) << 16 |
-				vm::read<BYTE>(4, pci_ext + 0x29 + 1) << 8 | vm::read<BYTE>(4, pci_ext + 0x29 + 2);
-
-			DWORD bus = vm::read<DWORD>(4, pci_ext + 0x1C);
-			PCI_SLOT_NUMBER slot{};
-			slot.u.AsULONG = vm::read<DWORD>(4, pci_ext + 0x20);
-
-
-			QWORD attached_device = cl::vm::read<QWORD>(4, pci_dev + 0x18);
-			QWORD device_object = 0;
-			while (attached_device)
-			{
-				device_object = attached_device;
-				attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
-			}
-
-			RAW_PCIENUM_OBJECT object{};
-			object.data.bus  = bus & 0xFF;
-			object.data.slot = slot.u.bits.DeviceNumber;
-			object.data.func = slot.u.bits.FunctionNumber;
-			object.data.pci_device_object = pci_dev;
-			object.data.drv_device_object = device_object;
-			object.device_class = device_class;
-			objects.push_back(object);
-		}
-		pci_dev = vm::read<QWORD>(4, pci_dev + 0x10);
-	}
-	return objects;
-}
-
-std::vector<DEVICE_INFO> get_devices_by_bus(std::vector<RAW_PCIENUM_OBJECT> &pci_devices, BYTE bus)
-{
-	std::vector<DEVICE_INFO> objects{};
-	for (auto &dev : pci_devices) if (dev.data.bus == bus) objects.push_back(dev.data);
-	return objects;
-}
-
-static void pci_initialize_cfg(DEVICE_INFO &dev)
-{
-	memset(dev.cfg.raw, 0, sizeof(dev.cfg.raw));
-
-	//
-	// legacy (0x00 - 0x100)
-	//
-	cl::pci::read(dev.bus, dev.slot, dev.func, 0, dev.cfg.raw, 0x100);
-
-	//
-	// optimized extended (0x100 - 0x1000)
-	//
-	WORD optimize_ptr = 0x100;
-	WORD max_size     = sizeof(dev.cfg.raw);
-	for (WORD i = 0x100; i < max_size; i += 4)
-	{
-		cl::pci::read(dev.bus, dev.slot, dev.func, i, (PVOID)(dev.cfg.raw + i), 4);
-		if (i >= optimize_ptr)
-		{
-			optimize_ptr = GET_BITS(*(DWORD*)((PBYTE)dev.cfg.raw + optimize_ptr), 31, 20);
-			if (!optimize_ptr)
-			{
-				optimize_ptr = 0x1000;   // disable
-				max_size     = i + 0x30; // max data left 0x30
-
-				if (max_size > sizeof(dev.cfg.raw))
-				{
-					max_size = sizeof(dev.cfg.raw);
-				}
-			}
-		}
-	}
-}
-
-std::vector<PORT_DEVICE_INFO> cl::pci::get_port_devices(void)
-{
-	auto pci_devices = get_raw_pci_objects();
-
-	std::vector<PORT_DEVICE_INFO> objects{};
-
-	using namespace cl;
-
-	for (auto &devf : pci_devices)
-	{
-		auto &dev = devf.data;
-		if (devf.device_class != 0x00060400)
-		{
-			continue;
-		}
-
-		DWORD businfo = pci::read<DWORD>(dev.bus, dev.slot, dev.func, 0x18);
-		BYTE  bus = ((BYTE*)&businfo)[0];
-		BYTE  secondary_bus = ((BYTE*)&businfo)[1];
-		BYTE  subordinate_bus = ((BYTE*)&businfo)[2];
-
-		if (dev.bus != bus || dev.bus >= secondary_bus || dev.bus >= subordinate_bus)
-			continue;
-
-		BOOL endpoint_port = 0;
-		if (secondary_bus == subordinate_bus)
-		{
-			endpoint_port = 1;
-		}
-
-		else if ((secondary_bus + 1) == subordinate_bus)
-		{
-			if (get_devices_by_bus(pci_devices, subordinate_bus).size() == 0)
-			{
-				endpoint_port = 1;
-			}
-		}
-
-		if (!endpoint_port)
-		{
-			continue;
-		}
-
-		PORT_DEVICE_INFO object{};
-		object.self    = dev;
-		object.devices = get_devices_by_bus(pci_devices, secondary_bus);
-
-		//
-		// option 1 BEGIN
-		//
-		/*
-		BOOL is_empty = 0;
-		if (object.devices.size() == 0 && pci::read<WORD>(dev.bus, dev.slot, dev.func, 0x04) == 0x404)
-		{
-			is_empty = 1;
-		}
-
-		if (!is_empty)
-		{
-			objects.push_back(object);
-		}
-		*/
-		//
-		// option 1 END
-		//
-		
-		//
-		// option 2 BEGIN
-		//
-		if (object.devices.size() == 0)
-		{
-			DWORD fixup = pci::read<DWORD>(secondary_bus, 0, 0, 0x04);
-			if (fixup != 0 && fixup != 0xffffffff)
-			{
-				DEVICE_INFO pciobj{};
-				pciobj.bus = secondary_bus;
-				object.devices.push_back(pciobj);
-			}
-		}
-		objects.push_back(object);
-		//
-		// option 2 END
-		//
-	}
-
-	std::vector<PORT_DEVICE_INFO> physical_devices{};
-	for (auto &obj : objects)
-	{
-		pci_initialize_cfg(obj.self);
-
-		//
-		// skip non physical ports
-		//
-		if (obj.self.cfg.get_pci().slot.cap.raw == 0)
-		{
-			continue;
-		}
-
-		//
-		// optional: skip non xilinx devices
-		//
-		if (obj.self.cfg.get_pci().link.status.link_status_link_width() > 8)
-		{
-			continue;
-		}
-
-		for (auto &dev : obj.devices)
-		{
-			pci_initialize_cfg(dev);
-		}
-
-		physical_devices.push_back(obj);
-	}
-
-	return physical_devices;
-}
-
-namespace func
+namespace memory_map
 {
 	typedef union _virt_addr_t
 	{
@@ -962,19 +900,23 @@ namespace func
 	pte_64   pte[512]{};
 }
 
-static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
+std::vector<EFI_MEMORY_DESCRIPTOR> cl::efi::get_memory_map()
 {
-	using namespace cl;
-	/*
-	auto memory_map = controller->get_memory_map();
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return {};
+	}
 
-	if (memory_map.size())
-		return memory_map;*/
 
-	using namespace func;
+	using namespace memory_map;
+
 	std::vector<EFI_MEMORY_DESCRIPTOR> map;
 
 	static QWORD page_table = cl::get_virtual_address(system_cr3);
+
+	if (page_table == 0) return {};
+
 	if (!cl::vm::read(0, page_table, pml4, sizeof(pml4)))
 	{
 		return {};
@@ -983,30 +925,30 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 	//
 	// qualifers
 	//
-	DWORD page_accessed  = 0;
-	DWORD cache_enable   = 0;
-	DWORD page_count     = 0;
+	DWORD page_accessed = 0;
+	DWORD cache_enable = 0;
+	DWORD page_count = 0;
 
 	//
 	// tables
 	//
 	int   pml4_index = 0;
 	int   pdpt_index = 0;
-	int   pde_index  = 0;
-	int   pte_index  = 0;
+	int   pde_index = 0;
+	int   pte_index = 0;
 
 	//
 	// page info
 	//
-	QWORD physical_address  = 0;
+	QWORD physical_address = 0;
 	QWORD physical_previous = 0;
 	virt_addr_t virtual_address{};
 	virt_addr_t virtual_previous{};
 	virt_addr_t virt{};
 
 	for (pml4_index = 256; pml4_index < 512; pml4_index++) {
-		physical_address         = pml4[pml4_index].page_frame_number << PAGE_SHIFT;
-		virtual_address.value    = page_table;
+		physical_address = pml4[pml4_index].page_frame_number << PAGE_SHIFT;
+		virtual_address.value = page_table;
 		virtual_address.pt_index = pml4_index;
 
 		if (!pml4[pml4_index].present || !cl::vm::read(0, virtual_address.value, pdpt, sizeof(pdpt)))
@@ -1015,8 +957,8 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 			continue;
 		}
 		for (pdpt_index = 0; pdpt_index < 512; pdpt_index++) {
-			physical_address         = pdpt[pdpt_index].page_frame_number << PAGE_SHIFT;
-			virtual_address.value    = page_table;
+			physical_address = pdpt[pdpt_index].page_frame_number << PAGE_SHIFT;
+			virtual_address.value = page_table;
 			virtual_address.pd_index = pml4_index;
 			virtual_address.pt_index = pdpt_index;
 			if (!pdpt[pdpt_index].present || pdpt[pdpt_index].large_page)
@@ -1030,7 +972,7 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 				if (page_count) goto add_page;
 				continue;
 			}
-			
+
 			if (!cl::vm::read(0, virtual_address.value, pde, sizeof(pde)))
 			{
 				if (page_count) goto add_page;
@@ -1038,11 +980,11 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 			}
 
 			for (pde_index = 0; pde_index < 512; pde_index++) {
-				physical_address           = pde[pde_index].page_frame_number << PAGE_SHIFT;
-				virtual_address.value      = page_table;
+				physical_address = pde[pde_index].page_frame_number << PAGE_SHIFT;
+				virtual_address.value = page_table;
 				virtual_address.pdpt_index = pml4_index;
-				virtual_address.pd_index   = pdpt_index;
-				virtual_address.pt_index   = pde_index;
+				virtual_address.pd_index = pdpt_index;
+				virtual_address.pt_index = pde_index;
 				if (!pde[pde_index].present || pde[pde_index].large_page)
 				{
 					if (page_count) goto add_page;
@@ -1063,12 +1005,12 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 
 				for (pte_index = 0; pte_index < 512; pte_index++)
 				{
-					physical_address           = pte[pte_index].page_frame_number << PAGE_SHIFT;
-					virtual_address.value      = page_table;
+					physical_address = pte[pte_index].page_frame_number << PAGE_SHIFT;
+					virtual_address.value = page_table;
 					virtual_address.pml4_index = pml4_index;
 					virtual_address.pdpt_index = pdpt_index;
-					virtual_address.pd_index   = pde_index;
-					virtual_address.pt_index   = pte_index;
+					virtual_address.pd_index = pde_index;
+					virtual_address.pt_index = pte_index;
 					if (!pte[pte_index].present || physical_address == 0 || pte[pte_index].execute_disable)
 					{
 						if (page_count) goto add_page;
@@ -1105,63 +1047,68 @@ static std::vector<EFI_MEMORY_DESCRIPTOR> get_memory_map_ex()
 							//
 							// these we dont need, lets log them still to look cool
 							//
-							// if (page_accessed)
+							/*
+							if (page_accessed)
 							{
 								QWORD dphys = physical_previous - (page_count * 0x1000);
 								DWORD dnump = page_count + 1;
 								QWORD dvirt = virt.value;
 								LOG_DEBUG("[%llx:%llx] %llx [accessed: %d, cached: %d]\n", dphys, dphys + (dnump * 0x1000), dvirt, page_accessed, (page_count == cache_enable));
 							}
+							*/
 						}
-						if (page_count > 0 && page_accessed && (page_count == cache_enable) &&
-							(physical_previous - (page_count * 0x1000)) != 0x0000 // skip: 0x0000-0x2000 (vmware).
-							)
+						if (page_count > 0 && page_accessed && (page_count == cache_enable))
 						{
 							EFI_MEMORY_DESCRIPTOR descriptor{};
-							descriptor.Attribute     = 0x800000000000000f;
-							descriptor.Type          = 5;
-							descriptor.VirtualStart  = virt.value;
+							descriptor.Attribute = 0x800000000000000f;
+							descriptor.Type = 5;
+							descriptor.VirtualStart = virt.value;
 							descriptor.PhysicalStart = physical_previous - (page_count * 0x1000);
 							descriptor.NumberOfPages = page_count + 1;
 							map.push_back(descriptor);
 						}
-						page_count    = 0;
+						page_count = 0;
 						page_accessed = 0;
-						cache_enable  = 0;
+						cache_enable = 0;
 					}
 					physical_previous = physical_address;
-					virtual_previous  = virtual_address;
+					virtual_previous = virtual_address;
 				}
 			}
 		}
 	}
-	return map;
-}
 
-std::vector<EFI_MEMORY_DESCRIPTOR> cl::efi::get_memory_map()
-{
-	auto memory_map = get_memory_map_ex();
-
-	for (auto &map : memory_map)
+	for (auto &entry : map)
 	{
-		if (PciIoAddressPhysical >= map.PhysicalStart &&
-			PciIoAddressPhysical <= (map.PhysicalStart + (map.NumberOfPages * 0x1000))
+		if (PciIoAddressPhysical >= entry.PhysicalStart &&
+			PciIoAddressPhysical <= (entry.PhysicalStart + (entry.NumberOfPages * 0x1000))
 			)
 		{
-			map.Type = 11;
+			entry.Type = 11;
 		}
 
-		else if (map.PhysicalStart >= PciIoAddressPhysical && map.PhysicalStart <= 0x100000000)
+		else if (entry.PhysicalStart >= PciIoAddressPhysical && entry.PhysicalStart <= 0x100000000)
 		{
-			map.Type = 11;
+			entry.Type = 11;
+		}
+
+		if (entry.PhysicalStart == 0)
+		{
+			entry.Type = 609;
 		}
 	}
 
-	return memory_map;
+	return map;
 }
 
 std::vector<QWORD> cl::efi::get_runtime_table(void)
 {
+	if (!kernel_access)
+	{
+		unsupported_error();
+		return {};
+	}
+
 	QWORD HalEfiRuntimeServicesTableAddr = cl::vm::get_relative_address(4, HalEnumerateEnvironmentVariablesEx + 0xC, 1, 5);
 	HalEfiRuntimeServicesTableAddr       = cl::vm::get_relative_address(4, HalEfiRuntimeServicesTableAddr + 0x69, 3, 7);
 	HalEfiRuntimeServicesTableAddr       = cl::vm::read<QWORD>(4, HalEfiRuntimeServicesTableAddr);

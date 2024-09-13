@@ -24,7 +24,8 @@ namespace scan
 
 inline PCSTR get_efi_type(QWORD type)
 {
-	if (11 == type) return "MIO";
+	if (11  == type) return "MIO";
+	if (609 == type) return "VMWARE";
 	return "DXE";
 }
 
@@ -114,9 +115,15 @@ void scan::efi(BOOL dump)
 		modules = get_runtime_modules(runtime_table, dxe_range);
 	}
 
+	if (modules.size() < 3)
+	{
+		LOG_RED("????????????????????????????????\n");
+		return;
+	}
+
 	for (auto &entry : modules)
 	{
-		LOG("EFI module [%llx - %llx] %llx\n",
+		printf("DXE module [%llx - %llx] %llx\n",
 			// entry.Attribute,
 			entry.physical_address,
 			entry.physical_address + (entry.size),
@@ -253,7 +260,7 @@ static void scan::umap_detect(void)
 
 	if (fbase == lbase)
 	{
-		LOG("umap detected (this is just public troll bro) get shrekt from UM\n");
+		LOG_RED("umap detected (this is just public troll bro) get shrekt from UM\n");
 	}
 }
 
