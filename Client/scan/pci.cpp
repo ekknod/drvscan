@@ -304,6 +304,7 @@ static void scan::check_activity(PORT_DEVICE_INFO& port)
 		dev_with_ints = 1;
 		if (isr_stats.IsrCount)
 		{
+			printf("device [%d:%d:%d] has fired [%d] interrupts\n", dev.bus, dev.slot, dev.func, (int)isr_stats.IsrCount);
 			activity = 1;
 			break;
 		}
@@ -385,6 +386,7 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 					{
 						port.blk = 2;
 						port.blk_info = 23;
+						printf("serr test failed for [%d:%d:%d]\n", dev.bus, dev.slot, dev.func);
 						return;
 					}
 				}
@@ -410,6 +412,7 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 			{
 				port.blk = 2;
 				port.blk_info = 23;
+				printf("dev_ctrl_ur_reporting test failed for [%d:%d:%d]\n", dev.bus, dev.slot, dev.func);
 				return;
 			}
 			else
@@ -438,6 +441,7 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 			{
 				port.blk = 2;
 				port.blk_info = 23;
+				printf("pme test failed for [%d:%d:%d]\n", dev.bus, dev.slot, dev.func);
 				return;
 			}
 		}
@@ -490,6 +494,7 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 			{
 				port.blk = 2;
 				port.blk_info = 23;
+				printf("cap test failed offset %d\n for [%d:%d:%d]\n", off, dev.bus, dev.slot, dev.func);
 				return;
 			}
 		}
@@ -535,6 +540,7 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 			{
 				port.blk = 2;
 				port.blk_info = 23;
+				printf("ext cap test failed offset %d\n for [%d:%d:%d]\n", off, dev.bus, dev.slot, dev.func);
 				return;
 			}
 		}
