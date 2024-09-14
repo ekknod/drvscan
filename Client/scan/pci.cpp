@@ -492,6 +492,17 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 					{
 						cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, offs, pci.dev.control.raw);
 					}
+
+					// risky, risky
+					if (!pci.dev.status.unsupported_request_detected()) continue;
+					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, offs + 0x02, pci.dev.status.raw);
+					pci.dev.status.raw = cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, offs + 0x02);
+					if (pci.dev.status.unsupported_request_detected())
+					{
+						port.blk = 2;
+						port.blk_info = 23;
+						return;
+					}
 				}
 
 				else if (cap_id == 0x11) // msix (R/O) test
