@@ -534,50 +534,6 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 				return;
 			}
 
-			if (cap_id == 0x01) // AER (RW1C)
-			{
-				DWORD correctable_error_status = *(DWORD*)(dev.cfg.raw + cap + 0x10);
-
-				if (GET_BIT(correctable_error_status, 7))
-				{
-					//
-					// clear test
-					//
-					cl::pci::write<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x10,
-						*(WORD*)(dev.cfg.raw + 0x10)
-					);
-
-					//
-					// rw1c fails
-					//
-					if (GET_BIT(cl::pci::read<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x10), 7))
-					{
-						port.blk = 2;
-						port.blk_info = 23;
-						return;
-					}
-				}
-				else
-				{
-					//
-					// rw1c r/w test
-					//
-					cl::pci::write<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x10,
-						correctable_error_status | (1 << 8)
-					);
-
-					//
-					// rw success
-					//
-					if (GET_BIT(cl::pci::read<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x10), 7))
-					{
-						port.blk = 2;
-						port.blk_info = 23;
-						return;
-					}
-				}
-			}
-
 			else if (cap_id == 0x02) // VC [R/O] test
 			{
 				WORD resrc_status = *(WORD*)(dev.cfg.raw + cap + 0x1A);
