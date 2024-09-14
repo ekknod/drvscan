@@ -414,20 +414,41 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 					return;
 				}
 
-				if (cap_id == 0x01) // PM (R/W)
+				if (cap_id == 0x01) // PM (R/W & R/O)
 				{
+					config::pci::PmCsr new_csr{};
 					auto pm = dev.cfg.get_pm();
 
 					WORD data = pm.csr.pm_csr_pme_enabled() ?
 						pm.csr.raw & ~(1 << 8) :
 						pm.csr.raw | (1 << 8);
 
+					data = pm.csr.pm_csr_nosoftrst() ?
+						data & ~(1 << 3) :
+						data | (1 << 3);
+
 					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04, data);
-					if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04) != pm.csr.raw)
+					new_csr.raw = cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04);
+
+					if (new_csr.raw != pm.csr.raw)
 					{
 						cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04, pm.csr.raw);
 					}
-					else
+
+					//
+					// R/O test
+					//
+					if (pm.csr.pm_csr_pme_enabled() == new_csr.pm_csr_pme_enabled())
+					{
+						port.blk = 2;
+						port.blk_info = 23;
+						return;
+					}
+
+					//
+					// R/W test
+					//
+					if (pm.csr.pm_csr_nosoftrst() != new_csr.pm_csr_nosoftrst())
 					{
 						port.blk = 2;
 						port.blk_info = 23;
@@ -456,6 +477,7 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 				{
 					auto pci = dev.cfg.get_pci();
 					BYTE offs = pci.base_ptr + 0x04 + 0x04;
+
 					WORD data = pci.dev.control.dev_ctrl_ur_reporting() ?
 						pci.dev.control.raw & ~(1 << 3) : pci.dev.control.raw | (1 << 3);
 
