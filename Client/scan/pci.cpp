@@ -402,6 +402,18 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 					continue;
 				}
 
+				//
+				// test if everything can be written
+				//
+				cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, cap, 0);
+				if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, cap) != *(WORD*)(dev.cfg.raw + cap))
+				{
+					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, cap, *(WORD*)(dev.cfg.raw + cap));
+					port.blk = 2;
+					port.blk_info = 23;
+					return;
+				}
+
 				if (cap_id == 0x01) // PM (R/W)
 				{
 					auto pm = dev.cfg.get_pm();
