@@ -160,6 +160,33 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 				command &= ~(1 << 2);
 				cl::pci::write<WORD>(port.self.bus, port.self.slot, port.self.func, 0x04, command);
 			}
+			else
+			{
+				continue;
+			}
+
+			//
+			// block endpoints too
+			//
+			for (auto &dev : port.devices)
+			{
+				command = dev.cfg.command().raw;
+				if (dev.cfg.command().bus_master_enable())
+				{
+					command &= ~(1 << 2);
+					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, 0x04, command);
+
+					//
+					// forced command register
+					//
+					if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, 0x04) == dev.cfg.command().raw)
+					{
+						port.blk = 2;
+						port.blk_info = 23;
+						break;
+					}
+				}
+			}
 		}
 	}
 
@@ -194,6 +221,22 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 			if (port.self.cfg.command().bus_master_enable())
 			{
 				cl::pci::write<WORD>(port.self.bus, port.self.slot, port.self.func, 0x04, command);
+			}
+			else
+			{
+				continue;
+			}
+
+			//
+			// unblock endpoints too
+			//
+			for (auto &dev : port.devices)
+			{
+				command = dev.cfg.command().raw;
+				if (dev.cfg.command().bus_master_enable())
+				{
+					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, 0x04, command);
+				}
 			}
 		}
 	}
@@ -336,50 +379,41 @@ static void scan::check_hidden(PORT_DEVICE_INFO &port)
 
 static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 {
+	UNREFERENCED_PARAMETER(advanced);
+
 	for (auto& dev : port.devices)
 	{
-		//
-		// test if device has forced command register
-		// it's under advanced flag because its really risky.
-		// https://github.com/ufrisk/pcileech-fpga/blob/master/PCIeSquirrel/src/pcileech_pcie_cfg_a7.sv#L210C1-L210C16
-		//
-		if (advanced)
+		if (!dev.cfg.command().bus_master_enable())
 		{
-			auto pci = dev.cfg.get_pci();
+			continue;
+		}
 
-			BOOL can_do_test=0;
-			if (pci.cap_on)
+		//
+		// testing standard default capabilities
+		//
+		if (dev.cfg.status().capabilities_list())
+		{
+			for (BYTE cap_id = 0; cap_id < config::MAX_CAPABILITIES; cap_id++)
 			{
-				if (pci.link.status.link_status_link_width() <= 4)
+				BYTE cap = dev.cfg.get_capability_by_id(cap_id);
+
+				if (cap == 0)
 				{
-					can_do_test = 1;
+					continue;
 				}
-			}
 
-			if (!can_do_test && !pci.cap_on)
-			{
-				auto pci2 = port.self.cfg.get_pci();
-
-				if (pci2.link.status.link_status_link_width() <= 4)
+				if (cap_id == 0x01) // PM (R/W)
 				{
-					can_do_test = 1;
-				}
-			}
+					auto pm = dev.cfg.get_pm();
 
+					WORD data = pm.csr.pm_csr_pme_enabled() ?
+						pm.csr.raw & ~(1 << 8) :
+						pm.csr.raw | (1 << 8);
 
-			if (can_do_test)
-			{
-				auto cmd = dev.cfg.command();
-
-				if (!cmd.serr_enable())
-				{
-					WORD temp_data = cmd.raw | (1 << 8);
-
-					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, 0x04, temp_data);
-
-					if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, 0x04) == temp_data)
+					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04, data);
+					if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04) != pm.csr.raw)
 					{
-						cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, 0x04, cmd.raw);
+						cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04, pm.csr.raw);
 					}
 					else
 					{
@@ -388,156 +422,183 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 						return;
 					}
 				}
+
+				else if (cap_id == 0x05) // MSI (R/O)
+				{
+					auto msi = dev.cfg.get_msi();
+					BYTE ctrl = msi.cap.msi_cap_64_bit_addr_capable() ?
+						(msi.cap.raw & 0xFF) & ~(1 << 7) :
+						(msi.cap.raw & 0xFF) | (1 << 7);
+
+					cl::pci::write<BYTE>(dev.bus, dev.slot, dev.func, cap + 0x02, ctrl);
+					if (GET_BIT(cl::pci::read<BYTE>(dev.bus, dev.slot, dev.func, cap + 0x02), 7) !=
+						msi.cap.msi_cap_64_bit_addr_capable())
+					{
+						port.blk = 2;
+						port.blk_info = 23;
+						return;
+					}
+				}
+
+				else if (cap_id == 0x10) // PCI-X (R/W)
+				{
+					auto pci = dev.cfg.get_pci();
+					BYTE offs = pci.base_ptr + 0x04 + 0x04;
+					WORD data = pci.dev.control.dev_ctrl_ur_reporting() ?
+						pci.dev.control.raw & ~(1 << 3) : pci.dev.control.raw | (1 << 3);
+
+					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, offs, data);
+					if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, offs) == pci.dev.control.raw)
+					{
+						port.blk = 2;
+						port.blk_info = 23;
+						return;
+					}
+					else
+					{
+						cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, offs, pci.dev.control.raw);
+					}
+				}
+
+				else if (cap_id == 0x11) // msix (R/O) test
+				{
+					auto msix = dev.cfg.get_msix();
+					BYTE msix_val = *(BYTE*)(dev.cfg.raw + msix.base_ptr + 0x02);
+					cl::pci::write<BYTE>(dev.bus, dev.slot, dev.func, msix.base_ptr + 0x02, msix_val + 1);
+					if (cl::pci::read<BYTE>(dev.bus, dev.slot, dev.func, msix.base_ptr + 0x02) != msix_val)
+					{
+						cl::pci::write<BYTE>(dev.bus, dev.slot, dev.func, msix.base_ptr + 0x02, msix_val);
+						port.blk = 2;
+						port.blk_info = 23;
+						return;
+					}
+				}
 			}
-		
 		}
 
 		//
-		// test shadow cfg CFGTLP PCIE WRITE ENABLE == 0
-		// by writing config space [R/W] register dev_ctrl_ur_reporting
+		// testing extended capabilities
 		//
-		auto pci = dev.cfg.get_pci();
-		BOOL rw_tst = 0;
-		if (pci.cap_on)
+		for (BYTE cap_id = 0; cap_id < config::MAX_EXTENDED_CAPABILITIES; cap_id++)
 		{
-			rw_tst = 1;
-			BYTE offs = pci.base_ptr + 0x04 + 0x04;
-			WORD data = pci.dev.control.dev_ctrl_ur_reporting() ?
-				pci.dev.control.raw & ~(1 << 3) : pci.dev.control.raw | (1 << 3);
+			WORD cap = dev.cfg.get_ext_capability_by_id(cap_id);
 
-			cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, offs, data);
-			if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, offs) == pci.dev.control.raw)
+			if (cap == 0)
 			{
+				continue;
+			}
+
+			//
+			// test if everything can be written
+			//
+			cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, cap, 0);
+			if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, cap) != *(WORD*)(dev.cfg.raw + cap))
+			{
+				cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, cap, *(WORD*)(dev.cfg.raw + cap));
 				port.blk = 2;
 				port.blk_info = 23;
 				return;
 			}
-			else
+
+			if (cap_id == 0x01) // AER (RW1C)
 			{
-				cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, offs, pci.dev.control.raw);
+				DWORD correctable_error_status = *(DWORD*)(dev.cfg.raw + cap + 0x10);
+
+				if (GET_BIT(correctable_error_status, 7))
+				{
+					//
+					// clear test
+					//
+					cl::pci::write<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x10,
+						*(WORD*)(dev.cfg.raw + 0x10)
+					);
+
+					//
+					// rw1c fails
+					//
+					if (GET_BIT(cl::pci::read<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x10), 7))
+					{
+						port.blk = 2;
+						port.blk_info = 23;
+						return;
+					}
+				}
+				else
+				{
+					//
+					// rw1c r/w test
+					//
+					cl::pci::write<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x10,
+						correctable_error_status | (1 << 8)
+					);
+
+					//
+					// rw success
+					//
+					if (GET_BIT(cl::pci::read<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x10), 7))
+					{
+						port.blk = 2;
+						port.blk_info = 23;
+						return;
+					}
+				}
+			}
+
+			else if (cap_id == 0x02) // VC [R/O] test
+			{
+				WORD resrc_status = *(WORD*)(dev.cfg.raw + cap + 0x1A);
+				cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, cap + 0x1A, resrc_status + 1);
+				if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, cap + 0x1A) != resrc_status)
+				{
+					port.blk = 2;
+					port.blk_info = 23;
+					return;
+				}
+			}
+
+			else if (cap_id == 0x03) // DSN
+			{
+				DWORD lower_32bits = *(DWORD*)(dev.cfg.raw + cap + 0x04);
+				cl::pci::write<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x04, lower_32bits + 1);
+				if (cl::pci::read<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x04) != lower_32bits)
+				{
+					cl::pci::write<DWORD>(dev.bus, dev.slot, dev.func, cap + 0x04, lower_32bits);
+					port.blk = 2;
+					port.blk_info = 23;
+					return;
+				}
+			}
+
+			else if (cap_id == 0x0B) // VSEC [R/O]
+			{
+				WORD vsec_id = *(WORD*)(dev.cfg.raw + cap + 0x04);
+				cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, cap + 0x04, vsec_id + 1);
+				if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, cap + 0x04) != vsec_id)
+				{
+					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, cap + 0x04, vsec_id);
+					port.blk = 2;
+					port.blk_info = 23;
+					return;
+				}
+			}
+
+			else if (cap_id == 0x18) // Latency Tolerance Reporting (LTR) [R/W]
+			{
+				BYTE max_snoop_latency = *(BYTE*)(dev.cfg.raw + cap + 0x04);
+				cl::pci::write<BYTE>(dev.bus, dev.slot, dev.func, cap + 0x04, max_snoop_latency + 1);
+				if (cl::pci::read<BYTE>(dev.bus, dev.slot, dev.func, cap + 0x04) == max_snoop_latency)
+				{
+					port.blk = 2;
+					port.blk_info = 23;
+					return;
+				}
+				else
+				{
+					cl::pci::write<BYTE>(dev.bus, dev.slot, dev.func, cap + 0x04, max_snoop_latency);
+				}
 			}
 		}
-
-		//
-		// test [R/W] from non PCI capabilities by enabling/or disabling PME
-		// potentially dangerous, need find better approach.
-		//
-		auto pm = dev.cfg.get_pm();
-		if (!rw_tst && pm.cap_on && pm.cap.pm_cap_pmesupport())
-		{
-			WORD data = pm.csr.pm_csr_pme_enabled() ?
-				pm.csr.raw & ~(1 << 8) :
-				pm.csr.raw | (1 << 8);
-
-			cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04, data);
-			if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04) == data)
-			{
-				cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04, pm.csr.raw);
-			}
-			else
-			{
-				port.blk = 2;
-				port.blk_info = 23;
-				return;
-			}
-		}
-
-		//
-		// test shadow cfg CFGTLP PCIE WRITE ENABLE == 1
-		// by writing config space [RO] cap headers
-		//
-		BOOL ro_test = 0;
-		if (dev.cfg.status().capabilities_list())
-		{
-			ro_test = 1;
-			BYTE off = cl::pci::read<BYTE>(dev.bus, dev.slot, dev.func, 0x34);
-			BOOL found = 0;
-			while (1)
-			{
-				if (off == 0)
-					break;
-
-				config::pci::CapHdr cap{};
-				cap.raw = cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, off);
-
-				if (cap.raw == 0)
-				{
-					break;
-				}
-
-
-				cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, off, 0);
-				if (cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, off) != cap.raw)
-				{
-					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, off, cap.raw);
-					found = 1;
-					break;
-				}
-
-				BYTE next = cap.cap_next_ptr();
-				if (next == 0)
-				{
-					break;
-				}
-
-				off = next;
-			}
-
-			//
-			// shadow cfg caps found
-			//
-			if (found)
-			{
-				port.blk = 2;
-				port.blk_info = 23;
-				return;
-			}
-		}
-
-		//
-		// test shadow cfg CFGTLP PCIE WRITE ENABLE == 1
-		// by writing config space [RO] ext cap headers
-		//
-		if (!ro_test)
-		{
-			BOOL found = 0;
-			WORD off = 0x100;
-			while (1)
-			{
-				config::pci::CapExtHdr cap{};
-				cap.raw = cl::pci::read<DWORD>(dev.bus, dev.slot, dev.func, off);
-
-				if (cap.raw == 0)
-				{
-					break;
-				}
-
-				cl::pci::write<DWORD>(dev.bus, dev.slot, dev.func, off, 0);
-				if (cl::pci::read<DWORD>(dev.bus, dev.slot, dev.func, off) != cap.raw)
-				{
-					cl::pci::write<DWORD>(dev.bus, dev.slot, dev.func, off, cap.raw);
-					found = 1;
-					break;
-				}
-
-				WORD next = cap.cap_next_ptr();
-				if (next == 0)
-				{
-					break;
-				}
-				off = next;
-			}
-
-			//
-			// shadow cfg caps found
-			//
-			if (found)
-			{
-				port.blk = 2;
-				port.blk_info = 23;
-				return;
-			}
-		}
+		break;
 	}
 }
 
