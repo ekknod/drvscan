@@ -249,6 +249,7 @@ namespace config {
 			DWORD raw;
 			BYTE cpl_timeout_ranges_supported()           { return GET_BITS(raw, 3, 0); }
 			BYTE cpl_timeout_disable_supported()          { return GET_BIT(raw, 4); }
+			BYTE ltr_mechanism_supported()                { return GET_BIT(raw, 11); }
 		};
 
 		struct LinkCap {
@@ -597,12 +598,9 @@ namespace config {
 			auto res = pci::PCIE{};
 			if (cap != 0)
 			{
-				auto pci              = *(UINT32*)(raw + cap);
-				auto dev              = *(UINT64*)(raw + cap + 0x04);
-				auto dev2             = *(UINT64*)(raw + cap + 0x04 + 0x20);
-				auto link             = *(UINT64*)(raw + cap + 0x0C);
-				auto slot             = *(UINT64*)(raw + cap + 0x0C + 0x08);
-				auto link2            = *(UINT64*)(raw + cap + 0x0C + 0x20);
+				DWORD pci              = *(DWORD*)(raw + cap);
+				QWORD dev              = *(QWORD*)(raw + cap + 0x04);
+				QWORD link             = *(QWORD*)(raw + cap + 0x0C);
 
 				res.cap_on            = pci != 0;
 				res.base_ptr          = cap;
@@ -613,21 +611,28 @@ namespace config {
 				res.dev.control.raw   = (dev >> 32) & 0xFFFF;
 				res.dev.status.raw    = (dev >> 48) & 0xFFFF;
 
-				res.dev2.cap.raw      = (dev2 & 0xFFFFFFFF);
-				res.dev2.control.raw  = (dev2 >> 32) & 0xFFFF;
-				res.dev2.status.raw   = (dev2 >> 48) & 0xFFFF;
-
 				res.link.cap.raw      = (link & 0xFFFFFFFF);
 				res.link.control.raw  = (link >> 32) & 0xFFFF;
 				res.link.status.raw   = (link >> 48) & 0xFFFF;
 
-				res.slot.cap.raw      = (slot & 0xFFFFFFFF);
-				res.slot.control.raw  = (slot >> 32) & 0xFFFF;
-				res.slot.status.raw   = (slot >> 48) & 0xFFFF;
+				if (res.cap.pcie_cap_capability_version() > 1)
+				{
+					QWORD slot =  *(QWORD*)(raw + cap + 0x0C + 0x08);
+					QWORD dev2 =  *(QWORD*)(raw + cap + 0x04 + 0x20);
+					QWORD link2 = *(QWORD*)(raw + cap + 0x0C + 0x20);
 
-				res.link2.cap.raw     = (link2 & 0xFFFFFFFF);
-				res.link2.control.raw = (link2 >> 32) & 0xFFFF;
-				res.link2.status.raw  = (link2 >> 48) & 0xFFFF;
+					res.dev2.cap.raw = (dev2 & 0xFFFFFFFF);
+					res.dev2.control.raw = (dev2 >> 32) & 0xFFFF;
+					res.dev2.status.raw = (dev2 >> 48) & 0xFFFF;
+
+					res.slot.cap.raw = (slot & 0xFFFFFFFF);
+					res.slot.control.raw = (slot >> 32) & 0xFFFF;
+					res.slot.status.raw = (slot >> 48) & 0xFFFF;
+
+					res.link2.cap.raw = (link2 & 0xFFFFFFFF);
+					res.link2.control.raw = (link2 >> 32) & 0xFFFF;
+					res.link2.status.raw = (link2 >> 48) & 0xFFFF;
+				}
 			}
 			return res;
 		}

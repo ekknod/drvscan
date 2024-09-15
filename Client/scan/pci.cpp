@@ -416,44 +416,6 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 
 				if (cap_id == 0x01) // PM (R/W & R/O)
 				{
-					config::pci::PmCsr new_csr{};
-					auto pm = dev.cfg.get_pm();
-
-					WORD data = pm.csr.pm_csr_pme_enabled() ?
-						pm.csr.raw & ~(1 << 8) :
-						pm.csr.raw | (1 << 8);
-
-					data = pm.csr.pm_csr_nosoftrst() ?
-						data & ~(1 << 3) :
-						data | (1 << 3);
-
-					cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04, data);
-					new_csr.raw = cl::pci::read<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04);
-
-					if (new_csr.raw != pm.csr.raw)
-					{
-						cl::pci::write<WORD>(dev.bus, dev.slot, dev.func, pm.base_ptr + 0x04, pm.csr.raw);
-					}
-
-					//
-					// R/O test
-					//
-					if (pm.csr.pm_csr_pme_enabled() == new_csr.pm_csr_pme_enabled())
-					{
-						port.blk = 2;
-						port.blk_info = 23;
-						return;
-					}
-
-					//
-					// R/W test
-					//
-					if (pm.csr.pm_csr_nosoftrst() != new_csr.pm_csr_nosoftrst())
-					{
-						port.blk = 2;
-						port.blk_info = 23;
-						return;
-					}
 				}
 
 				else if (cap_id == 0x05) // MSI (R/O)
@@ -545,6 +507,10 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 				return;
 			}
 
+			if (cap_id == 0x01) // AER
+			{
+			}
+
 			else if (cap_id == 0x02) // VC [R/O] test
 			{
 				WORD resrc_status = *(WORD*)(dev.cfg.raw + cap + 0x1A);
@@ -581,6 +547,10 @@ static void scan::check_gummybear(BOOL advanced, PORT_DEVICE_INFO& port)
 					port.blk_info = 23;
 					return;
 				}
+			}
+
+			else if (cap_id == 0x1E)
+			{
 			}
 
 			else if (cap_id == 0x18) // Latency Tolerance Reporting (LTR) [R/W]
@@ -636,7 +606,6 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 				port.blk = 2; port.blk_info = 15;
 				return;
 			}
-
 		}
 
 		//
@@ -1062,6 +1031,8 @@ static void scan::filter_pci_cfg(config::Pci &cfg)
 					printf("LINK_WIDTH                   	 		%ld\n", pcie.link.status.link_status_link_width());
 					printf("---------------------------------------------------------------------\n");
 
+					if (pcie.cap.pcie_cap_capability_version() > 1)
+					{
 
 					printf(
 						"\n[PCI Express Device Capabilities 2]\n"
@@ -1113,6 +1084,7 @@ static void scan::filter_pci_cfg(config::Pci &cfg)
 					);
 					printf("Current De-emphasis Level 			%ld\n", pcie.link2.status.link_status2_deemphasislvl());
 					printf("---------------------------------------------------------------------\n");
+					}
 				}
 				was_printed = 1;
 			}
@@ -1379,13 +1351,22 @@ std::vector<PORT_DEVICE_INFO> scan::get_port_devices(void)
 		//
 		// optional: skip non xilinx devices
 		//
-		if (obj.self.cfg.get_pci().link.status.link_status_link_width() > 8)
+		if (obj.self.cfg.get_pci().link.status.link_status_link_width() > 4)
 		{
 			continue;
 		}
 
 		for (auto &dev : obj.devices)
 		{
+			//
+			// no driver object, optimize
+			//
+			if (!dev.drv_device_object)
+			{
+				memset(dev.cfg.raw, 0, sizeof(dev.cfg.raw));
+				*(DWORD*)dev.cfg.raw = cl::pci::read<DWORD>(dev.bus, dev.slot, dev.func, 0);
+				continue;
+			}
 			pci_initialize_cfg(dev);
 		}
 
