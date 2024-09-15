@@ -728,6 +728,24 @@ PVOID LoadFileEx(PCSTR path, DWORD *out_len);
 PVOID LoadImageEx(PCSTR path, DWORD *out_len, QWORD current_base = 0, QWORD memory_image=0);
 void  FreeImageEx(PVOID ImageBase);
 
+typedef struct
+{
+	unsigned char bus, slot, func;
+	std::string   pnp_id;
+} PNP_ADAPTER;
+
+namespace wmi
+{
+	QWORD                    open_table(PCSTR name);
+	void                     close_table(QWORD table);
+	QWORD                    next_entry(QWORD table, QWORD prev);
+
+	std::string              get_string(QWORD table_entry, PCSTR value);
+	int                      get_int(QWORD table_entry, PCSTR value);
+	bool                     get_bool(QWORD table_entry, PCSTR value);
+}
+
+std::vector<PNP_ADAPTER> get_pnp_adapters();
 
 #endif /* UTILS_H */
 

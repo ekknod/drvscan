@@ -46,6 +46,7 @@ namespace scan
 	static void check_hidden(PORT_DEVICE_INFO &port);
 	static void check_gummybear(BOOL advanced, PORT_DEVICE_INFO &port);
 	static void check_config(PORT_DEVICE_INFO &port);
+	static void check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters);
 
 	static void PrintPcieInfo(PORT_DEVICE_INFO& port);
 	static void PrintPcieConfiguration(unsigned char *cfg, int size);
@@ -138,6 +139,12 @@ void scan::pci(BOOL disable, BOOL advanced, BOOL dump_cfg)
 	// check if device has fired any interrupt (everdox & ekknod)
 	//
 	for (auto &port : port_devices) if (!port.blk) check_activity(port);
+
+	if (advanced)
+	{
+		std::vector<PNP_ADAPTER> pnp_devices = get_pnp_adapters();
+		for (auto &port : port_devices) if (!port.blk) check_features(port, pnp_devices);
+	}
 
 
 	int block_cnt = 0;
@@ -692,6 +699,92 @@ static void scan::check_config(PORT_DEVICE_INFO &port)
 	{
 		port.blk = 1; port.blk_info = 2;
 		return;
+	}
+}
+
+static void validate_network_adapters(PORT_DEVICE_INFO &port, PNP_ADAPTER &pnp)
+{
+	BOOL  found       = 0;
+	BOOL  status      = 0;
+	int   count       = 0;
+
+	QWORD table       = wmi::open_table("SELECT * FROM Win32_NetworkAdapter where PNPDeviceID is not NULL and MACAddress is not NULL");
+	QWORD table_entry = wmi::next_entry(table, 0);
+	while (table_entry)
+	{
+		std::string pnp_id = wmi::get_string(table_entry, "PNPDeviceID");
+		BOOL enabled = wmi::get_bool(table_entry, "NetEnabled");
+		if (enabled)
+		{
+			count++;
+		}
+		if (pnp_id.size() && !_strcmpi(pnp_id.c_str(), pnp.pnp_id.c_str()))
+		{
+			found  = 1;
+			status = enabled;
+		}
+		table_entry = wmi::next_entry(table, table_entry);
+	}
+	wmi::close_table(table);
+
+	if (found == 0)
+	{
+		LOG_DEBUG("[%d:%d:%d] no mac address found\n", pnp.bus,pnp.slot,pnp.func);
+	}
+
+	if (status == 0)
+	{
+		port.blk_info = 18;
+		port.blk  = 1;
+		return;
+	}
+
+	if (count > 1)
+	{
+		LOG_DEBUG("multiple network connections\n");
+	}
+}
+
+static void validate_pnp_device(PORT_DEVICE_INFO &port, DEVICE_INFO &dev, PNP_ADAPTER &pnp)
+{
+	switch (dev.cfg.class_code())
+	{
+	//
+	// validate network adapters
+	//
+	case 0x020000:
+	case 0x028000:
+		validate_network_adapters(port, pnp);
+		break;
+	//
+	// XHCI
+	//
+	case 0x0C0330:
+		// validate_usb_adapters(port, pnp);
+		break;
+	default:
+		break;
+	}
+}
+
+static void scan::check_features(PORT_DEVICE_INFO &port, std::vector<PNP_ADAPTER> &pnp_adapters)
+{
+	//
+	// check if device is backed by driver
+	//
+	for (auto& dev : port.devices)
+	{
+		for (auto& pnp : pnp_adapters)
+		{
+			if (pnp.bus == dev.bus &&
+				pnp.slot == dev.slot &&
+				pnp.func == dev.func
+				)
+			{
+				validate_pnp_device(port, dev, pnp);
+				break;
+			}
+		}
 	}
 }
 
