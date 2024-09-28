@@ -319,7 +319,7 @@ QWORD SDL_GetTicksNS(void)
 #include <iostream>
 #include <Windows.h>
 #include <SetupAPI.h>
-#include <cfgmgr32.h >
+#include <cfgmgr32.h>
 #include <initguid.h>
 #include <usbiodef.h>
 #include <usbioctl.h>
@@ -339,96 +339,84 @@ DEFINE_GUID(GUID_DEVINTERFACE_USB_HOST_CONTROLLER, 0x3abf6f2d, 0x71c4, 0x462a, 0
 	0x68, 0x61, 0xe6, 0xaf, 0x27);
 
 
-std::vector<HANDLE> get_usb_ports(void)
+std::vector<HANDLE> get_usb_hubs(void)
 {
-	std::vector<HANDLE> ports;
+	std::vector<HANDLE> hubs;
 
-	HDEVINFO device_interface = SetupDiGetClassDevsA(&GUID_CLASS_USB_HOST_CONTROLLER, 0, NULL, (DIGCF_PRESENT | DIGCF_DEVICEINTERFACE));
-	if (device_interface == 0)
+	HDEVINFO hDevInfo = SetupDiGetClassDevs(&GUID_DEVINTERFACE_USB_HUB, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+	if (hDevInfo == INVALID_HANDLE_VALUE)
 	{
-		return {};
+		std::cerr << "Error: Unable to get device information set for USB hubs. " << GetLastError() << std::endl;
+		return hubs;
 	}
 
-	SP_DEVINFO_DATA device_data{};
-	device_data.cbSize = sizeof(SP_DEVINFO_DATA);
+	SP_DEVICE_INTERFACE_DATA deviceInterfaceData;
+	deviceInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
-	for (int index = 0; SetupDiEnumDeviceInfo(device_interface, index, &device_data); index++)
+	DWORD index = 0;
+	while (SetupDiEnumDeviceInterfaces(
+		hDevInfo,
+		NULL,
+		&GUID_DEVINTERFACE_USB_HUB,
+		index,
+		&deviceInterfaceData
+	))
 	{
-		SP_DEVICE_INTERFACE_DATA interface_data{};
-		interface_data.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
-		if (!SetupDiEnumDeviceInterfaces(device_interface,
-			0,
-			(LPGUID)&GUID_CLASS_USB_HOST_CONTROLLER,
-			index,
-			&interface_data))
+		DWORD requiredSize = 0;
+		SetupDiGetDeviceInterfaceDetail(hDevInfo, &deviceInterfaceData, NULL, 0, &requiredSize, NULL);
+
+		PSP_DEVICE_INTERFACE_DETAIL_DATA pDeviceInterfaceDetailData = (PSP_DEVICE_INTERFACE_DETAIL_DATA)malloc(requiredSize);
+		if (!pDeviceInterfaceDetailData)
 		{
-			continue;
+			std::cerr << "Error: Unable to allocate memory. " << GetLastError() << std::endl;
+			break;
 		}
 
-		ULONG requested_size = 0;
-		if (!SetupDiGetDeviceInterfaceDetailA(device_interface,
-			&interface_data,
+		pDeviceInterfaceDetailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+
+		SP_DEVINFO_DATA devInfoData;
+		devInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
+
+		if (!SetupDiGetDeviceInterfaceDetail(
+			hDevInfo,
+			&deviceInterfaceData,
+			pDeviceInterfaceDetailData,
+			requiredSize,
 			NULL,
-			0,
-			&requested_size,
-			NULL)
-			&&
-			GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+			&devInfoData
+		))
 		{
-			continue;
+			std::cerr << "Error: Unable to get device interface detail data. " << GetLastError() << std::endl;
+			free(pDeviceInterfaceDetailData);
+			break;
 		}
 
-
-		PSP_DEVICE_INTERFACE_DETAIL_DATA_A interface_detail = (PSP_DEVICE_INTERFACE_DETAIL_DATA_A)malloc(requested_size);
-
-		interface_detail->cbSize = sizeof(PSP_DEVICE_INTERFACE_DETAIL_DATA_A);
-
-		if (!SetupDiGetDeviceInterfaceDetailA(device_interface,
-			&interface_data,
-			interface_detail,
-			requested_size,
-			&requested_size,
-			NULL))
-		{
-			free(interface_detail);
-			continue;
-		}
-
-		HANDLE root_hub = CreateFileA(interface_detail->DevicePath,
+		HANDLE hHubDevice = CreateFile(
+			pDeviceInterfaceDetailData->DevicePath,
 			GENERIC_WRITE,
 			FILE_SHARE_WRITE,
 			NULL,
 			OPEN_EXISTING,
 			0,
-			NULL);
+			NULL
+		);
 
-		if (root_hub == INVALID_HANDLE_VALUE)
+		if (hHubDevice == INVALID_HANDLE_VALUE)
+		{
+			std::cerr << "Error: Unable to open hub device. " << GetLastError() << std::endl;
+			free(pDeviceInterfaceDetailData);
+			index++;
 			continue;
+		}
 
-		char buffer[2048];
-		memset(buffer, 0, 2048);
-		DeviceIoControl(root_hub, IOCTL_USB_GET_ROOT_HUB_NAME, buffer, 2048, buffer, 2048, 0, 0);
-		CloseHandle(root_hub);
-
-		wchar_t device_path[260]{};
-		wcscat(device_path, L"\\\\.\\");
-		wcscat(device_path, ((USB_ROOT_HUB_NAME*)buffer)->RootHubName);
-
-		HANDLE hub = CreateFileW(device_path,
-			GENERIC_WRITE,
-			FILE_SHARE_WRITE,
-			NULL,
-			OPEN_EXISTING,
-			0,
-			NULL);
-
-		if (hub == INVALID_HANDLE_VALUE)
-			continue;
-
-		ports.push_back(hub);
+		hubs.push_back(hHubDevice);
+		free(pDeviceInterfaceDetailData);
+		index++;
 	}
 
-	return ports;
+	SetupDiDestroyDeviceInfoList(hDevInfo);
+
+	return hubs;
 }
 
 typedef struct _STRING_DESCRIPTOR_NODE
@@ -472,7 +460,7 @@ BOOL get_device_descriptor(HANDLE hub, DWORD index, USB_DEVICE_DESCRIPTOR *devic
 	auto entry = (PUSB_COMMON_DESCRIPTOR)usb_desc;
 	BOOL status = 0;
 
-	while ((PUCHAR)entry + sizeof(USB_COMMON_DESCRIPTOR) < usb_desc_size &&
+	while ((PUCHAR)entry + sizeof(USB_COMMON_DESCRIPTOR) <= usb_desc_size &&
 		(PUCHAR)entry + entry->bLength <= usb_desc_size)
 	{
 		if (entry->bDescriptorType == USB_INTERFACE_DESCRIPTOR_TYPE)
@@ -502,38 +490,78 @@ std::vector<USB_CLS_INFO> get_usb_devices()
 {
 	std::vector<USB_CLS_INFO> devices;
 
-	for (auto &port : get_usb_ports())
+	const auto hubs = get_usb_hubs();
+
+	for (const auto hHubDevice : hubs)
 	{
-		USB_NODE_INFORMATION port_info{};
-		port_info.NodeType = USB_HUB_NODE::UsbHub;
-		DeviceIoControl(port, IOCTL_USB_GET_NODE_INFORMATION, &port_info, sizeof(USB_NODE_INFORMATION), &port_info, sizeof(USB_NODE_INFORMATION), 0, 0);
+		// Get hub information
+		USB_NODE_INFORMATION hubInfo = {  };
+		DWORD bytesReturned = 0;
+		BOOL success = DeviceIoControl(
+			hHubDevice,
+			IOCTL_USB_GET_NODE_INFORMATION,
+			&hubInfo,
+			sizeof(hubInfo),
+			&hubInfo,
+			sizeof(hubInfo),
+			&bytesReturned,
+			NULL
+		);
 
-		for (int i = 0; i < port_info.u.HubInformation.HubDescriptor.bNumberOfPorts; i++)
+		if (!success)
 		{
-			USB_NODE_CONNECTION_INFORMATION_EX connection { 0 };
-			connection.ConnectionIndex = i;
+			std::cerr << "Error: Unable to get hub information. " << GetLastError() << std::endl;
+			CloseHandle(hHubDevice);
+			continue;
+		}
 
-			DeviceIoControl(port, IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX, &connection, sizeof(connection), &connection, sizeof(connection), 0, 0);
-			if (connection.ConnectionStatus != USB_CONNECTION_STATUS::DeviceConnected)
+		ULONG numPorts = hubInfo.u.HubInformation.HubDescriptor.bNumberOfPorts;
+
+		// Enumerate ports on the hub
+		for (ULONG port = 1; port <= numPorts; port++)
+		{
+			USB_NODE_CONNECTION_INFORMATION_EX connectionInfoEx = { 0 };
+			connectionInfoEx.ConnectionIndex = port;
+
+			success = DeviceIoControl(
+				hHubDevice,
+				IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX,
+				&connectionInfoEx,
+				sizeof(connectionInfoEx),
+				&connectionInfoEx,
+				sizeof(connectionInfoEx),
+				&bytesReturned,
+				NULL
+			);
+
+			if (!success)
+			{
+				std::cerr << "Error: Unable to get connection information. " << GetLastError() << std::endl;
+				continue;
+			}
+
+			// Check if a device is connected
+			if (connectionInfoEx.ConnectionStatus != USB_CONNECTION_STATUS::DeviceConnected)
 			{
 				continue;
 			}
 
-			if (!get_device_descriptor(port, i, &connection.DeviceDescriptor))
+			// Use the DeviceDescriptor from connectionInfoEx
+			if (!get_device_descriptor(hHubDevice, port, &connectionInfoEx.DeviceDescriptor))
 			{
 				continue;
 			}
 
 			devices.push_back(
-				{connection.DeviceDescriptor.idVendor, connection.DeviceDescriptor.idProduct,
-				connection.DeviceDescriptor.bDeviceClass,
-				connection.DeviceDescriptor.bDeviceSubClass,
-				connection.DeviceDescriptor.bDeviceProtocol
+				{ connectionInfoEx.DeviceDescriptor.idVendor, connectionInfoEx.DeviceDescriptor.idProduct,
+				connectionInfoEx.DeviceDescriptor.bDeviceClass,
+				connectionInfoEx.DeviceDescriptor.bDeviceSubClass,
+				connectionInfoEx.DeviceDescriptor.bDeviceProtocol
 				}
 			);
 		}
 
-		CloseHandle(port);
+		CloseHandle(hHubDevice);
 	}
 
 	return devices;
