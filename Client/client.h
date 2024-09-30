@@ -92,6 +92,8 @@ namespace cl
 
 	QWORD get_pci_driver_object(void);
 	QWORD get_acpi_driver_object(void);
+	QWORD get_mouhid_driver_object(void);
+	QWORD get_hidusb_driver_object(void);
 
 	QWORD get_interrupt_object(DWORD index);
 

@@ -1,9 +1,47 @@
 #include "scan.h"
 
+typedef struct _USB_DEVICE_DESCRIPTOR {
+  UCHAR  bLength;
+  UCHAR  bDescriptorType;
+  USHORT bcdUSB;
+  UCHAR  bDeviceClass;
+  UCHAR  bDeviceSubClass;
+  UCHAR  bDeviceProtocol;
+  UCHAR  bMaxPacketSize0;
+  USHORT idVendor;
+  USHORT idProduct;
+  USHORT bcdDevice;
+  UCHAR  iManufacturer;
+  UCHAR  iProduct;
+  UCHAR  iSerialNumber;
+  UCHAR  bNumConfigurations;
+} USB_DEVICE_DESCRIPTOR, *PUSB_DEVICE_DESCRIPTOR;
+
+typedef struct _USBD_INTERFACE_INFORMATION {
+  USHORT                Length;
+  UCHAR                 InterfaceNumber;
+  UCHAR                 AlternateSetting;
+  UCHAR                 Class;
+  UCHAR                 SubClass;
+  UCHAR                 Protocol;
+  UCHAR                 Reserved;
+  PVOID                 InterfaceHandle;
+  ULONG                 NumberOfPipes;
+  PVOID                 Pipes[1];
+} USBD_INTERFACE_INFORMATION, *PUSBD_INTERFACE_INFORMATION;
+
+typedef struct {
+	USB_DEVICE_DESCRIPTOR      info;
+	USBD_INTERFACE_INFORMATION usb_info;
+} USB_MOUSE_INFO;
+
+std::vector<USB_MOUSE_INFO> get_usb_mouse_devices(void);
+
 typedef struct {
 	HANDLE handle;
 	QWORD  total_calls;
 	QWORD  timestamp;
+	USB_MOUSE_INFO usb;
 } MOUSE_INFO ;
  
 namespace scan
@@ -174,6 +212,17 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 					input->data.mouse.lLastX, input->data.mouse.lLastY, input->data.mouse.usButtonFlags
 				);
 			}
+
+			if (dev.usb.info.idVendor)
+			{
+				auto desc = &dev.usb.info;
+				auto intf = &dev.usb.usb_info;
+
+				if (intf->Class == 3 && intf->SubClass == 0 && intf->Protocol == 0)
+				{
+					LOG("potential kmbox (%04X:%04X) [%d:%d:%d]\n", desc->idVendor, desc->idProduct, intf->Class, intf->SubClass, intf->Protocol);
+				}
+			}
 			/*
 			driver is required https://github.com/ekknod/acdrv, because usermode rawinput events are delayed
 			else if (timestamp - dev.timestamp < 500000) // if latency is less than 500000  ns (2000 Hz). tested with 1000hz mice.
@@ -268,10 +317,11 @@ QWORD SDL_GetTicksNS(void)
 	value /= tick_denominator_ns;
 	return value;
 }
- 
+
 std::vector<MOUSE_INFO> get_input_devices(void)
 {
 	std::vector<MOUSE_INFO> devices;
+	std::vector<USB_MOUSE_INFO> usb_devices = get_usb_mouse_devices();
  
  
 	//
@@ -302,6 +352,26 @@ std::vector<MOUSE_INFO> get_input_devices(void)
 		{
 			continue;
 		}
+
+		UINT name_length = 0;
+		GetRawInputDeviceInfoA(device_list[i].hDevice, RIDI_DEVICENAME, 0, &name_length);
+		CHAR *name = (char *)malloc(name_length);
+		GetRawInputDeviceInfoA(device_list[i].hDevice, RIDI_DEVICENAME, name, &name_length);
+
+		USB_MOUSE_INFO mouse_info{};
+		for (auto &entry : usb_devices)
+		{
+			char vidpid[255]{};
+			snprintf(vidpid, 255, "\\\\?\\HID#VID_%04X&PID_%04X&MI_", entry.info.idVendor, entry.info.idProduct);
+
+			if (strstr(name, vidpid))
+			{
+				mouse_info = entry;
+				break;
+			}
+		}
+
+		free(name);
  
  
 		//
@@ -309,6 +379,7 @@ std::vector<MOUSE_INFO> get_input_devices(void)
 		//
 		MOUSE_INFO info{};
 		info.handle = device_list[i].hDevice;
+		info.usb = mouse_info;
 		devices.push_back(info);
 	}
 
@@ -327,6 +398,38 @@ std::vector<MOUSE_INFO> get_input_devices(void)
 	free(device_list);
 
  
+	return devices;
+}
+
+std::vector<USB_MOUSE_INFO> get_usb_mouse_devices(void)
+{
+	using namespace cl;
+
+	std::vector<USB_MOUSE_INFO> devices;
+
+	QWORD hidusb_dev = km::read<QWORD>(get_hidusb_driver_object() + 0x08);
+	while (hidusb_dev)
+	{
+		QWORD mouhid_device = km::read<QWORD>(hidusb_dev + 0x18);
+		if (mouhid_device && km::read<QWORD>(mouhid_device + 0x08) == get_mouhid_driver_object())
+		{
+			QWORD ext = km::read<QWORD>(hidusb_dev + 0x40);
+			ext = km::read<QWORD>(ext + 16);
+
+			USB_DEVICE_DESCRIPTOR interface_desc{};
+			km::read(km::read<QWORD>(ext + 0x08), &interface_desc, sizeof(interface_desc));
+
+			USBD_INTERFACE_INFORMATION interface_info{};
+			km::read(km::read<QWORD>(ext + 0x10), &interface_info, sizeof(interface_info));
+
+			USB_MOUSE_INFO info{};
+			info.info = interface_desc;
+			info.usb_info = interface_info;
+
+			devices.push_back(info);
+		}
+		hidusb_dev = km::read<QWORD>(hidusb_dev + 0x10);
+	}
 	return devices;
 }
 

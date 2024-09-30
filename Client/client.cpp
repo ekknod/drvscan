@@ -40,6 +40,11 @@ namespace cl
 	QWORD  Offset_InterruptObject;
 	QWORD  PciDriverObject;
 	QWORD  AcpiDriverObject;
+	QWORD  UsbccgpDriverObject;
+	QWORD  HidUsbBase;
+	QWORD  HidUsbDriverObject;
+	QWORD  MouHidBase;
+	QWORD  MouhidDriverObject;
 
 
 	QWORD HalpPciMcfgTableCount;
@@ -325,13 +330,35 @@ BOOL cl::initialize(void)
 			}
 		}
 
+		if (!_strcmpi(entry.name.c_str(), "usbccgp.sys"))
+		{
+			UsbccgpDriverObject = get_kernel_pattern(
+				entry.path.c_str(), entry.base, (BYTE*)"\x48\x8B\x1D\x00\x00\x00\x00\x48\x8D\x15\x00\x00\x00\x00", (BYTE*)"xxx????xxx????");
+
+			if (UsbccgpDriverObject == 0)
+			{
+				LOG_RED("usbccgp.sys UsbccgpDriverObject not found\n");
+				return 0;
+			}
+		}
+
+		if (!_strcmpi(entry.name.c_str(), "hidusb.sys"))
+		{
+			HidUsbBase = entry.base;
+		}
+
+		if (!_strcmpi(entry.name.c_str(), "mouhid.sys"))
+		{
+			MouHidBase = entry.base;
+		}
+
 		if (!_strcmpi(entry.name.c_str(), "win32kfull.sys"))
 		{
 			win32k_memmove = get_kernel_export(entry.path.c_str(), entry.base, "memmove");
 		}
 	}
 
-	if (PciDriverObject == 0 || AcpiDriverObject == 0 || win32k_memmove == 0)
+	if (PciDriverObject == 0 || AcpiDriverObject == 0 || win32k_memmove == 0 || UsbccgpDriverObject == 0)
 	{
 		return 0;
 	}
@@ -416,6 +443,7 @@ BOOL cl::initialize(void)
 
 		AcpiDriverObject       = vm::read<QWORD>(4, vm::get_relative_address(4, AcpiDriverObject, 3, 7));
 		PciDriverObject        = vm::read<QWORD>(4, vm::get_relative_address(4, PciDriverObject, 3, 7));
+		UsbccgpDriverObject    = vm::read<QWORD>(4, vm::get_relative_address(4, UsbccgpDriverObject, 3, 7));
 		Offset_InterruptObject = vm::read<DWORD>(4, Offset_InterruptObject);
 
 		system_cr3             = vm::read<QWORD>(4, vm::read<QWORD>(4, PsInitialSystemProcess) + 0x28);
@@ -443,6 +471,46 @@ BOOL cl::initialize(void)
 				break;
 			}
 		}
+
+		//
+		// resolve mouhid driver object
+		//
+		QWORD usb_device_object = km::read<QWORD>(UsbccgpDriverObject + 0x08);
+		do
+		{
+			QWORD attached_device = km::read<QWORD>(usb_device_object + 0x18);
+			if (attached_device)
+			{
+				QWORD drv_obj = km::read<QWORD>(attached_device + 0x08);
+				QWORD drv_start = km::read<QWORD>(drv_obj + 0x18);
+				if (drv_start == HidUsbBase)
+				{
+
+					HidUsbDriverObject = drv_obj;
+					break;
+				}
+			}
+			usb_device_object = km::read<QWORD>(usb_device_object + 0x10);
+		} while (usb_device_object);
+
+
+		QWORD hidusb_dev = km::read<QWORD>(HidUsbDriverObject + 0x08);
+		do
+		{
+			QWORD mouhid = km::read<QWORD>(hidusb_dev + 0x18);
+			if (mouhid)
+			{
+				QWORD drv_obj = km::read<QWORD>(mouhid + 0x08);
+				QWORD drv_start = km::read<QWORD>(drv_obj + 0x18);
+
+				if (drv_start == MouHidBase)
+				{
+					MouhidDriverObject = drv_obj;
+					break;
+				}
+			}
+			hidusb_dev = km::read<QWORD>(hidusb_dev + 0x10);
+		} while (hidusb_dev);
 	}
 	return 1;
 }
@@ -558,6 +626,16 @@ QWORD cl::get_pci_driver_object(void)
 QWORD cl::get_acpi_driver_object(void)
 {
 	return AcpiDriverObject;
+}
+
+QWORD cl::get_mouhid_driver_object(void)
+{
+	return MouhidDriverObject;
+}
+
+QWORD cl::get_hidusb_driver_object(void)
+{
+	return HidUsbDriverObject;
 }
 
 QWORD cl::get_interrupt_object(DWORD index)
