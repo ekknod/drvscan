@@ -478,18 +478,25 @@ BOOL cl::initialize(void)
 		QWORD usb_device_object = km::read<QWORD>(UsbccgpDriverObject + 0x08);
 		do
 		{
-			QWORD attached_device = km::read<QWORD>(usb_device_object + 0x18);
-			if (attached_device)
+			QWORD attached_device = cl::vm::read<QWORD>(4, usb_device_object + 0x18);
+			QWORD device_object = 0;
+			while (attached_device)
 			{
-				QWORD drv_obj = km::read<QWORD>(attached_device + 0x08);
+				device_object = attached_device;
+				attached_device = cl::vm::read<QWORD>(4, attached_device + 0x18);
+			}
+
+			if (device_object)
+			{
+				QWORD drv_obj = km::read<QWORD>(device_object + 0x08);
 				QWORD drv_start = km::read<QWORD>(drv_obj + 0x18);
 				if (drv_start == HidUsbBase)
 				{
-
 					HidUsbDriverObject = drv_obj;
 					break;
 				}
 			}
+
 			usb_device_object = km::read<QWORD>(usb_device_object + 0x10);
 		} while (usb_device_object);
 
