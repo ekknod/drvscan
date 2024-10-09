@@ -138,7 +138,7 @@ QWORD FindPattern(QWORD base, unsigned char* pattern, unsigned char* mask)
 
 		DWORD section_characteristics = *(DWORD*)(section + 0x24);
 
-		if (section_characteristics & 0x00000020 && !(section_characteristics & 0x02000000))
+		if (section_characteristics & 0x00000020)
 		{
 			QWORD virtual_address = base + (QWORD)*(DWORD*)(section + 0x0C);
 			DWORD virtual_size = *(DWORD*)(section + 0x08);
@@ -332,14 +332,29 @@ BOOL cl::initialize(void)
 
 		if (!_strcmpi(entry.name.c_str(), "usbccgp.sys"))
 		{
-			UsbccgpDriverObject = get_kernel_pattern(
-				entry.path.c_str(), entry.base, (BYTE*)"\x48\x8B\x1D\x00\x00\x00\x00\x48\x8D\x15\x00\x00\x00\x00", (BYTE*)"xxx????xxx????");
+			HMODULE ntos = LoadLibraryA(entry.path.c_str());
 
-			if (UsbccgpDriverObject == 0)
+			QWORD export_address = FindPattern((QWORD)ntos, (BYTE*)"\x48\x8B\x1D\x00\x00\x00\x00\x48\x8D\x15", (BYTE*)"xxx????xxx");
+			if (export_address == 0)
+			{
+				export_address = (QWORD)FindPattern((QWORD)ntos, (BYTE*)"\x48\x8B\xD3\x48\x89\x1D\x00\x00\x00\x00\x48\x8D\x0D", (BYTE*)"xxxxxx????xxx");
+				if (export_address == 0)
+				{
+					goto cleanup;
+				}
+				export_address += 0x03;
+			}
+			export_address = (export_address + 7) + *(int*)(export_address + 3);
+			export_address = export_address - (QWORD)ntos;
+			export_address = export_address + ntoskrnl_base;
+		cleanup:
+			FreeLibrary(ntos);
+			if (export_address == 0)
 			{
 				LOG_RED("usbccgp.sys UsbccgpDriverObject not found\n");
 				return 0;
 			}
+			UsbccgpDriverObject = export_address;
 		}
 
 		if (!_strcmpi(entry.name.c_str(), "hidusb.sys"))
@@ -443,7 +458,7 @@ BOOL cl::initialize(void)
 
 		AcpiDriverObject       = vm::read<QWORD>(4, vm::get_relative_address(4, AcpiDriverObject, 3, 7));
 		PciDriverObject        = vm::read<QWORD>(4, vm::get_relative_address(4, PciDriverObject, 3, 7));
-		UsbccgpDriverObject    = vm::read<QWORD>(4, vm::get_relative_address(4, UsbccgpDriverObject, 3, 7));
+		UsbccgpDriverObject    = vm::read<QWORD>(4, UsbccgpDriverObject);
 		Offset_InterruptObject = vm::read<DWORD>(4, Offset_InterruptObject);
 
 		system_cr3             = vm::read<QWORD>(4, vm::read<QWORD>(4, PsInitialSystemProcess) + 0x28);
