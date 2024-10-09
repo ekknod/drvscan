@@ -346,7 +346,7 @@ BOOL cl::initialize(void)
 			}
 			export_address = (export_address + 7) + *(int*)(export_address + 3);
 			export_address = export_address - (QWORD)ntos;
-			export_address = export_address + ntoskrnl_base;
+			export_address = export_address + entry.base;
 		cleanup:
 			FreeLibrary(ntos);
 			if (export_address == 0)
