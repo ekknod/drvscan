@@ -55,6 +55,21 @@ typedef struct {
 	UINT64                Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
+#pragma warning (disable: 4201)
+typedef union _virt_addr_t
+{
+	QWORD value;
+	struct
+	{
+		QWORD offset : 12;
+		QWORD pt_index : 9;
+		QWORD pd_index : 9;
+		QWORD pdpt_index : 9;
+		QWORD pml4_index : 9;
+		QWORD reserved : 16;
+	};
+} virt_addr_t, * pvirt_addr_t;
+
 namespace cl
 {
 	class client
@@ -91,6 +106,9 @@ namespace cl
 	QWORD get_virtual_address(QWORD physical_address);
 
 	QWORD get_pci_driver_object(void);
+	DWORD get_pci_class_id(QWORD pci_extension);
+	void  get_pci_location(QWORD pci_extension, BYTE *bus, BYTE *slot, BYTE *func);
+
 	QWORD get_acpi_driver_object(void);
 	QWORD get_mouhid_driver_object(void);
 	QWORD get_hidusb_driver_object(void);

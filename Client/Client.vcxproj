@@ -130,7 +130,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="client.cpp" />
-    <ClCompile Include="clint\clint.cpp" />
     <ClCompile Include="clrt\clrt.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="scan\efi.cpp" />
@@ -141,7 +140,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="client.h" />
-    <ClInclude Include="clint\clint.h" />
     <ClInclude Include="clrt\clrt.h" />
     <ClInclude Include="ia32.hpp" />
     <ClInclude Include="scan\scan.h" />

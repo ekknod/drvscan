@@ -1249,17 +1249,6 @@ std::vector<RAW_PCIENUM_OBJECT> get_raw_pci_objects()
 
 	using namespace cl;
 
-	typedef struct _PCI_SLOT_NUMBER {
-		union {
-		struct {
-			ULONG   DeviceNumber:5;
-			ULONG   FunctionNumber:3;
-			ULONG   Reserved:24;
-		} bits;
-		ULONG   AsULONG;
-		} u;
-	} PCI_SLOT_NUMBER, *PPCI_SLOT_NUMBER;
-
 	//
 	// add device objects
 	//
@@ -1270,13 +1259,10 @@ std::vector<RAW_PCIENUM_OBJECT> get_raw_pci_objects()
 		QWORD pci_ext = vm::read<QWORD>(4, pci_dev + 0x40);
 		if (pci_ext && vm::read<DWORD>(4, pci_ext) == 0x44696350)
 		{
-			DWORD device_class = vm::read<BYTE>(4, pci_ext + 0x29 + 0) << 16 |
-				vm::read<BYTE>(4, pci_ext + 0x29 + 1) << 8 | vm::read<BYTE>(4, pci_ext + 0x29 + 2);
+			DWORD device_class = cl::get_pci_class_id(pci_ext);
 
-			DWORD bus = vm::read<DWORD>(4, pci_ext + 0x1C);
-			PCI_SLOT_NUMBER slot{};
-			slot.u.AsULONG = vm::read<DWORD>(4, pci_ext + 0x20);
-
+			BYTE bus,slot,func;
+			get_pci_location(pci_ext, &bus, &slot, &func);
 
 			QWORD attached_device = cl::vm::read<QWORD>(4, pci_dev + 0x18);
 			QWORD device_object = 0;
@@ -1287,9 +1273,9 @@ std::vector<RAW_PCIENUM_OBJECT> get_raw_pci_objects()
 			}
 
 			RAW_PCIENUM_OBJECT object{};
-			object.data.bus  = bus & 0xFF;
-			object.data.slot = slot.u.bits.DeviceNumber;
-			object.data.func = slot.u.bits.FunctionNumber;
+			object.data.bus  = bus;
+			object.data.slot = slot;
+			object.data.func = func;
 			object.data.pci_device_object = pci_dev;
 			object.data.drv_device_object = device_object;
 			object.device_class = device_class;
@@ -1363,7 +1349,6 @@ std::vector<PORT_DEVICE_INFO> scan::get_port_devices(void)
 		BYTE  bus = ((BYTE*)&businfo)[0];
 		BYTE  secondary_bus = ((BYTE*)&businfo)[1];
 		BYTE  subordinate_bus = ((BYTE*)&businfo)[2];
-
 		if (dev.bus != bus || dev.bus >= secondary_bus || dev.bus >= subordinate_bus)
 			continue;
 

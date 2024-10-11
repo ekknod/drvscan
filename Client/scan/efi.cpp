@@ -11,7 +11,6 @@ namespace scan
 	std::vector<EFI_MODULE_INFO> get_runtime_modules(std::vector<QWORD> &runtime_table, EFI_MEMORY_DESCRIPTOR &dxe_range);
 	std::vector<EFI_MODULE_INFO> get_dxe_modules(std::vector<EFI_MEMORY_DESCRIPTOR>& memory_map);
 	static void runtime_detection(EFI_MEMORY_DESCRIPTOR &dxe_range);
-	static void umap_detect(void);
 	static void dump_to_file(PCSTR filename, QWORD physical_address, QWORD size);
 }
 
@@ -72,30 +71,16 @@ void scan::efi(BOOL dump)
 
 	for (auto &entry : memory_map)
 	{
-		if (entry.VirtualStart == dxe_range.VirtualStart || entry.Type == 11)
-		{
-			LOG("%s [%llx - %llx] %llx\n",
-				// entry.Attribute,
-				get_efi_type(entry.Type),
-				entry.PhysicalStart,
-				entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
-				entry.VirtualStart
-			);
-		}
-		else
-		{
-			LOG_RED("%s [%llx - %llx] %llx\n",
-				// entry.Attribute,
-				get_efi_type(entry.Type),
-				entry.PhysicalStart,
-				entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
-				entry.VirtualStart
-			);
-		}
+		LOG("%s [%llx - %llx] %llx\n",
+			// entry.Attribute,
+			get_efi_type(entry.Type),
+			entry.PhysicalStart,
+			entry.PhysicalStart + (entry.NumberOfPages * 0x1000),
+			entry.VirtualStart
+		);
 	}
 
 	runtime_detection(dxe_range);
-	umap_detect();
 
 	EFI_MEMORY_DESCRIPTOR eout_0{};
 	if (invalid_range_detection(memory_map, dxe_range, &eout_0) && dump)
@@ -150,7 +135,7 @@ static BOOL scan::invalid_range_detection(
 		}
 
 		if ((entry.Type == 5 || entry.Type == 6) && entry.Attribute == 0x800000000000000f &&
-			entry.PhysicalStart != dxe_range.PhysicalStart)
+			entry.PhysicalStart > dxe_range.PhysicalStart)
 		{
 			printf("\n");
 			LOG("DXE is found from invalid range!!! [%llx - %llx]\n",
@@ -197,70 +182,6 @@ static void scan::runtime_detection(EFI_MEMORY_DESCRIPTOR &dxe_range)
 			LOG_RED("EFI Runtime service [%d] is hooked with pointer swap: %llx, %llx\n",
 				i, rt_func, cl::get_physical_address(rt_func));
 		}
-	}
-}
-
-static void scan::umap_detect(void)
-{
-	auto  modules = get_kernel_modules();
-	QWORD hal     = 0;
-	for (auto &mod : modules)
-	{
-		if (!_strcmpi(mod.name.c_str(), "hal.dll"))
-		{
-			hal = mod.base;
-			break;
-		}
-	}
-
-	QWORD entry = hal;
-	QWORD fbase = 0;
-	QWORD lbase = 0;
-
-	while (1)
-	{
-		BOOL found = 0;
-		for (auto& mod : modules)
-		{
-			if (entry >= mod.base && entry <= (mod.base + mod.size))
-			{
-				fbase = mod.base;
-				found = 1;
-				break;
-			}
-		}
-
-		if (!found)
-		{
-			entry += 0x10000;
-			break;
-		}
-
-		entry -= 0x10000;
-	}
-
-	while (1)
-	{
-		BOOL found = 0;
-		for (auto& mod : modules)
-		{
-			if (entry >= mod.base && entry <= (mod.base + mod.size))
-			{
-				lbase = mod.base;
-				found = 1;
-				break;
-			}
-		}
-
-		if (!found)
-			break;
-
-		entry += 0x10000;
-	}
-
-	if (fbase == lbase)
-	{
-		LOG_RED("umap detected (this is just public troll bro) get shrekt from UM\n");
 	}
 }
 
