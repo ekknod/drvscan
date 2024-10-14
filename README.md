@@ -34,7 +34,13 @@ build date: Jul 22 2024, 10:55:00
 C:\Users\Juho\source\repos\drvscan\Client\x64\Release>
 </pre>
 # Driver Installation
-- enable testsigning  
-- copy driver.inf driver.sys folder, right click install
+- right click start.bat as admin
+
+# Win11 24H2
+- kernel image scan is broken
+
+# 14/10/2024
+- archived repository
+- OS updates -> do it yourself
 
 
