@@ -1,47 +1,83 @@
 #include "scan.h"
 
-typedef struct _USB_DEVICE_DESCRIPTOR {
-  UCHAR  bLength;
-  UCHAR  bDescriptorType;
-  USHORT bcdUSB;
-  UCHAR  bDeviceClass;
-  UCHAR  bDeviceSubClass;
-  UCHAR  bDeviceProtocol;
-  UCHAR  bMaxPacketSize0;
-  USHORT idVendor;
-  USHORT idProduct;
-  USHORT bcdDevice;
-  UCHAR  iManufacturer;
-  UCHAR  iProduct;
-  UCHAR  iSerialNumber;
-  UCHAR  bNumConfigurations;
-} USB_DEVICE_DESCRIPTOR, *PUSB_DEVICE_DESCRIPTOR;
 
-typedef struct _USBD_INTERFACE_INFORMATION {
-  USHORT                Length;
-  UCHAR                 InterfaceNumber;
-  UCHAR                 AlternateSetting;
-  UCHAR                 Class;
-  UCHAR                 SubClass;
-  UCHAR                 Protocol;
-  UCHAR                 Reserved;
-  PVOID                 InterfaceHandle;
-  ULONG                 NumberOfPipes;
-  PVOID                 Pipes[1];
-} USBD_INTERFACE_INFORMATION, *PUSBD_INTERFACE_INFORMATION;
+
+#include <string>
+#include <strsafe.h>
+#include <usbioctl.h>
+#include <setupapi.h>
+#include <iostream>
+#include <iostream>
+#include <Windows.h>
+#include <SetupAPI.h>
+#include <cfgmgr32.h>
+#include <initguid.h>
+#include <usbiodef.h>
+#include <usbioctl.h>
+#include <regex>
+
+#pragma comment(lib, "Setupapi.lib")
+
 
 typedef struct {
-	USB_DEVICE_DESCRIPTOR      info;
-	USBD_INTERFACE_INFORMATION usb_info;
-} USB_MOUSE_INFO;
+	WORD vendor;
+	WORD product;
+} KMBOXNET_LIST;
 
-std::vector<USB_MOUSE_INFO> get_usb_mouse_devices(void);
+static KMBOXNET_LIST kmbox_devices[] = {
+	{ 0x046d, 0xc547 }, // logitech receiver
+	{ 0x1532, 0x00b7 }, // razer deathadder v3 pro
+} ;
+
+typedef struct
+{
+	USB_INTERFACE_DESCRIPTOR self;
+	std::vector<USB_ENDPOINT_DESCRIPTOR> endpoints;
+} USB_CONFIG_DESCRIPTOR_ENTRY;
+
+typedef struct
+{
+	//
+	// flag to check if structure is initialized
+	//
+	BOOLEAN present;
+
+	//
+	// iManufacturer+iProduct combined (can be null)
+	//
+	std::string name;
+
+	//
+	// serial number (can be null)
+	//
+	std::string serial_number;
+
+	//
+	// device speed
+	//
+	UCHAR speed;
+
+	//
+	//  device information
+	//
+	USB_DEVICE_DESCRIPTOR device;
+
+	//
+	// power / attributes
+	//
+	USB_CONFIGURATION_DESCRIPTOR config;
+
+	//
+	// list of device descriptors
+	//
+	std::vector<USB_CONFIG_DESCRIPTOR_ENTRY> interfaces;
+} USB_INFO;
 
 typedef struct {
 	HANDLE handle;
 	QWORD  total_calls;
 	QWORD  timestamp;
-	USB_MOUSE_INFO usb;
+	USB_INFO usb_info;
 } MOUSE_INFO ;
  
 namespace scan
@@ -162,6 +198,64 @@ void scan::mouse(BOOL log_mouse)
 
 double ns_to_herz(double ns) { return 1.0 / (ns / 1e9);  }
 
+void PrintUsbInformation(USB_INFO &info)
+{
+	printf(
+		"---------------------------------------------------------------------\n"
+		"	Name:       %s\n"
+		"	Serial:     %s\n"
+		"	Vendor:     0x%04X\n"
+		"	Product:    0x%04X\n"
+		"	Speed:      %d\n"
+		"	Power:      %d mA\n"
+		"	Attributes: 0x%x\n",
+		info.name.c_str(), info.serial_number.c_str(),
+		info.device.idVendor,info.device.idProduct,
+		info.speed, info.config.MaxPower << 1,
+		info.config.bmAttributes
+	);
+
+	for (auto &entry : info.interfaces)
+	{
+		printf(
+			"	<---------------------------------------------->\n"
+			"	bInterfaceNumber: %d\n"
+			"	bAlternateSetting: %d\n"
+			"	bNumEndpoints: %d\n"
+			"	bInterfaceClass: %d\n"
+			"	bInterfaceSubClass: %d\n"
+			"	bInterfaceProtocol: %d\n"
+			"	iInterface: %d\n",
+			entry.self.bInterfaceNumber,
+			entry.self.bAlternateSetting,
+			entry.self.bNumEndpoints,
+			entry.self.bInterfaceClass,
+			entry.self.bInterfaceSubClass,
+			entry.self.bInterfaceProtocol,
+			entry.self.iInterface
+		);
+
+
+
+		for (auto &entry2 : entry.endpoints)
+		{
+			printf(
+				"		bEndpointAddress: 0x%02X\n"
+				"		bmAttributes: 0x%02X\n"
+				"		wMaxPacketSize: %d\n"
+				"		bInterval: %d\n",
+
+				entry2.bEndpointAddress,
+				entry2.bmAttributes,
+				entry2.wMaxPacketSize,
+				entry2.bInterval
+			);
+		}
+	}
+
+	printf("---------------------------------------------------------------------\n");
+}
+
 void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 {
 	static int swap_mouse_cnt=0;
@@ -212,17 +306,6 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 					input->data.mouse.lLastX, input->data.mouse.lLastY, input->data.mouse.usButtonFlags
 				);
 			}
-
-			if (dev.usb.info.idVendor)
-			{
-				auto desc = &dev.usb.info;
-				auto intf = &dev.usb.usb_info;
-
-				if (intf->Class == 3 && intf->SubClass == 0 && intf->Protocol == 0)
-				{
-					LOG("potential kmbox (%04X:%04X) [%d:%d:%d]\n", desc->idVendor, desc->idProduct, intf->Class, intf->SubClass, intf->Protocol);
-				}
-			}
 			/*
 			driver is required https://github.com/ekknod/acdrv, because usermode rawinput events are delayed
 			else if (timestamp - dev.timestamp < 500000) // if latency is less than 500000  ns (2000 Hz). tested with 1000hz mice.
@@ -233,6 +316,68 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 				LOG("Device: 0x%llx, timestamp: %lld, hz: [%f]\n", (QWORD)dev.handle, timestamp, ns_to_herz((double)(timestamp - dev.timestamp)));
 			}
 			*/
+
+
+			auto &info = dev.usb_info;
+
+			BOOLEAN protocol_found=0;
+			BOOLEAN knet_packetcnt=0;
+			for (auto &desc : info.interfaces)
+			{
+				if (desc.self.bInterfaceClass == 3 &&
+					desc.self.bInterfaceSubClass == 1 &&
+					desc.self.bInterfaceProtocol == 2
+					)
+				{
+					protocol_found = 1;
+
+					for (auto &end : desc.endpoints)
+					{
+						if (end.wMaxPacketSize == 20)
+						{
+							knet_packetcnt = 1;
+							break;
+						}
+					}
+
+					break;
+				}
+			}
+
+			WORD power = info.config.MaxPower << 1;
+
+			if (!protocol_found || (power == 500))
+			{
+				BOOL color = 0;
+
+				for (auto &kbox : kmbox_devices)
+				{
+					if (kbox.vendor == info.device.idVendor && kbox.product == info.device.idProduct)
+					{
+						color = 1;
+						break;
+					}
+				}
+
+				if (knet_packetcnt)
+				{
+					color = 1;
+				}
+
+				if (color)
+				{
+					LOG_RED("kmbox device detected\n");
+
+					PrintUsbInformation(info);
+				}
+				else
+				{
+					LOG_YELLOW("potential kmbox device\n");
+
+					PrintUsbInformation(info);
+				}
+			}
+
 			dev.timestamp = timestamp;
 			break;
 		}
@@ -318,10 +463,262 @@ QWORD SDL_GetTicksNS(void)
 	return value;
 }
 
+DEFINE_GUID(GUID_DEVINTERFACE_USB_DEVICE, 0xA5DCBF10L, 0x6530, 0x11D2, 0x90, 0x1F, 0x00, \
+	0xC0, 0x4F, 0xB9, 0x51, 0xED);
+
+
+DEFINE_GUID(GUID_DEVINTERFACE_USB_HUB, 0xf18a0e88, 0xc30c, 0x11d0, 0x88, 0x15, 0x00, \
+	0xa0, 0xc9, 0x06, 0xbe, 0xd8);
+
+DEFINE_GUID(GUID_DEVINTERFACE_USB_HOST_CONTROLLER, 0x3abf6f2d, 0x71c4, 0x462a, 0x8a, 0x92, 0x1e, \
+	0x68, 0x61, 0xe6, 0xaf, 0x27);
+
+PUSB_DESCRIPTOR_REQUEST
+GetConfigDescriptor(
+	HANDLE  hHubDevice,
+	ULONG   ConnectionIndex,
+	UCHAR   DescriptorIndex
+);
+
+USB_NODE_CONNECTION_INFORMATION_EX
+GetDeviceConnectionInfo(
+	HANDLE  hHubDevice,
+	ULONG   ConnectionIndex
+)
+{
+	USB_NODE_CONNECTION_INFORMATION_EX connectionInfoEx = { 0 };
+	connectionInfoEx.ConnectionIndex = ConnectionIndex;
+
+	DWORD bytesReturned{};
+	BOOL success = DeviceIoControl(
+		hHubDevice,
+		IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX,
+		&connectionInfoEx,
+		sizeof(connectionInfoEx),
+		&connectionInfoEx,
+		sizeof(connectionInfoEx),
+		&bytesReturned,
+		NULL
+	);
+
+	if (!success)
+	{
+		return connectionInfoEx;
+	}
+
+	return connectionInfoEx;
+}
+
+std::string get_descriptor_string(HANDLE hub, DWORD connection_index, UCHAR string_index)
+{
+	char buffer[2048];
+
+	std::string out{};
+
+	USB_DESCRIPTOR_REQUEST Request = { 0 };
+	Request.ConnectionIndex = connection_index;
+	Request.SetupPacket.wValue = (short)((USB_STRING_DESCRIPTOR_TYPE << 8) + string_index);
+	Request.SetupPacket.wLength = (short)(2048 - sizeof(Request));
+	Request.SetupPacket.wIndex = 0x409; // Language Code
+
+	memset(buffer, 0, 2048);
+	if (DeviceIoControl(hub, IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION, &Request, 2048, buffer, 2048, 0, 0))
+	{
+		USB_STRING_DESCRIPTOR* desc = (USB_STRING_DESCRIPTOR*)buffer + 3;
+		WCHAR* tmp = desc->bString;
+		while (*tmp) {
+			out.push_back((CHAR)*tmp);
+			tmp++;
+		}
+	}
+
+	return out;
+}
+
+#pragma warning (disable: 4815)
+
+USB_INFO get_usb_device_info(HANDLE hub, DWORD index)
+{
+	USB_INFO out{};
+
+	auto connection_info = GetDeviceConnectionInfo(hub, index);
+	if (connection_info.ConnectionStatus != USB_CONNECTION_STATUS::DeviceConnected)
+	{
+		return {};
+	}
+
+	out.device = connection_info.DeviceDescriptor;
+
+	if (out.device.iManufacturer)
+	{
+		out.name += get_descriptor_string(hub, index, out.device.iManufacturer) + " ";
+	}
+
+	if (out.device.iProduct)
+	{
+		out.name += get_descriptor_string(hub, index, out.device.iProduct) + " ";
+	}
+
+	if (out.device.iSerialNumber)
+	{
+		out.serial_number += get_descriptor_string(hub, index, out.device.iSerialNumber);
+	}
+
+	auto config_descriptor = GetConfigDescriptor(hub, index, 0);
+	if (config_descriptor == 0)
+	{
+		return out;
+	}
+
+	out.speed   = connection_info.Speed;
+	out.present = 1;
+
+	auto usb_desc = (PUSB_CONFIGURATION_DESCRIPTOR)(config_descriptor + 1);
+	auto usb_desc_size = (PUCHAR)usb_desc + usb_desc->wTotalLength;
+	auto entry = (PUSB_COMMON_DESCRIPTOR)usb_desc;
+
+	while ((PUCHAR)entry + sizeof(USB_COMMON_DESCRIPTOR) <= usb_desc_size &&
+		(PUCHAR)entry + entry->bLength <= usb_desc_size)
+	{
+		if (entry->bDescriptorType == USB_INTERFACE_DESCRIPTOR_TYPE)
+		{
+			USB_CONFIG_DESCRIPTOR_ENTRY temp{};
+			temp.self = *(USB_INTERFACE_DESCRIPTOR*)entry;
+			out.interfaces.push_back( temp  );
+		}
+
+		else if (entry->bDescriptorType == USB_CONFIGURATION_DESCRIPTOR_TYPE)
+		{
+			out.config = *(USB_CONFIGURATION_DESCRIPTOR*)entry;
+		}
+
+		else if (entry->bDescriptorType == USB_ENDPOINT_DESCRIPTOR_TYPE)
+		{
+			out.interfaces[out.interfaces.size() - 1].endpoints.push_back(*(USB_ENDPOINT_DESCRIPTOR*)entry);
+		}
+
+		entry = (PUSB_COMMON_DESCRIPTOR)((PUCHAR)entry + entry->bLength);
+	}
+	free(config_descriptor);
+	return out;
+}
+
+UCHAR GetUsbPortCount(HANDLE hub)
+{
+	USB_NODE_INFORMATION hubInfo = {  };
+	DWORD bytesReturned = 0;
+	BOOL success = DeviceIoControl(
+		hub,
+		IOCTL_USB_GET_NODE_INFORMATION,
+		&hubInfo,
+		sizeof(hubInfo),
+		&hubInfo,
+		sizeof(hubInfo),
+		&bytesReturned,
+		NULL
+	);
+
+	if (!success)
+	{
+		return 0;
+	}
+
+	return hubInfo.u.HubInformation.HubDescriptor.bNumberOfPorts;
+}
+
+std::vector<USB_INFO> get_usb_devices()
+{
+	std::vector<USB_INFO> devices;
+
+	HDEVINFO hDevInfo = SetupDiGetClassDevs(&GUID_DEVINTERFACE_USB_HUB, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+	if (hDevInfo == INVALID_HANDLE_VALUE)
+	{
+		std::cerr << "Error: Unable to get device information set for USB hubs. " << GetLastError() << std::endl;
+		return {};
+	}
+
+	SP_DEVICE_INTERFACE_DATA deviceInterfaceData;
+	deviceInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+
+	DWORD index = 0;
+	while (SetupDiEnumDeviceInterfaces(
+		hDevInfo,
+		NULL,
+		&GUID_DEVINTERFACE_USB_HUB,
+		index,
+		&deviceInterfaceData
+	))
+	{
+		DWORD requiredSize = 0;
+		SetupDiGetDeviceInterfaceDetail(hDevInfo, &deviceInterfaceData, NULL, 0, &requiredSize, NULL);
+
+		PSP_DEVICE_INTERFACE_DETAIL_DATA pDeviceInterfaceDetailData = (PSP_DEVICE_INTERFACE_DETAIL_DATA)malloc(requiredSize);
+		if (!pDeviceInterfaceDetailData)
+		{
+			break;
+		}
+
+		pDeviceInterfaceDetailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+
+		SP_DEVINFO_DATA devInfoData;
+		devInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
+
+		if (!SetupDiGetDeviceInterfaceDetail(
+			hDevInfo,
+			&deviceInterfaceData,
+			pDeviceInterfaceDetailData,
+			requiredSize,
+			NULL,
+			&devInfoData
+		))
+		{
+			std::cerr << "Error: Unable to get device interface detail data. " << GetLastError() << std::endl;
+			free(pDeviceInterfaceDetailData);
+			break;
+		}
+
+		HANDLE hHubDevice = CreateFile(
+			pDeviceInterfaceDetailData->DevicePath,
+			GENERIC_WRITE,
+			FILE_SHARE_WRITE,
+			NULL,
+			OPEN_EXISTING,
+			0,
+			NULL
+		);
+
+		if (hHubDevice == INVALID_HANDLE_VALUE)
+		{
+			std::cerr << "Error: Unable to open hub device. " << GetLastError() << std::endl;
+			free(pDeviceInterfaceDetailData);
+			index++;
+			continue;
+		}
+
+		for (ULONG port = 1; port <= GetUsbPortCount(hHubDevice); port++)
+		{
+			USB_INFO usb_device = get_usb_device_info(hHubDevice, port);
+			if (!usb_device.present)
+			{
+				continue;
+			}
+			devices.push_back(usb_device);
+		}
+
+		CloseHandle(hHubDevice);
+
+		free(pDeviceInterfaceDetailData);
+		index++;
+	}
+
+	SetupDiDestroyDeviceInfoList(hDevInfo);
+
+	return devices;
+}
+
 std::vector<MOUSE_INFO> get_input_devices(void)
 {
 	std::vector<MOUSE_INFO> devices;
-	std::vector<USB_MOUSE_INFO> usb_devices = get_usb_mouse_devices();
  
  
 	//
@@ -341,6 +738,9 @@ std::vector<MOUSE_INFO> get_input_devices(void)
 	// get list of input devices
 	//
 	GetRawInputDeviceList(device_list, &device_count, sizeof(RAWINPUTDEVICELIST));
+
+
+	auto usb_devices = get_usb_devices();
  
  
 	for (UINT i = 0; i < device_count; i++)
@@ -353,33 +753,39 @@ std::vector<MOUSE_INFO> get_input_devices(void)
 			continue;
 		}
 
+
 		UINT name_length = 0;
 		GetRawInputDeviceInfoA(device_list[i].hDevice, RIDI_DEVICENAME, 0, &name_length);
 		CHAR *name = (char *)malloc(name_length);
 		GetRawInputDeviceInfoA(device_list[i].hDevice, RIDI_DEVICENAME, name, &name_length);
 
-		USB_MOUSE_INFO mouse_info{};
+		BOOL found = 0;
+		USB_INFO dev_info{};
 		for (auto &entry : usb_devices)
 		{
 			char vidpid[255]{};
-			snprintf(vidpid, 255, "\\\\?\\HID#VID_%04X&PID_%04X&MI_", entry.info.idVendor, entry.info.idProduct);
-
+			snprintf(vidpid, 255, "\\\\?\\HID#VID_%04X&PID_%04X&MI_", entry.device.idVendor, entry.device.idProduct);
 			if (strstr(name, vidpid))
 			{
-				mouse_info = entry;
+				dev_info = entry;
+				found = 1;
 				break;
 			}
 		}
 
 		free(name);
- 
- 
+
+		if (!found)
+		{
+			continue;
+		}
+
 		//
 		// add new device to our dynamic list
 		//
 		MOUSE_INFO info{};
 		info.handle = device_list[i].hDevice;
-		info.usb = mouse_info;
+		info.usb_info = dev_info;
 		devices.push_back(info);
 	}
 
@@ -390,8 +796,8 @@ std::vector<MOUSE_INFO> get_input_devices(void)
 	MOUSE_INFO touchpad{};
 	touchpad.handle = 0;
 	devices.push_back(touchpad);
- 
- 
+
+
 	//
 	// free resources
 	//
@@ -401,35 +807,150 @@ std::vector<MOUSE_INFO> get_input_devices(void)
 	return devices;
 }
 
-std::vector<USB_MOUSE_INFO> get_usb_mouse_devices(void)
+PUSB_DESCRIPTOR_REQUEST
+GetConfigDescriptor(
+	HANDLE  hHubDevice,
+	ULONG   ConnectionIndex,
+	UCHAR   DescriptorIndex
+)
 {
-	using namespace cl;
+	BOOL    success = 0;
+	ULONG   nBytes = 0;
+	ULONG   nBytesReturned = 0;
 
-	std::vector<USB_MOUSE_INFO> devices;
+	UCHAR   configDescReqBuf[sizeof(USB_DESCRIPTOR_REQUEST) +
+		sizeof(USB_CONFIGURATION_DESCRIPTOR)];
 
-	QWORD hidusb_dev = km::read<QWORD>(get_hidusb_driver_object() + 0x08);
-	while (hidusb_dev)
+	PUSB_DESCRIPTOR_REQUEST         configDescReq = NULL;
+	PUSB_CONFIGURATION_DESCRIPTOR   configDesc = NULL;
+
+
+	// Request the Configuration Descriptor the first time using our
+	// local buffer, which is just big enough for the Cofiguration
+	// Descriptor itself.
+	//
+	nBytes = sizeof(configDescReqBuf);
+
+	configDescReq = (PUSB_DESCRIPTOR_REQUEST)configDescReqBuf;
+	configDesc = (PUSB_CONFIGURATION_DESCRIPTOR)(configDescReq + 1);
+
+	// Zero fill the entire request structure
+	//
+	memset(configDescReq, 0, nBytes);
+
+	// Indicate the port from which the descriptor will be requested
+	//
+	configDescReq->ConnectionIndex = ConnectionIndex;
+
+	//
+	// USBHUB uses URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE to process this
+	// IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION request.
+	//
+	// USBD will automatically initialize these fields:
+	//     bmRequest = 0x80
+	//     bRequest  = 0x06
+	//
+	// We must inititialize these fields:
+	//     wValue    = Descriptor Type (high) and Descriptor Index (low byte)
+	//     wIndex    = Zero (or Language ID for String Descriptors)
+	//     wLength   = Length of descriptor buffer
+	//
+	configDescReq->SetupPacket.wValue = (USB_CONFIGURATION_DESCRIPTOR_TYPE << 8)
+		| DescriptorIndex;
+
+	configDescReq->SetupPacket.wLength = (USHORT)(nBytes - sizeof(USB_DESCRIPTOR_REQUEST));
+
+	// Now issue the get descriptor request.
+	//
+	success = DeviceIoControl(hHubDevice,
+		IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+		configDescReq,
+		nBytes,
+		configDescReq,
+		nBytes,
+		&nBytesReturned,
+		NULL);
+
+	if (!success)
 	{
-		QWORD mouhid_device = km::read<QWORD>(hidusb_dev + 0x18);
-		if (mouhid_device && km::read<QWORD>(mouhid_device + 0x08) == get_mouhid_driver_object())
-		{
-			QWORD ext = km::read<QWORD>(hidusb_dev + 0x40);
-			ext = km::read<QWORD>(ext + 16);
-
-			USB_DEVICE_DESCRIPTOR interface_desc{};
-			km::read(km::read<QWORD>(ext + 0x08), &interface_desc, sizeof(interface_desc));
-
-			USBD_INTERFACE_INFORMATION interface_info{};
-			km::read(km::read<QWORD>(ext + 0x10), &interface_info, sizeof(interface_info));
-
-			USB_MOUSE_INFO info{};
-			info.info = interface_desc;
-			info.usb_info = interface_info;
-
-			devices.push_back(info);
-		}
-		hidusb_dev = km::read<QWORD>(hidusb_dev + 0x10);
+		return NULL;
 	}
-	return devices;
+
+	if (nBytes != nBytesReturned)
+	{
+		return NULL;
+	}
+
+	if (configDesc->wTotalLength < sizeof(USB_CONFIGURATION_DESCRIPTOR))
+	{
+		return NULL;
+	}
+
+	// Now request the entire Configuration Descriptor using a dynamically
+	// allocated buffer which is sized big enough to hold the entire descriptor
+	//
+	nBytes = sizeof(USB_DESCRIPTOR_REQUEST) + configDesc->wTotalLength;
+
+	configDescReq = (PUSB_DESCRIPTOR_REQUEST)malloc(nBytes);
+
+	if (configDescReq == NULL)
+	{
+		return NULL;
+	}
+
+	configDesc = (PUSB_CONFIGURATION_DESCRIPTOR)(configDescReq + 1);
+
+	// Indicate the port from which the descriptor will be requested
+	//
+	configDescReq->ConnectionIndex = ConnectionIndex;
+
+	//
+	// USBHUB uses URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE to process this
+	// IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION request.
+	//
+	// USBD will automatically initialize these fields:
+	//     bmRequest = 0x80
+	//     bRequest  = 0x06
+	//
+	// We must inititialize these fields:
+	//     wValue    = Descriptor Type (high) and Descriptor Index (low byte)
+	//     wIndex    = Zero (or Language ID for String Descriptors)
+	//     wLength   = Length of descriptor buffer
+	//
+	configDescReq->SetupPacket.wValue = (USB_CONFIGURATION_DESCRIPTOR_TYPE << 8)
+		| DescriptorIndex;
+
+	configDescReq->SetupPacket.wLength = (USHORT)(nBytes - sizeof(USB_DESCRIPTOR_REQUEST));
+
+	// Now issue the get descriptor request.
+	//
+
+	success = DeviceIoControl(hHubDevice,
+		IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION,
+		configDescReq,
+		nBytes,
+		configDescReq,
+		nBytes,
+		&nBytesReturned,
+		NULL);
+
+	if (!success)
+	{
+		free(configDescReq);
+		return NULL;
+	}
+
+	if (nBytes != nBytesReturned)
+	{
+		free(configDescReq);
+		return NULL;
+	}
+
+	if (configDesc->wTotalLength != (nBytes - sizeof(USB_DESCRIPTOR_REQUEST)))
+	{
+		free(configDescReq);
+		return NULL;
+	}
+	return configDescReq;
 }
 

@@ -470,17 +470,6 @@ BOOL cl::initialize(void)
 		}
 	}
 
-	if (ntoskrnl_base == 0)
-	{
-		LOG_RED("Run as Administrator\n");
-		return 0;
-	}
-
-	if (PciDriverObject == 0 || AcpiDriverObject == 0 || win32k_memmove == 0 || UsbccgpDriverObject == 0)
-	{
-		return 0;
-	}
-
 	client *controller = 0;
 	clrt  *rt = new clrt();
 
@@ -498,6 +487,19 @@ BOOL cl::initialize(void)
 		
 	if (rt)
 	{
+		if (ntoskrnl_base == 0)
+		{
+			LOG_RED("Run as Administrator\n");
+			return 0;
+		}
+
+		if (PciDriverObject == 0 || AcpiDriverObject == 0 || win32k_memmove == 0 || UsbccgpDriverObject == 0)
+		{
+			return 0;
+		}
+
+
+
 		LoadLibraryA("user32.dll");
 		kernel_swapfn_table = get_win32_table_ptr(controller, "NtGdiGetUFI", 0, &kernel_swapfn_original);
 		kernel_memcpy_table = get_win32_table_ptr(controller, "NtGdiGetEmbUFI", win32k_memmove, &kernel_memcpy_original);
