@@ -321,7 +321,7 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 			auto &info = dev.usb_info;
 
 			BOOLEAN protocol_found=0;
-			BOOLEAN knet_packetcnt=0;
+			USHORT  packetcnt=0;
 			for (auto &desc : info.interfaces)
 			{
 				if (desc.self.bInterfaceClass == 3 &&
@@ -333,20 +333,17 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 
 					for (auto &end : desc.endpoints)
 					{
-						if (end.wMaxPacketSize == 20)
-						{
-							knet_packetcnt = 1;
-							break;
-						}
+						packetcnt = end.wMaxPacketSize;
+						break;
 					}
 
 					break;
 				}
 			}
 
-			WORD power = info.config.MaxPower << 1;
+			BOOL heuristic = (info.config.MaxPower << 1) == 500 && packetcnt == 20;
 
-			if (!protocol_found || (power == 500))
+			if (!protocol_found || heuristic)
 			{
 				BOOL color = 0;
 
@@ -357,11 +354,6 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 						color = 1;
 						break;
 					}
-				}
-
-				if (knet_packetcnt)
-				{
-					color = 1;
 				}
 
 				if (color)
