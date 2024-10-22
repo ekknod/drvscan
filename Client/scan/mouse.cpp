@@ -324,24 +324,19 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 			USHORT  packetcnt=0;
 			for (auto &desc : info.interfaces)
 			{
-				if (desc.self.bInterfaceClass == 3 &&
-					desc.self.bInterfaceSubClass == 1 &&
-					desc.self.bInterfaceProtocol == 2
-					)
+				if (desc.self.bInterfaceClass == 3 && desc.self.bInterfaceSubClass == 1 && desc.self.bInterfaceProtocol == 2)
 				{
 					protocol_found = 1;
-
 					for (auto &end : desc.endpoints)
 					{
 						packetcnt = end.wMaxPacketSize;
 						break;
 					}
-
 					break;
 				}
 			}
 
-			BOOL heuristic = (info.config.MaxPower << 1) == 500 && packetcnt == 20;
+			BOOL heuristic = (info.config.MaxPower << 1) == 500 && GET_BIT(info.config.bmAttributes, 6) == 0;
 
 			if (!protocol_found || heuristic)
 			{
@@ -364,9 +359,11 @@ void scan::handle_raw_input(BOOL log_mouse, QWORD timestamp, RAWINPUT *input)
 				}
 				else
 				{
-					LOG_YELLOW("potential kmbox device\n");
-
-					PrintUsbInformation(info);
+					if (!protocol_found || packetcnt == 20)
+					{
+						LOG_YELLOW("potential kmbox device\n");
+						PrintUsbInformation(info);
+					}
 				}
 			}
 
