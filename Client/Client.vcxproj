@@ -131,6 +131,7 @@
   <ItemGroup>
     <ClCompile Include="client.cpp" />
     <ClCompile Include="clrt\clrt.cpp" />
+    <ClCompile Include="hde\hde64.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="scan\efi.cpp" />
     <ClCompile Include="scan\image.cpp" />
@@ -141,6 +142,9 @@
   <ItemGroup>
     <ClInclude Include="client.h" />
     <ClInclude Include="clrt\clrt.h" />
+    <ClInclude Include="hde\hde64.h" />
+    <ClInclude Include="hde\pstdint.h" />
+    <ClInclude Include="hde\table64.h" />
     <ClInclude Include="ia32.hpp" />
     <ClInclude Include="scan\scan.h" />
     <ClInclude Include="utils.h" />

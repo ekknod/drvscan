@@ -3,6 +3,7 @@
 #include <chrono>
 #pragma warning (disable: 4996)
 #include "ia32.hpp"
+#include "hde/hde64.h"
 
 QWORD cl::ntoskrnl_base;
 
@@ -382,12 +383,36 @@ BOOL cl::initialize(void)
 			{
 				goto cleanup2;
 			}
-			temp_address = temp_address + 0x0A;
-			temp_address = (temp_address + 5) + *(int*)(temp_address + 1);
-			temp_address = temp_address + 0x07;
-			temp_address = (temp_address + 5) + *(int*)(temp_address + 1);
-			while (*(BYTE*)(temp_address) != 0x41) temp_address++;
-			PciClassIdOffset = *(BYTE*)(temp_address + 1);
+
+			while (1)
+			{
+				hde64s ins{};
+				hde64_disasm( (const void*)temp_address, &ins);
+				if (ins.opcode == 0xE8)
+				{
+					temp_address = temp_address + (int)ins.imm.imm32 + ins.len;
+					break;
+				}
+				temp_address = temp_address + ins.len;
+			}
+
+			while (1)
+			{
+				hde64s ins{};
+				hde64_disasm( (const void*)temp_address, &ins);
+				if (ins.opcode == 0xE8)
+				{
+					temp_address = temp_address + (int)ins.imm.imm32 + ins.len;
+					break;
+				}
+				temp_address = temp_address + ins.len;
+			}
+
+			{
+			hde64s ins{};
+			hde64_disasm( (const void*)temp_address, &ins);
+			PciClassIdOffset = ins.disp.disp8;
+			}
 
 			temp_address = FindPattern((QWORD)local_module, (BYTE*)"\x8B\x45\x00\x0F\xB6\xC8\x41", (BYTE*)"xx?xxxx");
 			if (temp_address == 0)
@@ -395,7 +420,11 @@ BOOL cl::initialize(void)
 				goto cleanup2;
 			}
 
-			PciBusLocationOffset = *(BYTE*)(temp_address + 2);
+			{
+			hde64s ins{};
+			hde64_disasm( (const void*)temp_address, &ins);
+			PciBusLocationOffset = ins.disp.disp8;
+			}
 
 			temp_address = FindPattern((QWORD)local_module, (BYTE*)"\x48\x8B\x1D\x00\x00\x00\x00\x75", (BYTE*)"xxx????x");
 			if (temp_address == 0)

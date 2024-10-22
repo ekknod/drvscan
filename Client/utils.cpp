@@ -971,7 +971,6 @@ QWORD wmi::next_entry(QWORD table, QWORD prev)
 	if (prev)
 	{
 		((IWbemClassObject *)prev)->Release();
-		pclsObj->Release();
 	}
 	else
 	{
